@@ -129,7 +129,8 @@ export interface StageSource {
 }
 
 export interface ElimStageConfig {
-  legs?: 1 | 2;
+  legs?: 1 | 2; // 各轮回合数
+  final_legs?: 1 | 2; // 决赛回合数；季军赛与决赛一致。缺省跟随 legs
   third_place?: boolean;
   source?: StageSource;
 }

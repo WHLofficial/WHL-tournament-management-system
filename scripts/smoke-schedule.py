@@ -99,7 +99,16 @@ l1 = next(m for m in semi if m["leg"] == 1 and m["homeTeamName"] == "Alpha")
 l2 = next(m for m in semi if m["leg"] == 2 and m["homeTeamName"] == "Delta")
 check("legs 主客互换(Alpha-Delta)", l1["homeEntryId"] == l2["awayEntryId"] and l1["awayEntryId"] == l2["homeEntryId"], str((l1, l2)))
 third = [m for m in ms if m["round"] == 2 and m["slot"] == 2]
-check("季军赛 2 场", len(third) == 2 and third[0]["note"] == "季军赛", str(third)[:100])
+check("季军赛 2 场(与决赛同步)", len(third) == 2 and all(m["note"] == "季军赛" for m in third), str(third)[:100])
+s, b = req("PATCH", f"/api/admin/tournaments/{tid_e}", {"config_json": {"legs": 1, "final_legs": 2}})
+check("PATCH legs=1 final_legs=2", s == 200, f"{s} {b}")
+s, b = req("POST", f"/api/admin/tournaments/{tid_e}/stages/{stage_e}/generate")
+check("半决赛单场+决赛两回合=6 场", s == 200 and b.get("created") == 6, f"{s} {b}")
+s, b = req("GET", f"/api/admin/tournaments/{tid_e}/matches")
+ms = b.get("matches", [])
+semi_legs = [m["leg"] for m in ms if m["round"] == 1 and m["homeTeamName"] == "Alpha"]
+fin_legs = [m["leg"] for m in ms if m["round"] == 2 and m["slot"] == 1 and m["note"] is None]
+check("半决赛无 leg、决赛 leg1/2", semi_legs == [None] and sorted(x for x in fin_legs if x) == [1, 2], str((semi_legs, fin_legs)))
 
 # ---------- 3. 循环 generate（4 队单循环 = 6 场 3 轮） ----------
 s, b = req("POST", f"/api/admin/tournaments/{tid_r}/entries/bulk", {"names": ["Red", "Blue", "Green", "White"]})

@@ -265,10 +265,20 @@ async function syncStageConfigs(
         "UPDATE stage SET config_json = ? WHERE tournament_id = ? AND kind = 'group'"
       ).bind(JSON.stringify({ ...cfg, cross }), tid)
     );
+    // 淘汰阶段：只更新 source.cross，用户改过的 legs/final_legs/third_place 保留
+    const elimStage = await env.DB.prepare(
+      "SELECT config_json FROM stage WHERE tournament_id = ? AND kind = 'elim'"
+    )
+      .bind(tid)
+      .first<{ config_json: string }>();
+    const elimCfg = (JSON.parse(elimStage?.config_json || "{}") ?? {}) as Record<string, unknown>;
     stmts.push(
       env.DB.prepare(
         "UPDATE stage SET config_json = ? WHERE tournament_id = ? AND kind = 'elim'"
-      ).bind(JSON.stringify({ legs: 1, source: { cross } }), tid)
+      ).bind(
+        JSON.stringify({ ...elimCfg, source: { cross } }),
+        tid
+      )
     );
     // 组数变化时重建小组行（分组关系一并清空，需重新抽签）
     const oldCount = await env.DB.prepare(

@@ -33,7 +33,7 @@ export function seedOrder(size: number): number[] {
 
 export function buildElimPlan(
   entryCount: number,
-  opts: { legs: 1 | 2; thirdPlace: boolean }
+  opts: { legs: 1 | 2; finalLegs?: 1 | 2; thirdPlace: boolean }
 ): { matches: PlanMatch[]; rounds: number } {
   const size = 2 ** Math.ceil(Math.log2(Math.max(entryCount, 2)));
   const rounds = Math.log2(size);
@@ -41,6 +41,9 @@ export function buildElimPlan(
   const matches: PlanMatch[] = [];
 
   const isReal = (pos: number) => order[pos - 1] <= entryCount;
+  // 决赛轮（含季军赛）回合数独立配置，缺省跟随 legs
+  const legsOf = (r: number) =>
+    r === rounds ? (opts.finalLegs ?? opts.legs) : opts.legs;
 
   for (let i = 0; i < size / 2; i++) {
     const posA = 2 * i + 1;
@@ -58,7 +61,7 @@ export function buildElimPlan(
       });
       continue;
     }
-    if (opts.legs === 2) {
+    if (legsOf(1) === 2) {
       matches.push({ round: 1, slot: i + 1, leg: 1, home: seedA, away: seedB });
       matches.push({ round: 1, slot: i + 1, leg: 2, home: seedB, away: seedA });
     } else {
@@ -69,7 +72,7 @@ export function buildElimPlan(
   for (let r = 2; r <= rounds; r++) {
     const slots = size / 2 ** r;
     for (let j = 0; j < slots; j++) {
-      if (opts.legs === 2) {
+      if (legsOf(r) === 2) {
         matches.push({ round: r, slot: j + 1, leg: 1, home: null, away: null });
         matches.push({ round: r, slot: j + 1, leg: 2, home: null, away: null });
       } else {
@@ -80,7 +83,7 @@ export function buildElimPlan(
 
   if (opts.thirdPlace && rounds >= 2) {
     const thirdSlot = size / 2 ** rounds + 1;
-    if (opts.legs === 2) {
+    if (legsOf(rounds) === 2) {
       matches.push({ round: rounds, slot: thirdSlot, leg: 1, home: null, away: null, note: "季军赛" });
       matches.push({ round: rounds, slot: thirdSlot, leg: 2, home: null, away: null, note: "季军赛" });
     } else {

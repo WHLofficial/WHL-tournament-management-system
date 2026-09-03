@@ -93,10 +93,12 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
     if (list.length < 2) return fail(c, 400, "报名不足 2 支，无法生成对阵");
     const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as {
       legs?: number;
+      final_legs?: number;
       third_place?: boolean;
     };
     const plan = buildElimPlan(list.length, {
       legs: cfg.legs === 2 ? 2 : 1,
+      finalLegs: cfg.final_legs === 2 ? 2 : cfg.final_legs === 1 ? 1 : undefined,
       thirdPlace: !!cfg.third_place,
     });
     rounds = plan.rounds;

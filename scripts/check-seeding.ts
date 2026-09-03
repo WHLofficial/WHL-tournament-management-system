@@ -63,6 +63,27 @@ console.log("buildElimPlan:");
   assert(leg1.home === leg2.away && leg1.away === leg2.home, "两回合主客互换");
   const third = matches.find((m) => m.note === "季军赛");
   assert(third && third.round === rounds && third.slot === 2, "季军赛挂决赛轮 slot 2");
+  assert(matches.filter((m) => m.note === "季军赛").length === 2, "季军赛 legs=2 两场");
+
+  // 6) 决赛回合数独立：legs=1 + finalLegs=2 → 半决赛单场、决赛/季军赛两回合
+  {
+    const { matches, rounds } = buildElimPlan(4, { legs: 1, finalLegs: 2, thirdPlace: true });
+    const r1 = matches.filter((m) => m.round === 1);
+    const fin = matches.filter((m) => m.round === rounds && m.slot === 1);
+    const thirdM = matches.filter((m) => m.note === "季军赛");
+    assert(r1.length === 2 && r1.every((m) => m.leg == null), "半决赛 legs=1 单场");
+    assert(fin.length === 2 && fin.every((m) => m.leg != null), "决赛 finalLegs=2 两回合");
+    assert(thirdM.length === 2 && thirdM.every((m) => m.leg != null), "季军赛与决赛同步两回合");
+    assert(matches.length === 6, "总场次 2+2+2=6");
+  }
+  // 7) legs=2 + finalLegs=1 → 半决赛两回合、决赛单场（季军赛同步单场）
+  {
+    const { matches } = buildElimPlan(4, { legs: 2, finalLegs: 1, thirdPlace: true });
+    const r1 = matches.filter((m) => m.round === 1);
+    const fin = matches.filter((m) => m.round === 2 && m.slot === 1 && m.note == null);
+    const thirdM = matches.filter((m) => m.note === "季军赛");
+    assert(r1.length === 4 && fin.length === 1 && thirdM.length === 1, "半决赛 4 场、决赛/季军赛各 1 场");
+  }
 }
 
 // --- roundRobinSchedule ---
