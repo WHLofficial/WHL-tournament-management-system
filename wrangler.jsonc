@@ -1,0 +1,31 @@
+{
+  // 部署前需先创建真实资源并替换占位 ID：
+  //   npx wrangler d1 create whl  ->  database_id
+  //   npx wrangler kv namespace create KV -> id
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whl-tournament",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "whl",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "placeholder_local_only"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
