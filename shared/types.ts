@@ -260,6 +260,16 @@ export interface MatchDTO {
   note: string | null;
 }
 
+export interface MatchEventDTO {
+  id: number;
+  matchId: number;
+  type: "goal" | "yellow" | "red";
+  entryId: number;
+  playerId: number | null;
+  minute: number | null;
+  createdAt: string;
+}
+
 // ---------- 排名常量（P2 才做成赛事级配置） ----------
 
 export const POINTS = { win: 3, draw: 1, loss: 0, penWin: 2, penLoss: 1 } as const;

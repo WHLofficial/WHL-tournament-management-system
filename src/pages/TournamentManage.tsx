@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import ScheduleTab from "./ScheduleTab";
+import MatchesTab from "./MatchesTab";
 import { SubmitButton, useSubmit } from "../components/ui";
 import { FORMAT_LABEL, NEXT_ACTIONS, STATUS_LABEL } from "../labels";
 import type {
@@ -114,7 +115,7 @@ export function TournamentManage() {
 
       {tab === "entries" && <EntriesTab detail={detail} reload={reload} />}
       {tab === "schedule" && <ScheduleTab detail={detail} reload={reload} />}
-      {tab === "matches" && <p className="muted card">比赛录入功能开发中：报分、事件、积分榜。</p>}
+      {tab === "matches" && <MatchesTab detail={detail} reload={reload} />}
       {tab === "settings" && <SettingsTab detail={detail} reload={reload} onDeleted={() => navigate("/admin")} />}
     </div>
   );

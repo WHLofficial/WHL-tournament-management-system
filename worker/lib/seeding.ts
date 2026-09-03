@@ -94,6 +94,55 @@ export function buildElimPlan(
   return { matches, rounds };
 }
 
+// 跨组淘汰（小组赛后的淘汰阶段）：第一轮配对由 cross 模板解析而来（entry id 或 null 占位），
+// 后续轮次与季军赛只生成壳场，胜者由晋级器回填。队数必须是 2 的幂。
+export function buildCrossPlan(
+  round1Pairs: Array<[number | null, number | null]>,
+  opts: { legs: 1 | 2; finalLegs?: 1 | 2; thirdPlace: boolean }
+): { matches: PlanMatch[]; rounds: number } {
+  const size = round1Pairs.length * 2;
+  if (size < 2 || (size & (size - 1)) !== 0) {
+    throw new Error("cross 对阵数必须是 2 的幂");
+  }
+  const rounds = Math.log2(size);
+  const matches: PlanMatch[] = [];
+  const legsOf = (r: number) =>
+    r === rounds ? (opts.finalLegs ?? opts.legs) : opts.legs;
+
+  round1Pairs.forEach(([h, a], i) => {
+    if (legsOf(1) === 2) {
+      matches.push({ round: 1, slot: i + 1, leg: 1, home: h, away: a });
+      matches.push({ round: 1, slot: i + 1, leg: 2, home: a, away: h });
+    } else {
+      matches.push({ round: 1, slot: i + 1, home: h, away: a });
+    }
+  });
+
+  for (let r = 2; r <= rounds; r++) {
+    const slots = size / 2 ** r;
+    for (let j = 0; j < slots; j++) {
+      if (legsOf(r) === 2) {
+        matches.push({ round: r, slot: j + 1, leg: 1, home: null, away: null });
+        matches.push({ round: r, slot: j + 1, leg: 2, home: null, away: null });
+      } else {
+        matches.push({ round: r, slot: j + 1, home: null, away: null });
+      }
+    }
+  }
+
+  if (opts.thirdPlace && rounds >= 2) {
+    const thirdSlot = size / 2 ** rounds + 1;
+    if (legsOf(rounds) === 2) {
+      matches.push({ round: rounds, slot: thirdSlot, leg: 1, home: null, away: null, note: "季军赛" });
+      matches.push({ round: rounds, slot: thirdSlot, leg: 2, home: null, away: null, note: "季军赛" });
+    } else {
+      matches.push({ round: rounds, slot: thirdSlot, home: null, away: null, note: "季军赛" });
+    }
+  }
+
+  return { matches, rounds };
+}
+
 // ---------- 循环赛 ----------
 
 // 经典轮转法（circle method）。奇数队补虚拟队（编号 teamCount），含虚拟的配对不产出。

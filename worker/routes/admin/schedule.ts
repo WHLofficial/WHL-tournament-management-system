@@ -403,6 +403,18 @@ app.get("/:id/matches", async (c) => {
   )
     .bind(tid)
     .all<MatchRow>();
+  // live 场的比分以 goal 事件实时累计为准（score 列终场确认才落）
+  const liveIds = (rows.results ?? []).filter((r) => r.status === "live").map((r) => r.id);
+  const liveGoals = new Map<string, number>();
+  for (const mid of liveIds) {
+    const g = await c.env.DB.prepare(
+      `SELECT entry_id, COUNT(*) AS n FROM match_event
+       WHERE match_id = ? AND type = 'goal' GROUP BY entry_id`
+    )
+      .bind(mid)
+      .all<{ entry_id: number; n: number }>();
+    for (const row of g.results ?? []) liveGoals.set(`${mid}:${row.entry_id}`, row.n);
+  }
   const matches: MatchDTO[] = (rows.results ?? []).map((r) => ({
     id: r.id,
     stageId: r.stage_id,
@@ -413,8 +425,14 @@ app.get("/:id/matches", async (c) => {
     awayEntryId: r.away_entry_id,
     homeTeamName: r.home_team_name,
     awayTeamName: r.away_team_name,
-    scoreHome: r.score_home,
-    scoreAway: r.score_away,
+    scoreHome:
+      r.status === "live"
+        ? liveGoals.get(`${r.id}:${r.home_entry_id}`) ?? 0
+        : r.score_home,
+    scoreAway:
+      r.status === "live"
+        ? liveGoals.get(`${r.id}:${r.away_entry_id}`) ?? 0
+        : r.score_away,
     penHome: r.pen_home,
     penAway: r.pen_away,
     status: r.status,
@@ -444,7 +462,8 @@ app.delete("/:id/matches/:matchId", async (c) => {
 // ---------- 跨组淘汰：由小组赛名次取人 ----------
 // 守卫：小组赛程已生成且全部完赛；按 积分>净胜>进球>seed 排组内名次，
 // 解析 cross 模板（如 "A1-B2,B1-A2"）得到首轮配对，交给 buildCrossPlan 出计划。
-async function buildCrossStagePlan(
+// scoring.ts 的 finish 事务在小组收官自动生成淘汰赛时也复用此函数。
+export async function buildCrossStagePlan(
   env: { DB: D1Database },
   tid: number,
   stageId: number,

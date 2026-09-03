@@ -1,0 +1,313 @@
+// 积分重算 + 淘汰晋级器（TECH_DESIGN §6：全量重算而非增量累加，
+// 报分/改分/改判走同一条路径，永远收敛到正确结果）
+// 两个构建器都只读 + 返回 D1PreparedStatement[]，由调用方与报分写入合并进
+// 同一个 db.batch 原子提交（D1 batch = 隐式事务）。
+
+type FinishedMatchRow = {
+  home_entry_id: number | null;
+  away_entry_id: number | null;
+  score_home: number | null;
+  score_away: number | null;
+  pen_home: number | null;
+  pen_away: number | null;
+};
+
+// ---------- 积分：全量重建某 stage 的 standing ----------
+// 胜 3 平 1 负 0；平分且录了点球 → 点胜 2 分 / 点负 1 分（pen_won/pen_lost 计次）。
+// 淘汰阶段无积分榜，返回空。
+export async function buildStandingsStmts(
+  db: D1Database,
+  stageId: number
+): Promise<D1PreparedStatement[]> {
+  const stage = await db
+    .prepare("SELECT kind FROM stage WHERE id = ?")
+    .bind(stageId)
+    .first<{ kind: string }>();
+  if (!stage || stage.kind === "elim") return [];
+
+  // 参赛集：小组阶段取挂在本阶段组下的 entry；无分组循环取赛事全部报名
+  const entries =
+    stage.kind === "group"
+      ? await db
+          .prepare(
+            `SELECT e.id, e.group_id FROM entry e
+             WHERE e.group_id IN (SELECT id FROM "group" WHERE stage_id = ?)`
+          )
+          .bind(stageId)
+          .all<{ id: number; group_id: number | null }>()
+      : await db
+          .prepare(
+            `SELECT e.id, e.group_id FROM entry e
+             WHERE e.tournament_id = (SELECT tournament_id FROM stage WHERE id = ?)`
+          )
+          .bind(stageId)
+          .all<{ id: number; group_id: number | null }>();
+
+  const finished = await db
+    .prepare(
+      `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away
+       FROM match WHERE stage_id = ? AND status = 'finished'`
+    )
+    .bind(stageId)
+    .all<FinishedMatchRow>();
+
+  type Row = {
+    group_id: number | null;
+    played: number;
+    won: number;
+    drawn: number;
+    lost: number;
+    pts: number;
+    gf: number;
+    ga: number;
+    pen_won: number;
+    pen_lost: number;
+  };
+  const rows = new Map<number, Row>();
+  for (const e of entries.results ?? []) {
+    rows.set(e.id, {
+      group_id: e.group_id,
+      played: 0,
+      won: 0,
+      drawn: 0,
+      lost: 0,
+      pts: 0,
+      gf: 0,
+      ga: 0,
+      pen_won: 0,
+      pen_lost: 0,
+    });
+  }
+
+  for (const m of finished.results ?? []) {
+    if (m.home_entry_id == null || m.away_entry_id == null) continue;
+    const home = rows.get(m.home_entry_id);
+    const away = rows.get(m.away_entry_id);
+    if (!home || !away) continue;
+    const sh = m.score_home ?? 0;
+    const sa = m.score_away ?? 0;
+    home.played++;
+    away.played++;
+    home.gf += sh;
+    home.ga += sa;
+    away.gf += sa;
+    away.ga += sh;
+    if (sh > sa) {
+      home.won++;
+      home.pts += 3;
+      away.lost++;
+    } else if (sh < sa) {
+      away.won++;
+      away.pts += 3;
+      home.lost++;
+    } else if (m.pen_home != null && m.pen_away != null && m.pen_home !== m.pen_away) {
+      // 平分点球决胜：点胜 2 分、点负 1 分
+      if (m.pen_home > m.pen_away) {
+        home.pen_won++;
+        home.pts += 2;
+        away.pen_lost++;
+        away.pts += 1;
+      } else {
+        away.pen_won++;
+        away.pts += 2;
+        home.pen_lost++;
+        home.pts += 1;
+      }
+    } else {
+      home.drawn++;
+      home.pts += 1;
+      away.drawn++;
+      away.pts += 1;
+    }
+  }
+
+  return [
+    db.prepare("DELETE FROM standing WHERE stage_id = ?").bind(stageId),
+    ...[...rows.entries()].map(([entryId, r]) =>
+      db
+        .prepare(
+          `INSERT INTO standing (stage_id, group_id, entry_id, played, won, drawn, lost, pts, gf, ga, pen_won, pen_lost)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          stageId,
+          r.group_id,
+          entryId,
+          r.played,
+          r.won,
+          r.drawn,
+          r.lost,
+          r.pts,
+          r.gf,
+          r.ga,
+          r.pen_won,
+          r.pen_lost
+        )
+    ),
+  ];
+}
+
+// ---------- 晋级器：把已决出的轮次胜者填进下一轮 slot ----------
+// 仅淘汰阶段；幂等：pending 的下游场反复重填；需要换人但场已开打 → AdvancerError。
+type MatchRow = {
+  id: number;
+  round: number;
+  slot: number;
+  leg: number | null;
+  home_entry_id: number | null;
+  away_entry_id: number | null;
+  score_home: number | null;
+  score_away: number | null;
+  pen_home: number | null;
+  pen_away: number | null;
+  status: "pending" | "live" | "finished";
+  winner_entry_id: number | null;
+  note: string | null;
+};
+
+export class AdvancerError extends Error {}
+
+export async function buildAdvanceStmts(
+  db: D1Database,
+  stageId: number
+): Promise<D1PreparedStatement[]> {
+  const res = await db
+    .prepare(
+      `SELECT id, round, slot, leg, home_entry_id, away_entry_id, score_home, score_away,
+              pen_home, pen_away, status, winner_entry_id, note
+       FROM match WHERE stage_id = ? ORDER BY round, slot, leg`
+    )
+    .bind(stageId)
+    .all<MatchRow>();
+  const all = res.results ?? [];
+  if (all.length === 0) return [];
+
+  const byRS = new Map<string, MatchRow[]>();
+  let maxRound = 0;
+  for (const m of all) {
+    const key = `${m.round}:${m.slot}`;
+    if (!byRS.has(key)) byRS.set(key, []);
+    byRS.get(key)!.push(m);
+    if (m.round > maxRound) maxRound = m.round;
+  }
+
+  // slot 是否已决出（该 slot 全部场次 finished，或轮空 winner 预填）
+  const slotWinner = (round: number, slot: number): number | undefined => {
+    const rows = byRS.get(`${round}:${slot}`);
+    if (!rows || rows.length === 0) return undefined;
+    if (rows.length === 1) {
+      const r = rows[0];
+      // 轮空场：pending 但 winner 已预填（away 为虚拟位）
+      if (r.away_entry_id == null && r.winner_entry_id != null) return r.winner_entry_id;
+      if (r.status !== "finished") return undefined;
+      if (r.winner_entry_id != null) return r.winner_entry_id;
+      if (r.pen_home != null && r.pen_away != null && r.pen_home !== r.pen_away)
+        return r.pen_home > r.pen_away
+          ? r.home_entry_id ?? undefined
+          : r.away_entry_id ?? undefined;
+      return undefined;
+    }
+    // legs=2：总比分（leg2 主客互换），平 → leg2 点球
+    const agg = aggTwoLegs(rows);
+    if (!agg) return undefined;
+    if (agg.a !== agg.b)
+      return agg.a > agg.b ? agg.aId ?? undefined : agg.bId ?? undefined;
+    if (agg.aPen != null && agg.bPen != null && agg.aPen !== agg.bPen)
+      return agg.aPen > agg.bPen ? agg.aId ?? undefined : agg.bId ?? undefined;
+    return undefined;
+  };
+
+  const slotLoser = (round: number, slot: number): number | undefined => {
+    const w = slotWinner(round, slot);
+    if (w === undefined) return undefined;
+    const rows = byRS.get(`${round}:${slot}`);
+    if (!rows) return undefined;
+    const ids = new Set<number>();
+    for (const r of rows) {
+      if (r.home_entry_id != null) ids.add(r.home_entry_id);
+      if (r.away_entry_id != null) ids.add(r.away_entry_id);
+    }
+    ids.delete(w);
+    return [...ids][0];
+  };
+
+  // A = leg1 主队 = leg2 客队；点球踢在 leg2，A 的点球数是 leg2 客队栏
+  const aggTwoLegs = (rows: MatchRow[]) => {
+    const leg1 = rows.find((r) => r.leg !== 2) ?? rows[0];
+    const leg2 = rows.find((r) => r.leg === 2) ?? rows[1];
+    if (!leg1 || !leg2 || leg1 === leg2) return null;
+    if (
+      leg1.home_entry_id == null ||
+      leg1.away_entry_id == null ||
+      leg2.home_entry_id == null ||
+      leg2.away_entry_id == null
+    )
+      return null;
+    const aId = leg1.home_entry_id;
+    const bId = leg1.away_entry_id;
+    if (leg2.away_entry_id !== aId || leg2.home_entry_id !== bId) return null;
+    return {
+      a: (leg1.score_home ?? 0) + (leg2.score_away ?? 0),
+      b: (leg1.score_away ?? 0) + (leg2.score_home ?? 0),
+      aId,
+      bId,
+      aPen: leg2.pen_away,
+      bPen: leg2.pen_home,
+    };
+  };
+
+  const updates: D1PreparedStatement[] = [];
+  const fill = (matchId: number, home: number, away: number) => {
+    updates.push(
+      db
+        .prepare("UPDATE match SET home_entry_id = ?, away_entry_id = ? WHERE id = ?")
+        .bind(home, away, matchId)
+    );
+  };
+
+  for (let r = 1; r < maxRound; r++) {
+    const nextSlots = [...byRS.keys()]
+      .filter((k) => k.startsWith(`${r + 1}:`))
+      .map((k) => Number(k.split(":")[1]));
+    if (nextSlots.length === 0) continue;
+    for (const slot of nextSlots) {
+      const w1 = slotWinner(r, slot * 2 - 1);
+      const w2 = slotWinner(r, slot * 2);
+      if (w1 === undefined || w2 === undefined) continue;
+      const targets = byRS.get(`${r + 1}:${slot}`) ?? [];
+      for (const t of targets) {
+        const first = t.leg !== 2;
+        const home = first ? w1 : w2;
+        const away = first ? w2 : w1;
+        if (t.status !== "pending") {
+          if (t.home_entry_id !== home || t.away_entry_id !== away) {
+            throw new AdvancerError("后续场次已开打，晋级对阵无法更新");
+          }
+          continue;
+        }
+        if (t.home_entry_id !== home || t.away_entry_id !== away) {
+          fill(t.id, home, away);
+        }
+      }
+    }
+  }
+
+  // 季军赛：决赛轮（maxRound）note='季军赛' 的场，参赛者 = 决赛前一轮的两位负者
+  for (const m of all) {
+    if (m.note !== "季军赛" || m.round !== maxRound) continue;
+    const l1 = slotLoser(maxRound - 1, 1);
+    const l2 = slotLoser(maxRound - 1, 2);
+    if (l1 === undefined || l2 === undefined) continue;
+    if (m.status !== "pending") {
+      if (m.home_entry_id !== l1 || m.away_entry_id !== l2) {
+        throw new AdvancerError("季军赛已开打，对阵无法更新");
+      }
+      continue;
+    }
+    if (m.home_entry_id !== l1 || m.away_entry_id !== l2) {
+      fill(m.id, l1, l2);
+    }
+  }
+
+  return updates;
+}

@@ -324,3 +324,31 @@ button.btn-ghost {
 .manual-form { margin-top: 12px; align-items: flex-end; }
 .manual-form label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #666; }
 .badge { background: #f0f0f0; border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+
+/* ---------- 比赛 tab（报分/事件） ---------- */
+.matches-tab .stage-block { margin-bottom: 20px; }
+.round-head { margin: 10px 0 6px; font-size: 13px; color: var(--muted, #64748b); font-weight: 600; }
+.match-row { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; margin-bottom: 6px; background: #fff; }
+.match-row.mr-live { border-color: #f59e0b; }
+.mr-line { display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; }
+.mr-team { flex: 1; min-width: 90px; text-align: right; }
+.mr-team:last-of-type { text-align: left; }
+.mr-win { font-weight: 700; }
+.mr-score { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.mr-pen { font-size: 12px; color: var(--muted, #64748b); font-weight: 400; }
+.m-badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border, #e2e8f0); color: var(--muted, #64748b); }
+.m-badge.ms-live { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+.m-badge.ms-finished { background: #f1f5f9; color: #475569; }
+.mr-actions { display: flex; gap: 6px; }
+.match-panel { border-top: 1px dashed var(--border, #e2e8f0); padding: 10px 12px; display: grid; gap: 8px; background: #f8fafc; }
+.event-quick { display: flex; gap: 8px; flex-wrap: wrap; }
+.score-form, .event-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.error-text { color: #dc2626; font-size: 13px; }
+.event-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.event-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ev-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ev-goal { background: #16a34a; }
+.ev-yellow { background: #facc15; }
+.ev-red { background: #dc2626; }
+.ev-minute { font-variant-numeric: tabular-nums; color: var(--muted, #64748b); min-width: 2.5em; }
+.ev-team { color: var(--muted, #64748b); }

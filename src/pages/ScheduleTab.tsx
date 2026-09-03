@@ -137,16 +137,20 @@ function StageBlock({
   };
   const rounds = matches.reduce((mx, m) => Math.max(mx, m.round), 0);
   const roundBuckets = useMemo(() => {
-    const map = new Map<number, MatchDTO[]>();
+    // 季军赛与决赛同轮，单独成组显示标题
+    const map = new Map<string, { round: number; third: boolean; list: MatchDTO[] }>();
     for (const m of matches) {
-      const arr = map.get(m.round) ?? [];
-      arr.push(m);
-      map.set(m.round, arr);
+      const key = `${m.round}:${m.note === "季军赛" ? 1 : 0}`;
+      const bucket = map.get(key) ?? { round: m.round, third: m.note === "季军赛", list: [] };
+      bucket.list.push(m);
+      map.set(key, bucket);
     }
-    for (const arr of map.values()) {
-      arr.sort((a, b) => a.slot - b.slot || (a.leg ?? 1) - (b.leg ?? 1));
+    for (const bucket of map.values()) {
+      bucket.list.sort((a, b) => a.slot - b.slot || (a.leg ?? 1) - (b.leg ?? 1));
     }
-    return [...map.entries()].sort((a, b) => a[0] - b[0]);
+    return [...map.values()].sort(
+      (a, b) => a.round - b.round || Number(a.third) - Number(b.third),
+    );
   }, [matches]);
 
   const roundName = (r: number) =>
@@ -185,9 +189,11 @@ function StageBlock({
           {stage.kind === "group" ? "先抽签分组，再生成小组赛程。" : "点右上角自动生成。"}
         </p>
       ) : (
-        roundBuckets.map(([r, list]) => (
-          <div key={r} className="round-group">
-            <h4 className="round-title">{roundName(r)}</h4>
+        roundBuckets.map(({ round, third, list }) => (
+          <div key={`${round}:${third ? 1 : 0}`} className="round-group">
+            <h4 className="round-title">
+              {third ? "季军赛" : roundName(round)}
+            </h4>
             <table>
               <tbody>
                 {list.map((m) => (
@@ -346,7 +352,7 @@ function ManualForm({
   const roundValue = Number(round) || nextRound;
 
   const conflicts = useMemo(() => {
-    // 对已选主队：本轮已有场次、或交手次数达上限的队 → 客队候选置灰
+    // 本轮已有场次的队 → 客队候选置灰；交手次数上限由 playedCount 单独判断
     const disabled = new Set<number>();
     if (!homeId) return disabled;
     const h = Number(homeId);
@@ -355,10 +361,6 @@ function ManualForm({
         if (m.homeEntryId !== null) disabled.add(m.homeEntryId);
         if (m.awayEntryId !== null) disabled.add(m.awayEntryId);
       }
-      const paired =
-        (m.homeEntryId === h && m.awayEntryId !== null) ||
-        (m.awayEntryId === h && m.homeEntryId !== null);
-      if (paired) disabled.add(m.homeEntryId === h ? m.awayEntryId! : m.homeEntryId!);
     }
     return disabled;
   }, [matches, homeId, roundValue]);
