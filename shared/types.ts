@@ -149,6 +149,13 @@ export interface GroupStageConfig {
 
 export type StageConfig = ElimStageConfig | RoundRobinStageConfig | GroupStageConfig;
 
+// 建赛预设：新建赛事时写入 tournament.config_json，编排引擎按它生成 stage 结构
+export const DEFAULT_TOURNAMENT_CONFIG: Record<TournamentFormat, StageConfig> = {
+  single_elim: { legs: 1, third_place: false },
+  round_robin: { loops: 2 },
+  group_knockout: { group_count: 4, loops: 1, qualify_per_group: 2 },
+};
+
 // ---------- API 载荷 ----------
 
 export interface RegisterReq {
@@ -168,6 +175,67 @@ export interface MeResp {
   name: string;
   role: Role;
   teamId: number | null; // 绑定的队伍，未绑为 null
+}
+
+// ---------- API DTO（camelCase，路由层做映射） ----------
+
+export interface TeamDTO {
+  id: number;
+  name: string;
+  playerCount: number;
+  entryCount: number;
+}
+
+export interface PlayerDTO {
+  id: number;
+  name: string;
+  number: string | null;
+}
+
+export interface TournamentDTO {
+  id: number;
+  name: string;
+  description: string | null;
+  format: TournamentFormat;
+  status: TournamentStatus;
+  createdAt: string;
+  entryCount: number;
+}
+
+export interface EntryDTO {
+  id: number;
+  teamId: number;
+  teamName: string;
+  seed: number;
+  groupId: number | null;
+  playerCount: number;
+}
+
+export interface StageDTO {
+  id: number;
+  kind: StageKind;
+  sortOrder: number;
+  config: StageConfig;
+}
+
+export interface GroupDTO {
+  id: number;
+  stageId: number;
+  name: string;
+  sortOrder: number;
+}
+
+export interface TournamentDetailDTO {
+  tournament: TournamentDTO;
+  stages: StageDTO[];
+  groups: GroupDTO[];
+  entries: EntryDTO[];
+}
+
+export interface SignupCodeResp {
+  code: string;
+  maxUses: number | null;
+  expiresAt: string | null;
 }
 
 // ---------- 排名常量（P2 才做成赛事级配置） ----------

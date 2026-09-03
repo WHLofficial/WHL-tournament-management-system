@@ -1,0 +1,368 @@
+import { Hono } from "hono";
+import type { AppEnv, Bindings } from "../../env";
+import {
+  DEFAULT_TOURNAMENT_CONFIG,
+  type EntryDTO,
+  type TournamentDTO,
+} from "../../../shared/types";
+
+type Status = TournamentDTO["status"];
+const ALLOWED: Record<Status, Status[]> = {
+  draft: ["registering"],
+  registering: ["draft", "running"],
+  running: ["archived"],
+  archived: [],
+};
+
+const app = new Hono<AppEnv>();
+
+// ---------- 赛事 ----------
+
+app.get("/", async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at,
+       (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
+     FROM tournament t ORDER BY t.created_at DESC`
+  ).all<{
+    id: number;
+    name: string;
+    description: string | null;
+    format: TournamentDTO["format"];
+    status: Status;
+    created_at: string;
+    entry_count: number;
+  }>();
+  const tournaments: TournamentDTO[] = rows.results.map((r) => ({
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    format: r.format,
+    status: r.status,
+    createdAt: r.created_at,
+    entryCount: r.entry_count,
+  }));
+  return c.json({ tournaments });
+});
+
+app.post("/", async (c) => {
+  const body = await c.req
+    .json<{ name?: string; description?: string; format?: string }>()
+    .catch(() => null);
+  const name = body?.name?.trim();
+  const format = body?.format as TournamentDTO["format"] | undefined;
+  if (!name || name.length > 64) {
+    return c.json({ message: "赛事名不能为空，且不超过 64 字" }, 400);
+  }
+  if (!format || !(format in DEFAULT_TOURNAMENT_CONFIG)) {
+    return c.json({ message: "赛制不合法" }, 400);
+  }
+  const r = await c.env.DB.prepare(
+    "INSERT INTO tournament (org_id, name, description, format, status, config_json, created_by) VALUES (1, ?, ?, ?, 'draft', ?, ?)"
+  )
+    .bind(
+      name,
+      body?.description?.trim() || null,
+      format,
+      JSON.stringify(DEFAULT_TOURNAMENT_CONFIG[format]),
+      c.get("user")!.id
+    )
+    .run();
+  return c.json({ id: r.meta.last_row_id }, 201);
+});
+
+// 详情：赛事 + 阶段 + 小组 + 报名名单
+app.get("/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare(
+    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at,
+       (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
+     FROM tournament t WHERE t.id = ?`
+  )
+    .bind(id)
+    .first<{
+      id: number;
+      name: string;
+      description: string | null;
+      format: TournamentDTO["format"];
+      status: Status;
+      created_at: string;
+      entry_count: number;
+    }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+
+  const [stages, groups, entries] = await Promise.all([
+    c.env.DB.prepare(
+      "SELECT id, kind, sort_order, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order"
+    )
+      .bind(id)
+      .all<{ id: number; kind: "elim" | "round_robin" | "group"; sort_order: number; config_json: string }>(),
+    c.env.DB.prepare(
+      `SELECT g.id, g.stage_id, g.name, g.sort_order FROM "group" g
+       JOIN stage s ON s.id = g.stage_id WHERE s.tournament_id = ?
+       ORDER BY s.sort_order, g.sort_order`
+    )
+      .bind(id)
+      .all<{ id: number; stage_id: number; name: string; sort_order: number }>(),
+    c.env.DB.prepare(
+      `SELECT e.id, e.team_id, e.seed, e.group_id, tm.name AS team_name,
+         (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
+       FROM entry e JOIN team tm ON tm.id = e.team_id
+       WHERE e.tournament_id = ? ORDER BY e.seed`
+    )
+      .bind(id)
+      .all<{
+        id: number;
+        team_id: number;
+        seed: number;
+        group_id: number | null;
+        team_name: string;
+        player_count: number;
+      }>(),
+  ]);
+
+  const detail = {
+    tournament: {
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      format: t.format,
+      status: t.status,
+      createdAt: t.created_at,
+      entryCount: t.entry_count,
+    } satisfies TournamentDTO,
+    stages: stages.results.map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      sortOrder: s.sort_order,
+      config: JSON.parse(s.config_json || "{}"),
+    })),
+    groups: groups.results.map((g) => ({
+      id: g.id,
+      stageId: g.stage_id,
+      name: g.name,
+      sortOrder: g.sort_order,
+    })),
+    entries: entries.results.map(
+      (e): EntryDTO => ({
+        id: e.id,
+        teamId: e.team_id,
+        teamName: e.team_name,
+        seed: e.seed,
+        groupId: e.group_id,
+        playerCount: e.player_count,
+      })
+    ),
+  };
+  return c.json(detail);
+});
+
+app.patch("/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req
+    .json<{ name?: string; description?: string }>()
+    .catch(() => null);
+  if (body?.name !== undefined) {
+    const name = body.name.trim();
+    if (!name || name.length > 64) {
+      return c.json({ message: "赛事名不能为空，且不超过 64 字" }, 400);
+    }
+    await c.env.DB.prepare("UPDATE tournament SET name = ? WHERE id = ?")
+      .bind(name, id)
+      .run();
+  }
+  if (body?.description !== undefined) {
+    await c.env.DB.prepare(
+      "UPDATE tournament SET description = ? WHERE id = ?"
+    )
+      .bind(body.description.trim() || null, id)
+      .run();
+  }
+  return c.json({ ok: true });
+});
+
+// 状态机：draft → registering → (draft | running) → archived
+app.post("/:id/transition", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ to?: string }>().catch(() => null);
+  const to = body?.to as Status | undefined;
+  const t = await c.env.DB.prepare(
+    "SELECT status FROM tournament WHERE id = ?"
+  )
+    .bind(id)
+    .first<{ status: Status }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+  if (!to || !ALLOWED[t.status].includes(to)) {
+    return c.json({ message: `不能从「${t.status}」切换到「${to ?? "?"}」` }, 400);
+  }
+  await c.env.DB.prepare("UPDATE tournament SET status = ? WHERE id = ?")
+    .bind(to, id)
+    .run();
+  return c.json({ ok: true });
+});
+
+app.delete("/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare(
+    "SELECT status FROM tournament WHERE id = ?"
+  )
+    .bind(id)
+    .first<{ status: Status }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+  if (t.status === "running" || t.status === "archived") {
+    return c.json({ message: "进行中或已归档的赛事不能删除，只能归档保留" }, 409);
+  }
+  await c.env.DB.prepare("DELETE FROM tournament WHERE id = ?").bind(id).run();
+  return c.json({ ok: true });
+});
+
+// ---------- 报名 ----------
+
+async function guardRegistration(env: Bindings, id: number) {
+  const t = await env.DB.prepare(
+    "SELECT status FROM tournament WHERE id = ?"
+  )
+    .bind(id)
+    .first<{ status: Status }>();
+  if (!t) return { error: "赛事不存在", status: 404 as const };
+  if (t.status !== "draft" && t.status !== "registering") {
+    return { error: "开赛后不能改动报名名单", status: 409 as const };
+  }
+  return null;
+}
+
+// 单队报名
+app.post("/:id/entries", async (c) => {
+  const id = Number(c.req.param("id"));
+  const guard = await guardRegistration(c.env, id);
+  if (guard) return c.json({ message: guard.error }, guard.status);
+
+  const body = await c.req.json<{ teamId?: number }>().catch(() => null);
+  const teamId = Number(body?.teamId);
+  if (!teamId) return c.json({ message: "请选择球队" }, 400);
+  const team = await c.env.DB.prepare("SELECT id FROM team WHERE id = ?")
+    .bind(teamId)
+    .first();
+  if (!team) return c.json({ message: "球队不存在" }, 404);
+
+  const dup = await c.env.DB.prepare(
+    "SELECT id FROM entry WHERE tournament_id = ? AND team_id = ?"
+  )
+    .bind(id, teamId)
+    .first();
+  if (dup) return c.json({ message: "该球队已在本赛事中" }, 409);
+
+  const seedRow = await c.env.DB.prepare(
+    "SELECT COALESCE(MAX(seed), 0) + 1 AS next FROM entry WHERE tournament_id = ?"
+  )
+    .bind(id)
+    .first<{ next: number }>();
+  await c.env.DB.prepare(
+    "INSERT INTO entry (tournament_id, team_id, seed) VALUES (?, ?, ?)"
+  )
+    .bind(id, teamId, seedRow!.next)
+    .run();
+  return c.json({ ok: true }, 201);
+});
+
+// 批量报名：粘贴队名，球队库没有的自动建队
+app.post("/:id/entries/bulk", async (c) => {
+  const id = Number(c.req.param("id"));
+  const guard = await guardRegistration(c.env, id);
+  if (guard) return c.json({ message: guard.error }, guard.status);
+
+  const body = await c.req.json<{ names?: string[] }>().catch(() => null);
+  const names = [
+    ...new Set((body?.names ?? []).map((n) => n.trim()).filter(Boolean)),
+  ];
+  if (names.length === 0) return c.json({ message: "没有可用的队名" }, 400);
+  if (names.length > 64) return c.json({ message: "一次最多报名 64 支球队" }, 400);
+
+  const createdBy = c.get("user")!.id;
+  const placeholders = names.map(() => "?").join(",");
+  const found = await c.env.DB.prepare(
+    `SELECT id, name FROM team WHERE org_id = 1 AND name IN (${placeholders})`
+  )
+    .bind(...names)
+    .all<{ id: number; name: string }>();
+  const byName = new Map(found.results.map((r) => [r.name, r.id]));
+
+  const seeded = await c.env.DB.prepare(
+    `SELECT tm.name FROM entry e JOIN team tm ON tm.id = e.team_id
+     WHERE e.tournament_id = ?`
+  )
+    .bind(id)
+    .all<{ name: string }>();
+  const entered = new Set(seeded.results.map((r) => r.name));
+
+  const createTeamStmts: D1PreparedStatement[] = [];
+  const newTeams: { name: string; index: number }[] = [];
+  names.forEach((name, index) => {
+    if (!byName.has(name)) {
+      newTeams.push({ name, index });
+      createTeamStmts.push(
+        c.env.DB.prepare(
+          "INSERT INTO team (org_id, name, created_by) VALUES (1, ?, ?)"
+        ).bind(name, createdBy)
+      );
+    }
+  });
+  if (createTeamStmts.length > 0) {
+    const results = await c.env.DB.batch(createTeamStmts);
+    results.forEach((r, i) =>
+      byName.set(newTeams[i].name, Number(r.meta.last_row_id))
+    );
+  }
+
+  const seedRow = await c.env.DB.prepare(
+    "SELECT COALESCE(MAX(seed), 0) AS max FROM entry WHERE tournament_id = ?"
+  )
+    .bind(id)
+    .first<{ max: number }>();
+  let seed = seedRow!.max;
+
+  const entryStmts: D1PreparedStatement[] = [];
+  const created: string[] = [];
+  for (const name of names) {
+    if (entered.has(name)) continue;
+    seed += 1;
+    entryStmts.push(
+      c.env.DB.prepare(
+        "INSERT INTO entry (tournament_id, team_id, seed) VALUES (?, ?, ?)"
+      ).bind(id, byName.get(name)!, seed)
+    );
+    created.push(name);
+  }
+  if (entryStmts.length > 0) await c.env.DB.batch(entryStmts);
+
+  return c.json(
+    {
+      createdEntries: created.length,
+      createdTeams: createTeamStmts.length,
+      skippedAlready: names.filter((n) => entered.has(n)),
+    },
+    201
+  );
+});
+
+// 移除报名（有比赛引用则拒绝）
+app.delete("/:id/entries/:entryId", async (c) => {
+  const id = Number(c.req.param("id"));
+  const entryId = Number(c.req.param("entryId"));
+  const guard = await guardRegistration(c.env, id);
+  if (guard) return c.json({ message: guard.error }, guard.status);
+
+  const ref = await c.env.DB.prepare(
+    "SELECT id FROM match WHERE home_entry_id = ? OR away_entry_id = ? LIMIT 1"
+  )
+    .bind(entryId, entryId)
+    .first();
+  if (ref) {
+    return c.json({ message: "该球队已有比赛记录，不能移除" }, 409);
+  }
+  await c.env.DB.prepare("DELETE FROM entry WHERE id = ? AND tournament_id = ?")
+    .bind(entryId, id)
+    .run();
+  return c.json({ ok: true });
+});
+
+export default app;
