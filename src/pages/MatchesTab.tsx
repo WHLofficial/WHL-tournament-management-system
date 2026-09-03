@@ -188,7 +188,7 @@ function MatchRow({
           {m.homeTeamName ?? "待定"}
         </span>
         <MatchScore m={m} agg={agg} />
-        <span className={`mr-team${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
+        <span className={`mr-team mr-away${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
           {m.awayTeamName ?? "待定"}
         </span>
         <span className={`m-badge ms-${m.status}`}>{MATCH_STATUS[m.status]}</span>
