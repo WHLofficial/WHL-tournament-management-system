@@ -890,7 +890,7 @@ export async function buildAutoFillStmts(
         ).bind(
           next.id,
           pm.round,
-          pm.slot,
+          slot,
           pm.leg ?? null,
           home,
           away,
@@ -910,11 +910,17 @@ export async function buildAutoFillStmts(
     if (prev.kind === "elim") return []; // 淘汰赛无名次可取；手动生成按钮会给明确报错
     const pool = await topNEntries(env, prev.id, tid, take);
     if (pool.length < 2) return [];
-    const plan =
-      next.kind === "elim"
-        ? buildElimPlan(pool.length, planOpts)
-        : roundRobinSchedule(pool.length, cfg.loops === 2 ? 2 : 1);
-    pushPlan(plan.matches, false, pool);
+    if (next.kind === "elim") {
+      pushPlan(buildElimPlan(pool.length, planOpts).matches, false, pool);
+    } else {
+      const sched = roundRobinSchedule(pool.length, cfg.loops === 2 ? 2 : 1);
+      // roundRobinSchedule 的 home/away 是 0-based 队号，+1 对齐 pushPlan 的 1-based 种子位
+      pushPlan(
+        sched.matches.map((m) => ({ round: m.round, home: m.home + 1, away: m.away + 1 })),
+        false,
+        pool
+      );
+    }
     return stmts;
   }
   return [];
