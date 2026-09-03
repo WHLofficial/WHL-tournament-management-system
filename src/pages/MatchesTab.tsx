@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { MatchScore, computeAgg } from "../components/MatchScore";
 import type {
   EntryDTO,
   MatchDTO,
@@ -117,6 +118,7 @@ export default function MatchesTab({
                     <MatchRow
                       key={m.id}
                       match={m}
+                      agg={computeAgg(m, roundList)}
                       entryById={entryById}
                       busy={busy}
                       act={act}
@@ -141,6 +143,7 @@ export default function MatchesTab({
             <MatchRow
               key={m.id}
               match={m}
+              agg={null}
               entryById={entryById}
               busy={busy}
               act={act}
@@ -159,6 +162,7 @@ type Act = (fn: () => Promise<string | null>) => Promise<void>;
 
 function MatchRow({
   match: m,
+  agg,
   entryById,
   busy,
   act,
@@ -167,6 +171,7 @@ function MatchRow({
   togglePanel,
 }: {
   match: MatchDTO;
+  agg: [number, number] | null;
   entryById: Map<number, EntryDTO>;
   busy: boolean;
   act: Act;
@@ -175,7 +180,6 @@ function MatchRow({
   togglePanel: () => void;
 }) {
   const bye = m.note === "轮空";
-  const score = (v: number | null) => (v === null ? "-" : String(v));
 
   return (
     <div className={`match-row mr-${m.status}`}>
@@ -183,12 +187,7 @@ function MatchRow({
         <span className={`mr-team${m.winnerEntryId === m.homeEntryId ? " mr-win" : ""}`}>
           {m.homeTeamName ?? "待定"}
         </span>
-        <span className="mr-score">
-          {bye ? "轮空" : `${score(m.scoreHome)} : ${score(m.scoreAway)}`}
-          {m.penHome !== null && m.penAway !== null && (
-            <span className="mr-pen">（点球 {m.penHome}:{m.penAway}）</span>
-          )}
-        </span>
+        <MatchScore m={m} agg={agg} />
         <span className={`mr-team${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
           {m.awayTeamName ?? "待定"}
         </span>

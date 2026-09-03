@@ -5,6 +5,7 @@ import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { TopBar } from "../components/TopBar";
 import { StandingsTables } from "./StandingsTab";
 import { elimRoundName, stageTitle } from "./MatchesTab";
+import { MatchScore, computeAgg } from "../components/MatchScore";
 import type {
   EntryDTO,
   MatchDTO,
@@ -134,6 +135,7 @@ export default function PublicTournament() {
               <section key={stage.id} className="stage-block">
                 <h3 className="stage-head">{stageTitle[stage.kind]}</h3>
                 {rounds.map((round) => {
+                  const roundList = list.filter((m) => m.round === round);
                   const label =
                     stage.kind === "elim"
                       ? elimRoundName(round, Math.max(...list.map((m) => m.round)))
@@ -141,11 +143,13 @@ export default function PublicTournament() {
                   return (
                     <div key={round} className="round-block">
                       <h4 className="round-head">{label}</h4>
-                      {list
-                        .filter((m) => m.round === round)
-                        .map((m) => (
-                          <PublicMatchRow key={m.id} match={m} />
-                        ))}
+                      {roundList.map((m) => (
+                        <PublicMatchRow
+                          key={m.id}
+                          match={m}
+                          agg={computeAgg(m, roundList)}
+                        />
+                      ))}
                     </div>
                   );
                 })}
@@ -158,7 +162,7 @@ export default function PublicTournament() {
               {matches
                 .filter((m) => !detail.stages.some((s) => s.id === m.stageId))
                 .map((m) => (
-                  <PublicMatchRow key={m.id} match={m} />
+                  <PublicMatchRow key={m.id} match={m} agg={null} />
                 ))}
             </section>
           )}
@@ -195,21 +199,14 @@ export default function PublicTournament() {
   );
 }
 
-function PublicMatchRow({ match: m }: { match: MatchDTO }) {
-  const bye = m.note === "轮空";
-  const score = (v: number | null) => (v === null ? "-" : String(v));
+function PublicMatchRow({ match: m, agg }: { match: MatchDTO; agg: [number, number] | null }) {
   return (
     <div className={`match-row mr-${m.status}`}>
       <div className="mr-line">
         <span className={`mr-team${m.winnerEntryId === m.homeEntryId ? " mr-win" : ""}`}>
           {m.homeTeamName ?? "待定"}
         </span>
-        <span className="mr-score">
-          {bye ? "轮空" : `${score(m.scoreHome)} : ${score(m.scoreAway)}`}
-          {m.penHome !== null && m.penAway !== null && (
-            <span className="mr-pen">（点球 {m.penHome}:{m.penAway}）</span>
-          )}
-        </span>
+        <MatchScore m={m} agg={agg} />
         <span className={`mr-team${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
           {m.awayTeamName ?? "待定"}
         </span>
