@@ -16,13 +16,13 @@
     {
       "binding": "DB",
       "database_name": "whl",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "ec3cc695-70bc-47ab-a454-5ca62ec22dd6"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "placeholder_local_only"
+      "id": "87e2d78308bc47e9b36dc6de53be0458"
     }
   ],
   "observability": {
