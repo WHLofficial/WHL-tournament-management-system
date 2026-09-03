@@ -20,7 +20,7 @@ const EVENT_LABEL: Record<MatchEventDTO["type"], string> = {
   red: "红牌",
 };
 
-function elimRoundName(round: number, rounds: number): string {
+export function elimRoundName(round: number, rounds: number): string {
   const slots = 2 ** (rounds - round);
   if (slots === 1) return "决赛";
   if (slots === 2) return "半决赛";
@@ -28,7 +28,7 @@ function elimRoundName(round: number, rounds: number): string {
   return `1/${slots} 决赛`;
 }
 
-const stageTitle: Record<StageDTO["kind"], string> = {
+export const stageTitle: Record<StageDTO["kind"], string> = {
   elim: "淘汰赛",
   round_robin: "循环赛",
   group: "小组赛",

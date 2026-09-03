@@ -1,3 +1,4 @@
+import type { StageStandingDTO, StandingGroupDTO } from "../../shared/types";
 // 积分重算 + 淘汰晋级器（TECH_DESIGN §6：全量重算而非增量累加，
 // 报分/改分/改判走同一条路径，永远收敛到正确结果）
 // 两个构建器都只读 + 返回 D1PreparedStatement[]，由调用方与报分写入合并进
@@ -462,4 +463,52 @@ export async function readStandings(
     out.push(...list);
   }
   return out;
+}
+
+// ---------- 积分榜读取（admin 与公开页共用）----------
+// 小组/循环阶段各生成一份；小组按组表 sort_order 分块，循环赛单组。
+export async function readStageStandings(
+  db: D1Database,
+  tournamentId: number
+): Promise<StageStandingDTO[]> {
+  const stages = await db
+    .prepare(
+      `SELECT id, kind, sort_order FROM stage
+       WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order`
+    )
+    .bind(tournamentId)
+    .all<{ id: number; kind: "group" | "round_robin"; sort_order: number }>();
+
+  const standings: StageStandingDTO[] = [];
+  for (const st of stages.results ?? []) {
+    const rows = await readStandings(db, st.id);
+    if (rows.length === 0) continue;
+    let groups: StandingGroupDTO[];
+    if (st.kind === "group") {
+      const gRes = await db
+        .prepare(`SELECT id, name FROM "group" WHERE stage_id = ? ORDER BY sort_order, id`)
+        .bind(st.id)
+        .all<{ id: number; name: string }>();
+      const gname = new Map(gRes.results.map((g) => [g.id, g.name]));
+      const byGroup = new Map<number | null, StandingGroupDTO>();
+      for (const r of rows) {
+        if (!byGroup.has(r.groupId)) {
+          byGroup.set(r.groupId, {
+            groupId: r.groupId,
+            name: r.groupId != null ? (gname.get(r.groupId) ?? "") : "",
+            rows: [],
+          });
+        }
+        byGroup.get(r.groupId)!.rows.push(r);
+      }
+      const order = new Map(gRes.results.map((g, i) => [g.id, i]));
+      groups = [...byGroup.values()].sort(
+        (a, b) => (order.get(a.groupId ?? -1) ?? 99) - (order.get(b.groupId ?? -1) ?? 99)
+      );
+    } else {
+      groups = [{ groupId: null, name: "", rows }];
+    }
+    standings.push({ stageId: st.id, kind: st.kind, sortOrder: st.sort_order, groups });
+  }
+  return standings;
 }

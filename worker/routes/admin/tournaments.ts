@@ -6,8 +6,7 @@ import {
   type TournamentDTO,
 } from "../../../shared/types";
 import { defaultCrossTemplate } from "../../lib/seeding";
-import { readStandings } from "../../lib/standings";
-import type { StageStandingDTO, StandingGroupDTO } from "../../../shared/types";
+import { readStageStandings } from "../../lib/standings";
 
 type Status = TournamentDTO["status"];
 const ALLOWED: Record<Status, Status[]> = {
@@ -194,45 +193,7 @@ app.get("/:id", async (c) => {
 // GET /:id/standings：小组/循环阶段的积分榜（已按 积分→净胜→进球→相互战绩 排序）
 app.get("/:id/standings", async (c) => {
   const id = Number(c.req.param("id"));
-  const stages = await c.env.DB.prepare(
-    `SELECT id, kind, sort_order FROM stage
-     WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order`
-  )
-    .bind(id)
-    .all<{ id: number; kind: "group" | "round_robin"; sort_order: number }>();
-
-  const standings: StageStandingDTO[] = [];
-  for (const st of stages.results ?? []) {
-    const rows = await readStandings(c.env.DB, st.id);
-    if (rows.length === 0) continue;
-    let groups: StandingGroupDTO[];
-    if (st.kind === "group") {
-      const gRes = await c.env.DB.prepare(
-        `SELECT id, name FROM "group" WHERE stage_id = ? ORDER BY sort_order, id`
-      )
-        .bind(st.id)
-        .all<{ id: number; name: string }>();
-      const gname = new Map(gRes.results.map((g) => [g.id, g.name]));
-      const byGroup = new Map<number | null, StandingGroupDTO>();
-      for (const r of rows) {
-        if (!byGroup.has(r.groupId)) {
-          byGroup.set(r.groupId, {
-            groupId: r.groupId,
-            name: r.groupId != null ? (gname.get(r.groupId) ?? "") : "",
-            rows: [],
-          });
-        }
-        byGroup.get(r.groupId)!.rows.push(r);
-      }
-      const order = new Map(gRes.results.map((g, i) => [g.id, i]));
-      groups = [...byGroup.values()].sort(
-        (a, b) => (order.get(a.groupId ?? -1) ?? 99) - (order.get(b.groupId ?? -1) ?? 99)
-      );
-    } else {
-      groups = [{ groupId: null, name: "", rows }];
-    }
-    standings.push({ stageId: st.id, kind: st.kind, sortOrder: st.sort_order, groups });
-  }
+  const standings = await readStageStandings(c.env.DB, id);
   return c.json({ standings });
 });
 

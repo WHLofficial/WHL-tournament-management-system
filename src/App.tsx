@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router";
 import { AuthProvider } from "./auth";
 import { RequireRole } from "./components/ui";
 import { Home } from "./pages/Home";
+import PublicTournament from "./pages/PublicTournament";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { AdminTournaments } from "./pages/AdminTournaments";
@@ -14,6 +15,7 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/t/:id" element={<PublicTournament />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route

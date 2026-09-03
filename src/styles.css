@@ -367,3 +367,17 @@ button.btn-ghost {
 .pen-hint { font-weight: 400; font-size: 11px; }
 .standings-note { font-size: 12px; margin-top: 6px; }
 .standings-table th.num { white-space: nowrap; }
+
+/* ---------- 公开页 ---------- */
+.home-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-top: 14px; }
+.home-card { display: block; background: #fff; border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 14px 16px; color: inherit; text-decoration: none; transition: box-shadow .15s; }
+.home-card:hover { box-shadow: 0 2px 10px rgba(15, 23, 42, .08); }
+.home-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 15px; }
+.home-card-desc { margin: 6px 0 0; font-size: 13px; color: var(--muted, #64748b); }
+.home-card-meta { margin: 8px 0 0; font-size: 12px; color: var(--muted, #64748b); }
+.pub-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.crumb { margin-bottom: 8px; font-size: 13px; }
+.teams-public .team-list { list-style: none; padding: 0; margin: 0; background: #fff; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; }
+.teams-public .team-list li { padding: 8px 12px; border-bottom: 1px solid #eef2f7; font-size: 14px; }
+.teams-public .team-list li:last-child { border-bottom: none; }
+.team-seed { display: inline-block; width: 2.2em; color: var(--muted, #64748b); font-variant-numeric: tabular-nums; }
