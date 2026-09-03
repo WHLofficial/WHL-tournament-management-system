@@ -3,9 +3,11 @@ import type { AppEnv } from "../../env";
 import { requireAdmin } from "../../middleware/auth";
 import type { MatchDTO } from "../../../shared/types";
 import {
+  buildCrossPlan,
   buildElimPlan,
   drawGroups,
   roundRobinSchedule,
+  type PlanMatch,
 } from "../../lib/seeding";
 
 const app = new Hono<AppEnv>();
@@ -16,6 +18,7 @@ type StageRow = {
   tournament_id: number;
   kind: "elim" | "round_robin" | "group";
   config_json: string | null;
+  sort_order: number;
 };
 
 type EntryRow = { id: number; seed: number | null; group_id: number | null };
@@ -27,7 +30,7 @@ async function loadStage(
   stageId: number
 ): Promise<{ stage: StageRow; started: number }> {
   const stage = await db.prepare(
-    "SELECT id, tournament_id, kind, config_json FROM stage WHERE id = ? AND tournament_id = ?"
+    "SELECT id, tournament_id, kind, config_json, sort_order FROM stage WHERE id = ? AND tournament_id = ?"
   )
     .bind(stageId, tid)
     .first<StageRow>();
@@ -95,16 +98,45 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       legs?: number;
       final_legs?: number;
       third_place?: boolean;
+      source?: { cross?: string };
     };
-    const plan = buildElimPlan(list.length, {
+    const rawCross = cfg.source?.cross;
+    // cross 兼容 string[]（正常存储形态）与逗号分隔 string
+    const crossTokens = Array.isArray(rawCross)
+      ? rawCross.map((s) => String(s).trim()).filter(Boolean)
+      : typeof rawCross === "string"
+        ? rawCross.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+        : [];
+    const planOpts = {
       legs: cfg.legs === 2 ? 2 : 1,
       finalLegs: cfg.final_legs === 2 ? 2 : cfg.final_legs === 1 ? 1 : undefined,
       thirdPlace: !!cfg.third_place,
-    });
+    };
+    let plan: { matches: PlanMatch[]; rounds: number };
+    if (crossTokens.length > 0) {
+      try {
+        plan = await buildCrossStagePlan(env, tid, stageId, crossTokens, planOpts);
+      } catch (e) {
+        if (e instanceof HttpError) return fail(c, e.status, e.message);
+        throw e;
+      }
+    } else {
+      plan = buildElimPlan(list.length, planOpts);
+    }
     rounds = plan.rounds;
+    // seed 路径 home/away 是种子号需映射成 entry；cross 路径已是 entry id（null=待晋级器填充）
+    const directIds = crossTokens.length > 0;
     for (const m of plan.matches) {
-      const home = m.home !== null && m.home <= list.length ? list[m.home - 1].id : null;
-      const away = m.away !== null && m.away <= list.length ? list[m.away - 1].id : null;
+      const home = directIds
+        ? m.home
+        : m.home !== null && m.home <= list.length
+          ? list[m.home - 1].id
+          : null;
+      const away = directIds
+        ? m.away
+        : m.away !== null && m.away <= list.length
+          ? list[m.away - 1].id
+          : null;
       // 轮空场：pending + 预填 winner，避免 finished 挡住重生成；note 沿用 plan（轮空/季军赛）
       const isBye = home !== null && away === null;
       stmts.push(
@@ -408,5 +440,114 @@ app.delete("/:id/matches/:matchId", async (c) => {
   await c.env.DB.prepare("DELETE FROM match WHERE id = ?").bind(matchId).run();
   return c.json({ ok: true });
 });
+
+// ---------- 跨组淘汰：由小组赛名次取人 ----------
+// 守卫：小组赛程已生成且全部完赛；按 积分>净胜>进球>seed 排组内名次，
+// 解析 cross 模板（如 "A1-B2,B1-A2"）得到首轮配对，交给 buildCrossPlan 出计划。
+async function buildCrossStagePlan(
+  env: { DB: D1Database },
+  tid: number,
+  stageId: number,
+  crossTokens: string[],
+  opts: { legs: 1 | 2; finalLegs?: 1 | 2; thirdPlace: boolean }
+): Promise<{ matches: PlanMatch[]; rounds: number }> {
+  const groupStage = await env.DB.prepare(
+    `SELECT id, config_json FROM stage
+     WHERE tournament_id = ? AND kind = 'group'
+       AND sort_order < (SELECT sort_order FROM stage WHERE id = ?)
+     ORDER BY sort_order DESC LIMIT 1`
+  )
+    .bind(tid, stageId)
+    .first<{ id: number; config_json: string | null }>();
+  if (!groupStage)
+    throw new HttpError(400, "该阶段配置了跨组对阵，但赛事没有更早的小组赛阶段");
+
+  const st = await env.DB.prepare(
+    "SELECT status, COUNT(*) AS n FROM match WHERE stage_id = ? GROUP BY status"
+  )
+    .bind(groupStage.id)
+    .all<{ status: string; n: number }>();
+  const byStatus = new Map((st.results ?? []).map((r) => [r.status, r.n]));
+  if (!byStatus.get("finished") && !byStatus.get("pending") && !byStatus.get("live")) {
+    throw new HttpError(400, "请先生成小组赛程，再生成淘汰赛对阵");
+  }
+  if ((byStatus.get("pending") ?? 0) + (byStatus.get("live") ?? 0) > 0) {
+    throw new HttpError(400, "小组赛尚未全部完赛，不能生成淘汰赛对阵");
+  }
+
+  const gcfg = (JSON.parse(groupStage.config_json || "{}") ?? {}) as {
+    group_count?: number;
+    qualify_per_group?: number;
+  };
+  const qualify = gcfg.qualify_per_group ?? 2;
+  if (qualify !== 2) throw new HttpError(400, "跨组对阵暂仅支持每组出线 2 队");
+
+  const groups = await env.DB.prepare(
+    'SELECT id, name FROM "group" WHERE stage_id = ?'
+  )
+    .bind(groupStage.id)
+    .all<{ id: number; name: string }>();
+  const groupName = new Map((groups.results ?? []).map((g) => [g.id, g.name]));
+
+  // 组内名次：pts > gd > gf > seed（GROUP BY e.id，pts 等聚合基于 finished 场次）
+  const standings = await env.DB.prepare(
+    `SELECT e.id, e.group_id,
+      SUM(CASE
+        WHEN m.home_entry_id = e.id AND m.score_home > m.score_away THEN 3
+        WHEN m.away_entry_id = e.id AND m.score_away > m.score_home THEN 3
+        WHEN (m.home_entry_id = e.id OR m.away_entry_id = e.id)
+          AND m.score_home = m.score_away THEN 1
+        ELSE 0 END) AS pts,
+      SUM(CASE WHEN m.home_entry_id = e.id THEN m.score_home - m.score_away
+               WHEN m.away_entry_id = e.id THEN m.score_away - m.score_home
+               ELSE 0 END) AS gd,
+      SUM(CASE WHEN m.home_entry_id = e.id THEN m.score_home
+               WHEN m.away_entry_id = e.id THEN m.score_away
+               ELSE 0 END) AS gf
+    FROM entry e
+    LEFT JOIN match m ON m.stage_id = ? AND m.status = 'finished'
+      AND (m.home_entry_id = e.id OR m.away_entry_id = e.id)
+    WHERE e.tournament_id = ? AND e.group_id IS NOT NULL
+    GROUP BY e.id
+    ORDER BY e.group_id, pts DESC, gd DESC, gf DESC, e.seed`
+  )
+    .bind(groupStage.id, tid)
+    .all<{ id: number; group_id: number }>();
+
+  // rank: 组名 -> 名次 -> entry id
+  const rank = new Map<string, Map<number, number>>();
+  const seen = new Map<number, number>();
+  for (const row of standings.results ?? []) {
+    const taken = seen.get(row.group_id) ?? 0;
+    seen.set(row.group_id, taken + 1);
+    if (taken + 1 > qualify) continue;
+    const name = groupName.get(row.group_id);
+    if (!name) continue;
+    if (!rank.has(name)) rank.set(name, new Map());
+    rank.get(name)!.set(taken + 1, row.id);
+  }
+
+  const resolve = (token: string): number => {
+    const m = /^([A-Pa-p])([1-9])$/.exec(token.trim());
+    if (!m) throw new HttpError(400, `无法识别跨组位置"${token}"，模板应为 组字母+名次，如 A1`);
+    const name = m[1].toUpperCase();
+    const pos = Number(m[2]);
+    const hit = rank.get(name)?.get(pos);
+    if (hit === undefined)
+      throw new HttpError(400, `小组 ${name} 的第 ${pos} 名不存在，检查跨组模板与出线名额`);
+    return hit;
+  };
+
+  const pairs: Array<[number | null, number | null]> = [];
+  for (const token of crossTokens) {
+    const seg = token.trim();
+    if (!seg) continue;
+    const mm = /^([^-\s]+)\s*-\s*([^-\s]+)$/.exec(seg);
+    if (!mm) throw new HttpError(400, `跨组对阵格式错误："${seg}"`);
+    pairs.push([resolve(mm[1]), resolve(mm[2])]);
+  }
+  if (pairs.length < 2) throw new HttpError(400, "跨组对阵至少需要两场");
+  return buildCrossPlan(pairs, opts);
+}
 
 export default app;
