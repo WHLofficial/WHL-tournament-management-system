@@ -402,8 +402,8 @@ function ScoreForm({
   onDone: () => void;
   live?: boolean;
 }) {
-  const [sh, setSh] = useState(m.scoreHome?.toString() ?? "");
-  const [sa, setSa] = useState(m.scoreAway?.toString() ?? "");
+  const [sh, setSh] = useState(live ? "" : (m.scoreHome?.toString() ?? ""));
+  const [sa, setSa] = useState(live ? "" : (m.scoreAway?.toString() ?? ""));
   const [ph, setPh] = useState(m.penHome?.toString() ?? "");
   const [pa, setPa] = useState(m.penAway?.toString() ?? "");
   const [err, setErr] = useState<string | null>(null);
@@ -444,7 +444,7 @@ function ScoreForm({
           min="0"
           value={sh}
           onChange={(e) => setSh(e.target.value)}
-          placeholder={live ? "主队" : "主"}
+          placeholder={live ? String(m.scoreHome ?? 0) : "主"}
           style={{ width: "4.5em" }}
         />
         {" : "}
@@ -454,7 +454,7 @@ function ScoreForm({
           min="0"
           value={sa}
           onChange={(e) => setSa(e.target.value)}
-          placeholder="客"
+          placeholder={live ? String(m.scoreAway ?? 0) : "客"}
           style={{ width: "4.5em" }}
         />
       </label>
@@ -484,6 +484,7 @@ function ScoreForm({
         {live ? "终场确认" : m.status === "finished" ? "保存改判" : "记为完赛"}
       </button>
       {live && <button className="btn btn-sm" type="button" disabled={busy} onClick={onDone}>取消</button>}
+      {live && <span className="muted">留空 = 按事件累计比分终场</span>}
       {equal && <span className="muted">平局且是淘汰赛时必须填点球比分</span>}
       {err && <span className="error-text">{err}</span>}
     </form>

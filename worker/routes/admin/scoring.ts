@@ -3,6 +3,7 @@ import type { AppEnv } from "../../env";
 import { requireAdmin } from "../../middleware/auth";
 import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
 import { buildCrossStagePlan } from "./schedule";
+import type { MatchEventDTO, MatchEventType } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
 app.use("*", requireAdmin);
@@ -393,7 +394,26 @@ app.get("/:id/events", async (c) => {
   )
     .bind(id)
     .all();
-  return c.json({ events: res.results ?? [] });
+  const rows = (res.results ?? []) as Array<{
+    id: number;
+    entry_id: number;
+    player_id: number | null;
+    assist_player_id: number | null;
+    type: MatchEventType;
+    minute: number | null;
+    created_at: string;
+  }>;
+  const events: MatchEventDTO[] = rows.map((r) => ({
+    id: r.id,
+    matchId: id,
+    entryId: r.entry_id,
+    playerId: r.player_id,
+    assistPlayerId: r.assist_player_id,
+    type: r.type,
+    minute: r.minute,
+    createdAt: r.created_at,
+  }));
+  return c.json({ events });
 });
 
 export default app;
