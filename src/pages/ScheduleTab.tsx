@@ -69,9 +69,7 @@ export default function ScheduleTab({
     }
   };
 
-  if (detail.entries.length < 2) {
-    return <p className="muted">报名不足 2 支，先去「报名」页添加参赛球队。</p>;
-  }
+  const needEntries = detail.entries.length < 2;
 
   const generate = (stage: StageDTO) =>
     act(
@@ -114,6 +112,13 @@ export default function ScheduleTab({
   return (
     <div className="schedule-tab">
       {message && <p className="error">{message}</p>}
+      {detail.stages.length === 0 && (
+        <p className="muted card">
+          {needEntries
+            ? "报名不足 2 支，先去「报名」页添加参赛球队，再在这里搭阶段。"
+            : "还没有任何阶段：这是空白赛制，用下方「添加阶段」搭出第一阶段。"}
+        </p>
+      )}
       {detail.stages.map((stage) => (
         <StageBlock
           key={stage.id}

@@ -56,10 +56,10 @@ app.post("/", async (c) => {
   if (!name || name.length > 64) {
     return c.json({ message: "赛事名不能为空，且不超过 64 字" }, 400);
   }
-  if (!format || !(format in DEFAULT_TOURNAMENT_CONFIG)) {
+  if (!format || (format !== "custom" && !(format in DEFAULT_TOURNAMENT_CONFIG))) {
     return c.json({ message: "赛制不合法" }, 400);
   }
-  const cfg = DEFAULT_TOURNAMENT_CONFIG[format];
+  const cfg = DEFAULT_TOURNAMENT_CONFIG[format] ?? {};
   const r = await c.env.DB.prepare(
     "INSERT INTO tournament (org_id, name, description, format, status, config_json, created_by) VALUES (1, ?, ?, ?, 'draft', ?, ?)"
   )
@@ -73,7 +73,8 @@ app.post("/", async (c) => {
     .run();
   const tid = Number(r.meta.last_row_id);
 
-  // 按 format 生成阶段结构；group_knockout 的小组行一并建好
+  // 按 format 生成阶段结构；custom = 空白编排，不建任何阶段，由管理员在编排页自建；
+  // group_knockout 的小组行一并建好
   const stmts: D1PreparedStatement[] = [];
   const addStage = (kind: string, sortOrder: number, config: unknown) =>
     stmts.push(
@@ -81,7 +82,9 @@ app.post("/", async (c) => {
         "INSERT INTO stage (tournament_id, kind, sort_order, config_json) VALUES (?, ?, ?, ?)"
       ).bind(tid, kind, sortOrder, JSON.stringify(config))
     );
-  if (format === "single_elim") {
+  if (format === "custom") {
+    // 空白编排：什么都不建
+  } else if (format === "single_elim") {
     addStage("elim", 1, cfg);
   } else if (format === "round_robin") {
     addStage("round_robin", 1, cfg);
@@ -101,7 +104,7 @@ app.post("/", async (c) => {
       );
     }
   }
-  await c.env.DB.batch(stmts);
+  if (stmts.length > 0) await c.env.DB.batch(stmts);
   return c.json({ id: tid }, 201);
 });
 

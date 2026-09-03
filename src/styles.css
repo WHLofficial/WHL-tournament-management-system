@@ -270,6 +270,23 @@ button.btn-ghost:hover:not(:disabled) {
   font-weight: 600;
 }
 
+.template-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 14px 0 10px;
+}
+.template-divider::before,
+.template-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.25;
+}
+
 .format-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

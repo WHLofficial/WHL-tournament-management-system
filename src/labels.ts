@@ -11,12 +11,14 @@ export const FORMAT_LABEL: Record<TournamentFormat, string> = {
   single_elim: "单败淘汰",
   round_robin: "循环赛",
   group_knockout: "小组赛 + 淘汰赛",
+  custom: "自定义",
 };
 
 export const FORMAT_HINT: Record<TournamentFormat, string> = {
   single_elim: "输一场就出局，可加季军赛",
   round_robin: "每两队交手两个回合，主客互换",
   group_knockout: "先分组单循环，出线后交叉打淘汰赛",
+  custom: "从空白开始，在编排页自己搭阶段",
 };
 
 export const NEXT_ACTIONS: Record<

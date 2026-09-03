@@ -9,7 +9,7 @@ export function AdminTournaments() {
   const navigate = useNavigate();
   const [tournaments, setTournaments] = useState<TournamentDTO[] | null>(null);
   const [name, setName] = useState("");
-  const [format, setFormat] = useState<TournamentFormat>("single_elim");
+  const [format, setFormat] = useState<TournamentFormat | null>(null);
   const { busy, error, setError, run } = useSubmit();
 
   async function reload() {
@@ -26,7 +26,7 @@ export function AdminTournaments() {
       if (!name.trim()) throw new Error("请填写赛事名称");
       const data = await api<{ id: number }>("/api/admin/tournaments", {
         method: "POST",
-        body: { name, format },
+        body: { name, format: format ?? "custom" },
       });
       setName("");
       setError(null);
@@ -50,22 +50,31 @@ export function AdminTournaments() {
             赛事名称
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：第五届 WHL 杯" />
           </label>
+          {error && <p className="error-msg">{error}</p>}
+          <SubmitButton busy={busy}>
+            {format ? `以「${FORMAT_LABEL[format]}」创建` : "从空白赛制创建"}
+          </SubmitButton>
+          <div className="template-divider">或使用以下模版</div>
           <div className="format-cards">
-            {(Object.keys(FORMAT_LABEL) as TournamentFormat[]).map((f) => (
+            {(Object.keys(FORMAT_LABEL) as TournamentFormat[])
+              .filter((f) => f !== "custom")
+              .map((f) => (
               <label key={f} className={`format-card${format === f ? " selected" : ""}`}>
                 <input
                   type="radio"
                   name="format"
                   checked={format === f}
                   onChange={() => setFormat(f)}
+                  onClick={() => {
+                    // radio 已选中时再点不会触发 change，用 click 实现再点取消
+                    if (format === f) setFormat(null);
+                  }}
                 />
                 <strong>{FORMAT_LABEL[f]}</strong>
                 <span>{FORMAT_HINT[f]}</span>
               </label>
             ))}
           </div>
-          {error && <p className="error-msg">{error}</p>}
-          <SubmitButton busy={busy}>创建赛事</SubmitButton>
         </form>
       </div>
 

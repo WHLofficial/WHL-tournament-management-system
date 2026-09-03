@@ -2,7 +2,7 @@
 
 export type Role = "coach" | "admin" | "superadmin";
 export type TournamentStatus = "draft" | "registering" | "running" | "archived";
-export type TournamentFormat = "single_elim" | "round_robin" | "group_knockout";
+export type TournamentFormat = "single_elim" | "round_robin" | "group_knockout" | "custom";
 export type StageKind = "elim" | "round_robin" | "group";
 export type MatchStatus = "pending" | "live" | "finished";
 export type EventType = "goal" | "yellow" | "red";
@@ -150,8 +150,9 @@ export interface GroupStageConfig {
 
 export type StageConfig = ElimStageConfig | RoundRobinStageConfig | GroupStageConfig;
 
-// 建赛预设：新建赛事时写入 tournament.config_json，编排引擎按它生成 stage 结构
-export const DEFAULT_TOURNAMENT_CONFIG: Record<TournamentFormat, StageConfig> = {
+// 建赛预设：新建赛事时写入 tournament.config_json，编排引擎按它生成 stage 结构。
+// custom = 空白编排，没有预设，也不预建任何阶段。
+export const DEFAULT_TOURNAMENT_CONFIG: Partial<Record<TournamentFormat, StageConfig>> = {
   single_elim: { legs: 1, third_place: false },
   round_robin: { loops: 2 },
   group_knockout: { group_count: 4, loops: 1, qualify_per_group: 2 },
