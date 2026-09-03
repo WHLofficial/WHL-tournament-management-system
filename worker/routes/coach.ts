@@ -8,7 +8,6 @@ const app = new Hono<AppEnv>();
 
 app.post("/bind", async (c) => {
   const user = c.get("user")!;
-  // 认证码爆破防线：按 IP 限流，5 次失败锁 10 分钟
   // 按 IP 限尝试次数：10 分钟窗口 5 次（正常输入一次就成功，够防爆破）
   const ip = c.req.header("CF-Connecting-IP") ?? "local";
   const ok = await rateLimit(c.env, `bindfail:${ip}`, 5, 600);
@@ -34,16 +33,31 @@ app.post("/bind", async (c) => {
     return c.json({ message: "认证码无效或已过期" }, 400);
   }
 
+  // 一账号一队先查再插：查不出已绑时不烧码，提示更友好
+  const existing = await c.env.DB.prepare(
+    "SELECT team_id FROM team_member WHERE user_id = ?"
+  )
+    .bind(user.id)
+    .first<{ team_id: number }>();
+  if (existing) {
+    return c.json({ message: "该账号已经绑定了球队，解绑需联系管理员" }, 409);
+  }
+
+  // 条件烧码防并发重复使用（两个请求同码竞速，只有一个能改到行）
+  const burn = await c.env.DB.prepare(
+    `UPDATE auth_code SET used_by = ?, used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = ? AND used_by IS NULL`
+  )
+    .bind(user.id, row.id)
+    .run();
+  if ((burn.meta.changes ?? 0) !== 1) {
+    return c.json({ message: "认证码无效或已过期" }, 400);
+  }
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        "UPDATE auth_code SET used_by = ?, used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
-      ).bind(user.id, row.id),
-      c.env.DB.prepare("INSERT INTO team_member (team_id, user_id) VALUES (?, ?)").bind(
-        row.team_id,
-        user.id,
-      ),
-    ]);
+    await c.env.DB.prepare("INSERT INTO team_member (team_id, user_id) VALUES (?, ?)").bind(
+      row.team_id,
+      user.id,
+    ).run();
   } catch {
     return c.json({ message: "该账号已经绑定了球队，解绑需联系管理员" }, 409);
   }
