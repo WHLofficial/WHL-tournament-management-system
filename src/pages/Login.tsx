@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { AuthForm, Field, SubmitButton, useSubmit } from "../components/ui";
@@ -8,6 +8,9 @@ import type { MeResp } from "../../shared/types";
 export function Login() {
   const { refresh } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // 被 RequireRole 踢过来时带着原路径，登录完送回去
+  const from = (location.state as { from?: string } | null)?.from ?? "/";
   const { busy, error, run } = useSubmit();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -17,7 +20,7 @@ export function Login() {
     void run(async () => {
       await api<MeResp>("/api/auth/login", { method: "POST", body: { name, password } });
       await refresh();
-      navigate("/");
+      navigate(from);
     });
   }
 

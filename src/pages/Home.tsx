@@ -4,7 +4,7 @@ import { api } from "../api";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import type { TournamentDTO } from "../../shared/types";
 
-// 公开首页：所有非草稿赛事，无需登录。
+// 登录后首页：所有非草稿赛事。未登录会被 RequireRole 踢到登录页；/t/:id 单赛事页仍公开。
 export function Home() {
   const [list, setList] = useState<TournamentDTO[] | null>(null);
   const [err, setErr] = useState<string | null>(null);

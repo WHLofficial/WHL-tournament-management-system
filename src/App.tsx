@@ -29,7 +29,14 @@ function AppShell() {
     <>
       {!bare && <TopBar />}
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route
+          path="/"
+          element={
+            <RequireRole roles={["coach", "admin", "superadmin"]}>
+              <Home />
+            </RequireRole>
+          }
+        />
         <Route path="/t/:id" element={<PublicTournament />} />
         <Route
           path="/my-team"
