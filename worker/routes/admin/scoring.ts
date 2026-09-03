@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { requireAdmin } from "../../middleware/auth";
 import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
-import { buildCrossStagePlan } from "./schedule";
+import { buildAutoFillStmts } from "./schedule";
 import type { MatchEventDTO, MatchEventType } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
@@ -188,74 +188,10 @@ app.post("/:id/finish", async (c) => {
         followUp = await buildAdvanceStmts(c.env.DB, stage.id);
       } else {
         followUp = await buildStandingsStmts(c.env.DB, stage.id);
-        // 小组/循环阶段全部完赛：下一阶段若是跨组淘汰且还没生成，自动按模板取人生成
-        const left = await c.env.DB.prepare(
-          "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND status != 'finished'"
-        )
-          .bind(stage.id)
-          .first<{ n: number }>();
-        if ((left?.n ?? 0) === 0) {
-          const next = await c.env.DB.prepare(
-            `SELECT id FROM stage WHERE tournament_id = ? AND kind = 'elim'
-             AND sort_order > ? ORDER BY sort_order LIMIT 1`
-          )
-            .bind(stage.tournament_id, stage.sort_order)
-            .first<{ id: number }>();
-          const hasMatches = next
-            ? await c.env.DB.prepare("SELECT COUNT(*) AS n FROM match WHERE stage_id = ?")
-                .bind(next.id)
-                .first<{ n: number }>()
-            : null;
-          if (next && (hasMatches?.n ?? 0) === 0) {
-            const cfg = await c.env.DB.prepare("SELECT config_json FROM stage WHERE id = ?")
-              .bind(next.id)
-              .first<{ config_json: string | null }>();
-            const parsed = (JSON.parse(cfg?.config_json || "{}") ?? {}) as {
-              legs?: number;
-              final_legs?: number;
-              third_place?: boolean;
-              source?: { cross?: string[] | string };
-            };
-            const raw = parsed.source?.cross;
-            const tokens = Array.isArray(raw)
-              ? raw.map((s) => String(s).trim()).filter(Boolean)
-              : typeof raw === "string"
-                ? raw.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
-                : [];
-            if (tokens.length > 0) {
-              const plan = await buildCrossStagePlan(
-                c.env,
-                stage.tournament_id,
-                next.id,
-                tokens,
-                {
-                  legs: parsed.legs === 2 ? 2 : 1,
-                  finalLegs:
-                    parsed.final_legs === 2 ? 2 : parsed.final_legs === 1 ? 1 : undefined,
-                  thirdPlace: !!parsed.third_place,
-                }
-              );
-              for (const pm of plan.matches) {
-                followUp.push(
-                  c.env.DB.prepare(
-                    `INSERT INTO match (stage_id, round, slot, leg, home_entry_id, away_entry_id, winner_entry_id, note)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-                  ).bind(
-                    next.id,
-                    pm.round,
-                    pm.slot,
-                    pm.leg ?? null,
-                    pm.home,
-                    pm.away,
-                    pm.home != null && pm.away == null ? pm.home : null,
-                    pm.note ?? null
-                  )
-                );
-              }
-              regenerated = true;
-            }
-          }
-        }
+        // 小组/循环阶段全部完赛：按下一阶段的取人规则（cross 模板 / topN）自动生成首轮赛程
+        const autoStmts = await buildAutoFillStmts(c.env, stage.tournament_id, stage.id);
+        followUp.push(...autoStmts);
+        if (autoStmts.length > 0) regenerated = true;
       }
       if (followUp.length > 0) await c.env.DB.batch(followUp);
     } catch (e) {
