@@ -409,9 +409,16 @@ button.btn-ghost:hover:not(:disabled) {
 .event-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .ev-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .ev-goal { background: var(--pitch); }
+.ev-pen_goal { background: var(--pitch); }
+.ev-pen_miss { background: #94a3b8; }
+.ev-own_goal { background: #b45309; }
+.ev-injury_minor { background: #f97316; }
+.ev-injury_major { background: #e11d48; }
 .ev-yellow { background: #facc15; }
 .ev-red { background: #dc2626; }
 .ev-minute { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 2.5em; }
+.ev-player { font-weight: 600; }
+.ev-assist { color: var(--muted); }
 .ev-team { color: var(--muted); }
 
 /* ---------- 积分榜 ---------- */

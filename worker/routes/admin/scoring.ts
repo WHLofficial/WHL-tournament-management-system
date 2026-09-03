@@ -54,23 +54,31 @@ async function assertNotArchived(db: D1Database, matchId: number): Promise<void>
   if (t?.status === "archived") throw new HttpError(400, "赛事已归档，比分已锁定");
 }
 
-// live 期间的实时比分：由 goal 事件累计（终场确认才落 score 列）
+// live 期间的实时比分：进球类事件累计，乌龙球计入对方（终场确认才落 score 列）
 async function liveScore(
   db: D1Database,
   m: MatchRow
 ): Promise<{ home: number; away: number }> {
   const res = await db
     .prepare(
-      `SELECT entry_id, COUNT(*) AS n FROM match_event
-       WHERE match_id = ? AND type = 'goal' GROUP BY entry_id`
+      `SELECT entry_id,
+              SUM(CASE WHEN type IN ('goal', 'pen_goal') THEN 1 ELSE 0 END) AS scored,
+              SUM(CASE WHEN type = 'own_goal' THEN 1 ELSE 0 END) AS og
+       FROM match_event
+       WHERE match_id = ? GROUP BY entry_id`
     )
     .bind(m.id)
-    .all<{ entry_id: number; n: number }>();
+    .all<{ entry_id: number; scored: number | null; og: number | null }>();
   let home = 0;
   let away = 0;
   for (const r of res.results ?? []) {
-    if (r.entry_id === m.home_entry_id) home += r.n;
-    else if (r.entry_id === m.away_entry_id) away += r.n;
+    if (r.entry_id === m.home_entry_id) {
+      home += r.scored ?? 0;
+      away += r.og ?? 0;
+    } else if (r.entry_id === m.away_entry_id) {
+      away += r.scored ?? 0;
+      home += r.og ?? 0;
+    }
   }
   return { home, away };
 }
@@ -276,17 +284,29 @@ app.post("/:id/finish", async (c) => {
   }
 });
 
-// POST /events：live 期间录事件（进球/黄牌/红牌），进球实时累计比分，不触发重算
+// POST /events：live 期间录事件，进球/点球进球/乌龙球实时累计比分，不触发重算
+const EVENT_TYPES = [
+  "goal",
+  "pen_goal",
+  "pen_miss",
+  "own_goal",
+  "injury_minor",
+  "injury_major",
+  "yellow",
+  "red",
+] as const;
+
 app.post("/:id/events", async (c) => {
   const id = Number(c.req.param("id"));
   const body = (await c.req.json().catch(() => null)) as {
     type?: string;
     entryId?: number;
     playerId?: number | null;
+    assistPlayerId?: number | null;
     minute?: number | null;
   } | null;
-  if (!body?.type || !["goal", "yellow", "red"].includes(body.type))
-    return fail(c, 400, "事件类型必须是 goal / yellow / red");
+  if (!body?.type || !EVENT_TYPES.includes(body.type as (typeof EVENT_TYPES)[number]))
+    return fail(c, 400, "事件类型必须是 goal / pen_goal / pen_miss / own_goal / injury_minor / injury_major / yellow / red");
   if (body.entryId == null) return fail(c, 400, "缺少所属球队 entryId");
   if (body.minute != null && (body.minute < 0 || body.minute > 300))
     return fail(c, 400, "分钟数应在 0-300 之间");
@@ -296,11 +316,41 @@ app.post("/:id/events", async (c) => {
     if (m.status !== "live") return fail(c, 400, "仅进行中的比赛可录事件");
     if (body.entryId !== m.home_entry_id && body.entryId !== m.away_entry_id)
       return fail(c, 400, "该球队不在本场对阵中");
+    // 球员归属校验：射手/助攻必须属于该参赛队（entry.team_id 关联 player.team_id）
+    for (const [label, pid] of [
+      ["进球球员", body.playerId],
+      ["助攻球员", body.assistPlayerId],
+    ] as const) {
+      if (pid == null) continue;
+      const p = await c.env.DB.prepare(
+        `SELECT p.id FROM player p
+         JOIN entry e ON e.team_id = p.team_id
+         WHERE p.id = ? AND e.id = ?`
+      )
+        .bind(pid, body.entryId)
+        .first<{ id: number }>();
+      if (!p) return fail(c, 400, `${label}不属于该球队`);
+    }
+    const wantsAssist = body.assistPlayerId != null;
+    if (wantsAssist && body.type !== "goal" && body.type !== "pen_goal")
+      return fail(c, 400, "只有进球和点球进球可以记助攻");
+    if (wantsAssist && body.playerId == null)
+      return fail(c, 400, "记助攻需要先选择进球球员");
+    if (wantsAssist && body.assistPlayerId === body.playerId)
+      return fail(c, 400, "助攻球员不能和进球球员是同一人");
     await c.env.DB.prepare(
-      `INSERT INTO match_event (match_id, entry_id, player_id, type, minute, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO match_event (match_id, entry_id, player_id, assist_player_id, type, minute, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-      .bind(id, body.entryId, body.playerId ?? null, body.type, body.minute ?? null, c.get("user").id)
+      .bind(
+        id,
+        body.entryId,
+        body.playerId ?? null,
+        body.assistPlayerId ?? null,
+        body.type,
+        body.minute ?? null,
+        c.get("user")!.id,
+      )
       .run();
     const score = await liveScore(c.env.DB, m);
     return c.json({ ok: true, scoreHome: score.home, scoreAway: score.away });
@@ -338,7 +388,7 @@ app.delete("/:id/events/:eventId", async (c) => {
 app.get("/:id/events", async (c) => {
   const id = Number(c.req.param("id"));
   const res = await c.env.DB.prepare(
-    `SELECT e.id, e.entry_id, e.player_id, e.type, e.minute, e.created_at
+    `SELECT e.id, e.entry_id, e.player_id, e.assist_player_id, e.type, e.minute, e.created_at
      FROM match_event e WHERE e.match_id = ? ORDER BY e.id`
   )
     .bind(id)

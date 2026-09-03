@@ -260,12 +260,23 @@ export interface MatchDTO {
   note: string | null;
 }
 
+export type MatchEventType =
+  | "goal"
+  | "pen_goal"
+  | "pen_miss"
+  | "own_goal"
+  | "injury_minor"
+  | "injury_major"
+  | "yellow"
+  | "red";
+
 export interface MatchEventDTO {
   id: number;
   matchId: number;
-  type: "goal" | "yellow" | "red";
+  type: MatchEventType;
   entryId: number;
   playerId: number | null;
+  assistPlayerId: number | null;
   minute: number | null;
   createdAt: string;
 }

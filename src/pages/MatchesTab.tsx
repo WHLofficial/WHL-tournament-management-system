@@ -5,6 +5,7 @@ import type {
   EntryDTO,
   MatchDTO,
   MatchEventDTO,
+  PlayerDTO,
   StageDTO,
   TournamentDetailDTO,
 } from "../../shared/types";
@@ -17,6 +18,11 @@ const MATCH_STATUS: Record<MatchDTO["status"], string> = {
 
 const EVENT_LABEL: Record<MatchEventDTO["type"], string> = {
   goal: "进球",
+  pen_goal: "点球进球",
+  pen_miss: "点球射失",
+  own_goal: "乌龙球（计入对方）",
+  injury_minor: "轻伤 🩹",
+  injury_major: "重伤 🚑",
   yellow: "黄牌",
   red: "红牌",
 };
@@ -280,6 +286,42 @@ function MatchPanel({
 }) {
   const homeName = m.homeTeamName ?? "主队";
   const awayName = m.awayTeamName ?? "客队";
+  // 两队名单：事件表单选球员、事件列表显示人名都要用
+  const [teamPlayers, setTeamPlayers] = useState<Map<number, PlayerDTO[]> | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const teamIds = [
+      m.homeEntryId != null ? entryById.get(m.homeEntryId)?.teamId : undefined,
+      m.awayEntryId != null ? entryById.get(m.awayEntryId)?.teamId : undefined,
+    ].filter((x): x is number => x != null);
+    const uniq = [...new Set(teamIds)];
+    if (uniq.length === 0) return;
+    let alive = true;
+    Promise.all(
+      uniq.map((tid) =>
+        api<{ players: PlayerDTO[] }>(`/api/admin/teams/${tid}`).then(
+          (b) => [tid, b.players] as const,
+        ),
+      ),
+    ).then((pairs) => {
+      if (alive) setTeamPlayers(new Map(pairs));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [m.id, entryById]);
+
+  const playersOf = (entryId: number | null): PlayerDTO[] =>
+    entryId == null
+      ? []
+      : (teamPlayers?.get(entryById.get(entryId)?.teamId ?? -1) ?? []);
+  const playerById = new Map<number, string>();
+  if (teamPlayers) {
+    for (const list of teamPlayers.values())
+      for (const p of list) playerById.set(p.id, p.name);
+  }
 
   return (
     <div className="match-panel">
@@ -324,8 +366,21 @@ function MatchPanel({
               {awayName} 进球
             </button>
           </div>
-          <EventForm match={m} busy={busy} act={act} />
-          <EventList matchId={m.id} entryById={entryById} busy={busy} act={act} tick={tick} />
+          <EventForm
+            match={m}
+            homePlayers={playersOf(m.homeEntryId)}
+            awayPlayers={playersOf(m.awayEntryId)}
+            busy={busy}
+            act={act}
+          />
+          <EventList
+            matchId={m.id}
+            entryById={entryById}
+            playerById={playerById}
+            busy={busy}
+            act={act}
+            tick={tick}
+          />
           <ScoreForm match={m} busy={busy} act={act} onDone={togglePanel} live />
         </>
       )}
@@ -437,16 +492,30 @@ function ScoreForm({
 
 function EventForm({
   match: m,
+  homePlayers,
+  awayPlayers,
   busy,
   act,
 }: {
   match: MatchDTO;
+  homePlayers: PlayerDTO[];
+  awayPlayers: PlayerDTO[];
   busy: boolean;
   act: Act;
 }) {
   const [type, setType] = useState<MatchEventDTO["type"]>("yellow");
   const [side, setSide] = useState<"home" | "away">("home");
+  const [playerId, setPlayerId] = useState("");
+  const [assistId, setAssistId] = useState("");
   const [minute, setMinute] = useState("");
+
+  const players = side === "home" ? homePlayers : awayPlayers;
+  const goalish = type === "goal" || type === "pen_goal";
+  const switchSide = (s: "home" | "away") => {
+    setSide(s);
+    setPlayerId("");
+    setAssistId("");
+  };
 
   return (
     <form
@@ -462,6 +531,9 @@ function EventForm({
             body: {
               type,
               entryId,
+              playerId: playerId === "" ? undefined : Number(playerId),
+              assistPlayerId:
+                goalish && assistId !== "" ? Number(assistId) : undefined,
               minute: minute === "" ? undefined : Number(minute),
             },
           });
@@ -474,18 +546,50 @@ function EventForm({
         value={type}
         onChange={(e) => setType(e.target.value as MatchEventDTO["type"])}
       >
-        <option value="goal">进球</option>
-        <option value="yellow">黄牌</option>
-        <option value="red">红牌</option>
+        {(Object.keys(EVENT_LABEL) as MatchEventDTO["type"][]).map((t) => (
+          <option key={t} value={t}>
+            {EVENT_LABEL[t]}
+          </option>
+        ))}
       </select>
       <select
         className="input"
         value={side}
-        onChange={(e) => setSide(e.target.value as "home" | "away")}
+        onChange={(e) => switchSide(e.target.value as "home" | "away")}
       >
         <option value="home">{m.homeTeamName ?? "主队"}</option>
         <option value="away">{m.awayTeamName ?? "客队"}</option>
       </select>
+      <select
+        className="input"
+        value={playerId}
+        onChange={(e) => setPlayerId(e.target.value)}
+      >
+        <option value="">球员（可选）</option>
+        {players.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.number ? `#${p.number} ` : ""}
+            {p.name}
+          </option>
+        ))}
+      </select>
+      {goalish && (
+        <select
+          className="input"
+          value={assistId}
+          onChange={(e) => setAssistId(e.target.value)}
+        >
+          <option value="">助攻（可选）</option>
+          {players
+            .filter((p) => String(p.id) !== playerId)
+            .map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.number ? `#${p.number} ` : ""}
+                {p.name}
+              </option>
+            ))}
+        </select>
+      )}
       <input
         className="input"
         type="number"
@@ -506,12 +610,14 @@ function EventForm({
 function EventList({
   matchId,
   entryById,
+  playerById,
   busy,
   act,
   tick,
 }: {
   matchId: number;
   entryById: Map<number, EntryDTO>;
+  playerById: Map<number, string>;
   busy: boolean;
   act: Act;
   tick: number;
@@ -535,11 +641,18 @@ function EventList({
         const e = entryById.get(ev.entryId);
         const name =
           e?.teamName ?? (ev.entryId === undefined ? "未知" : "未知球队");
+        const who = ev.playerId != null ? playerById.get(ev.playerId) : undefined;
+        const assist =
+          ev.assistPlayerId != null
+            ? playerById.get(ev.assistPlayerId)
+            : undefined;
         return (
           <li key={ev.id}>
             <span className={`ev-dot ev-${ev.type}`} />
             {ev.minute !== null && <span className="ev-minute">{ev.minute}′</span>}
             <span>{EVENT_LABEL[ev.type]}</span>
+            {who && <span className="ev-player">{who}</span>}
+            {assist && <span className="ev-assist">（助攻 {assist}）</span>}
             <span className="ev-team">{name}</span>
             <button
               className="btn btn-sm btn-danger"
