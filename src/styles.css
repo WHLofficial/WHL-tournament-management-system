@@ -116,3 +116,193 @@ button.btn-ghost {
   color: #6b7280;
   font-size: 13px;
 }
+
+/* ---------- 管理端 ---------- */
+
+.nav-links {
+  display: flex;
+  gap: 16px;
+  margin-left: 24px;
+}
+.nav-links a {
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 14px;
+}
+.nav-links a:hover {
+  color: var(--accent);
+}
+
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.page-head h2 {
+  margin: 4px 0;
+}
+.btn-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 96px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.table th,
+.table td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid #f0f1f3;
+  font-size: 14px;
+}
+.table th {
+  background: #f9fafb;
+  color: #6b7280;
+  font-weight: 600;
+}
+.table tr:last-child td {
+  border-bottom: none;
+}
+.row-link {
+  cursor: pointer;
+}
+.row-link:hover td {
+  background: #f9fafb;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.st-draft {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.st-registering {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.st-running {
+  background: #dcfce7;
+  color: #15803d;
+}
+.st-archived {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid #e5e7eb;
+  margin: 20px 0 16px;
+}
+.tab {
+  padding: 8px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  font-size: 15px;
+  color: #6b7280;
+  cursor: pointer;
+}
+.tab:hover {
+  color: var(--fg);
+}
+.tab-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.format-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 12px 0;
+}
+.format-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.format-card input {
+  position: absolute;
+  opacity: 0;
+}
+.format-card.selected {
+  border-color: var(--accent);
+  background: #eef4ff;
+}
+.format-card strong {
+  font-size: 15px;
+}
+.format-card span {
+  color: #6b7280;
+}
+
+.paste-box {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  margin-bottom: 10px;
+  resize: vertical;
+}
+
+.inline-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.inline-form input {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.input-sm {
+  width: 72px;
+}
+.btn-sm {
+  padding: 3px 10px;
+  font-size: 13px;
+}
+.btn-danger {
+  background: #dc2626;
+}
+.btn-danger:hover {
+  background: #b91c1c;
+}
+.muted {
+  color: #6b7280;
+  font-size: 14px;
+}
+.divider {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 20px 0;
+}

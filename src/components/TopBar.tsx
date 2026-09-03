@@ -8,6 +8,14 @@ export function TopBar() {
       <Link to="/" className="brand">
         WHL 赛事系统
       </Link>
+      <nav className="nav-links">
+        {user && (user.role === "admin" || user.role === "superadmin") ? (
+          <>
+            <Link to="/admin">赛事管理</Link>
+            <Link to="/admin/teams">球队库</Link>
+          </>
+        ) : null}
+      </nav>
       {loading ? null : user ? (
         <span className="userbox">
           {user.name}

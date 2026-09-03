@@ -4,7 +4,10 @@ import { RequireRole } from "./components/ui";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
-import { AdminHome } from "./pages/AdminHome";
+import { AdminTournaments } from "./pages/AdminTournaments";
+import { AdminTeams } from "./pages/AdminTeams";
+import { TeamDetailPage } from "./pages/TeamDetail";
+import { TournamentManage } from "./pages/TournamentManage";
 
 export default function App() {
   return (
@@ -17,7 +20,31 @@ export default function App() {
           path="/admin"
           element={
             <RequireRole roles={["admin", "superadmin"]}>
-              <AdminHome />
+              <AdminTournaments />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/admin/teams"
+          element={
+            <RequireRole roles={["admin", "superadmin"]}>
+              <AdminTeams />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/admin/teams/:id"
+          element={
+            <RequireRole roles={["admin", "superadmin"]}>
+              <TeamDetailPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/admin/t/:id"
+          element={
+            <RequireRole roles={["admin", "superadmin"]}>
+              <TournamentManage />
             </RequireRole>
           }
         />
