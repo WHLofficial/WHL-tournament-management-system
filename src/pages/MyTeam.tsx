@@ -66,7 +66,7 @@ export default function MyTeam() {
         <div className="card">
           <h3>绑定球队</h3>
           <p className="muted">
-            还没有加入球队。向管理员要一个 8 位认证码，输入后即成为该队教练。
+            还没加入球队。找管理员要一个 8 位认证码，在下面输入就能绑定。
           </p>
           <form onSubmit={bind} className="inline-form">
             <input
@@ -90,7 +90,7 @@ export default function MyTeam() {
             <strong style={{ fontSize: "1.2em" }}>{team.name}</strong>
           </p>
           <p className="muted">
-            名单由管理员维护，如需转会或增补球员请联系管理员。
+            名单由管理员维护，需要转会或增补球员就找管理员。
           </p>
 
           {team.entries.length > 0 && (

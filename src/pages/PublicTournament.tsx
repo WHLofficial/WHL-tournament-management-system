@@ -125,7 +125,7 @@ export default function PublicTournament() {
       {tab === "schedule" && (
         <div className="matches-tab">
           {stagesWithMatches.length === 0 && (
-            <p className="muted card">赛程尚未公布，敬请期待。</p>
+            <p className="muted card">赛程还没排出来，排好后会显示在这里。</p>
           )}
           {stagesWithMatches.map((stage) => {
             const list = matches.filter((m) => m.stageId === stage.id);

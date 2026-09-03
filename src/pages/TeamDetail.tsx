@@ -178,14 +178,14 @@ export function TeamDetailPage() {
       <div className="card">
         <h3>教练邀请</h3>
         <p className="muted">
-          生成 8 位认证码发给教练，对方在「我的球队」页输入即可绑定为该队教练。认证码一次有效，默认 24 小时过期。
+          生成一个 8 位认证码发给教练，对方在「我的球队」页输入后就能绑定。认证码只能用一次，24 小时过期。
         </p>
         <button className="btn btn-primary" onClick={() => void genCode()}>
           生成认证码
         </button>
         {newCode && (
           <p className="code-reveal">
-            新认证码（只显示这一次，请立即复制）：
+            新认证码（只显示这一次，赶紧复制）：
             <strong className="code-text">{newCode}</strong>
           </p>
         )}
