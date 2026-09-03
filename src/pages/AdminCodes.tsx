@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { SubmitButton, useSubmit } from "../components/ui";
+import { Page, SubmitButton, useSubmit } from "../components/ui";
 
 type SignupCodeRow = {
   id: number;
@@ -55,7 +55,7 @@ export function AdminCodes() {
   }
 
   return (
-    <div className="container">
+    <Page>
       <div className="page-head">
         <h2>注册码</h2>
       </div>
@@ -132,6 +132,6 @@ export function AdminCodes() {
           </table>
         )}
       </div>
-    </div>
+    </Page>
   );
 }
