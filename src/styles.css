@@ -473,3 +473,103 @@ button.btn-ghost:hover:not(:disabled) {
   gap: 6px;
   align-items: center;
 }
+
+/* ---------- 点选式手动排赛 ---------- */
+.manual-pick {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line, #2a3a2f);
+}
+.manual-pick-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.manual-pick-head label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+}
+.tg-btn {
+  position: relative;
+  padding: 9px 10px;
+  border: 1px solid var(--line, #2a3a2f);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.tg-btn:hover:not(:disabled):not(.tg-picked) {
+  border-color: var(--pitch, #0e7a46);
+}
+.tg-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.tg-btn.tg-picked {
+  background: var(--pitch, #0e7a46);
+  border-color: var(--pitch, #0e7a46);
+  color: #fff;
+  font-weight: 600;
+}
+.tg-group {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+}
+.tg-picked .tg-group {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ---------- 添加阶段 ---------- */
+button.add-stage {
+  margin-top: 12px;
+  width: 100%;
+  border-style: dashed;
+}
+.add-stage-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.add-stage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.add-stage-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.add-stage-row label.check {
+  gap: 4px;
+}
+.add-stage-hint {
+  font-size: 12.5px;
+  margin: 0;
+}
+.btn-danger-ghost {
+  color: #e03131 !important;
+  border-color: rgba(224, 49, 49, 0.5) !important;
+}
+.btn-danger-ghost:hover:not(:disabled) {
+  background: rgba(224, 49, 49, 0.12) !important;
+}

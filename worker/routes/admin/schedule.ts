@@ -920,4 +920,24 @@ export async function buildAutoFillStmts(
   return [];
 }
 
+app.delete("/:id/stages/:stageId/matches", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  try {
+    const { stage, started } = await loadStage(c.env.DB, tid, stageId);
+    if (started > 0) {
+      return fail(c, 409, "该阶段已有开打或完赛的场次，不能一键清除");
+    }
+    const n = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM match WHERE stage_id = ?")
+      .bind(stage.id)
+      .first<{ n: number }>();
+    if ((n?.n ?? 0) === 0) return c.json({ ok: true, deleted: 0 });
+    await c.env.DB.prepare("DELETE FROM match WHERE stage_id = ?").bind(stage.id).run();
+    return c.json({ ok: true });
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    throw e;
+  }
+});
+
 export default app;
