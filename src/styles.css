@@ -26,3 +26,93 @@ body {
   margin: 0 auto;
   padding: 16px;
 }
+
+/* ---- 顶栏 ---- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+.topbar .brand {
+  font-weight: 700;
+  color: var(--fg);
+  text-decoration: none;
+}
+.topbar .userbox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+.topbar .userbox a {
+  color: var(--fg);
+}
+.role-badge {
+  background: #eef2f0;
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+/* ---- 卡片与表单 ---- */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 20px;
+}
+.auth-card {
+  max-width: 380px;
+  margin: 48px auto;
+}
+label.field {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 14px;
+  color: #4b5563;
+}
+label.field input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+/* ---- 按钮 ---- */
+button.btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+button.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+button.btn-ghost {
+  background: transparent;
+  color: var(--fg);
+  border-color: #d1d5db;
+  font-size: 13px;
+  padding: 4px 10px;
+}
+
+.error-msg {
+  color: #b91c1c;
+  font-size: 14px;
+  margin: 8px 0;
+}
+.hint {
+  color: #6b7280;
+  font-size: 13px;
+}

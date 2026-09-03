@@ -1,21 +1,27 @@
-import { Routes, Route } from "react-router";
+import { Route, Routes } from "react-router";
+import { AuthProvider } from "./auth";
+import { RequireRole } from "./components/ui";
+import { Home } from "./pages/Home";
+import { Login } from "./pages/Login";
+import { Register } from "./pages/Register";
+import { AdminHome } from "./pages/AdminHome";
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-    </Routes>
-  );
-}
-
-function Home() {
-  return (
-    <main className="container">
-      <h1>WHL 赛事系统</h1>
-      <p>脚手架就绪。</p>
-      <p>
-        <a href="/api/health">后端健康检查</a>
-      </p>
-    </main>
+    <AuthProvider>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route
+          path="/admin"
+          element={
+            <RequireRole roles={["admin", "superadmin"]}>
+              <AdminHome />
+            </RequireRole>
+          }
+        />
+      </Routes>
+    </AuthProvider>
   );
 }
