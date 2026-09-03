@@ -4,6 +4,7 @@ import { generateCode, sha256Hex } from "../lib/crypto";
 import { requireAdmin } from "../middleware/auth";
 import teamsRoutes from "./admin/teams";
 import tournamentsRoutes from "./admin/tournaments";
+import scheduleRoutes from "./admin/schedule";
 
 const app = new Hono<AppEnv>();
 
@@ -11,6 +12,7 @@ app.use("*", requireAdmin);
 
 app.route("/teams", teamsRoutes);
 app.route("/tournaments", tournamentsRoutes);
+app.route("/tournaments", scheduleRoutes);
 
 // 生成注册码；明码只在这一次响应里出现，库存 sha256
 app.post("/signup-codes", async (c) => {

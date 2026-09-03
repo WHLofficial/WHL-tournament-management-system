@@ -5,6 +5,7 @@ import {
   type EntryDTO,
   type TournamentDTO,
 } from "../../../shared/types";
+import { defaultCrossTemplate } from "../../lib/seeding";
 
 type Status = TournamentDTO["status"];
 const ALLOWED: Record<Status, Status[]> = {
@@ -56,6 +57,7 @@ app.post("/", async (c) => {
   if (!format || !(format in DEFAULT_TOURNAMENT_CONFIG)) {
     return c.json({ message: "赛制不合法" }, 400);
   }
+  const cfg = DEFAULT_TOURNAMENT_CONFIG[format];
   const r = await c.env.DB.prepare(
     "INSERT INTO tournament (org_id, name, description, format, status, config_json, created_by) VALUES (1, ?, ?, ?, 'draft', ?, ?)"
   )
@@ -63,11 +65,42 @@ app.post("/", async (c) => {
       name,
       body?.description?.trim() || null,
       format,
-      JSON.stringify(DEFAULT_TOURNAMENT_CONFIG[format]),
+      JSON.stringify(cfg),
       c.get("user")!.id
     )
     .run();
-  return c.json({ id: r.meta.last_row_id }, 201);
+  const tid = Number(r.meta.last_row_id);
+
+  // 按 format 生成阶段结构；group_knockout 的小组行一并建好
+  const stmts: D1PreparedStatement[] = [];
+  const addStage = (kind: string, sortOrder: number, config: unknown) =>
+    stmts.push(
+      c.env.DB.prepare(
+        "INSERT INTO stage (tournament_id, kind, sort_order, config_json) VALUES (?, ?, ?, ?)"
+      ).bind(tid, kind, sortOrder, JSON.stringify(config))
+    );
+  if (format === "single_elim") {
+    addStage("elim", 1, cfg);
+  } else if (format === "round_robin") {
+    addStage("round_robin", 1, cfg);
+  } else {
+    const gc = cfg as { group_count?: number; qualify_per_group?: number };
+    const groupCount = gc.group_count ?? 4;
+    const q = gc.qualify_per_group ?? 2;
+    const cross = defaultCrossTemplate(groupCount, q);
+    addStage("group", 1, { ...cfg, cross });
+    addStage("elim", 2, { legs: 1, source: { cross } });
+    for (let i = 0; i < groupCount; i++) {
+      stmts.push(
+        c.env.DB.prepare(
+          `INSERT INTO "group" (stage_id, name, sort_order)
+           SELECT id, ?1, ?2 FROM stage WHERE tournament_id = ?3 AND kind = 'group'`
+        ).bind(String.fromCharCode(65 + i), i, tid)
+      );
+    }
+  }
+  await c.env.DB.batch(stmts);
+  return c.json({ id: tid }, 201);
 });
 
 // 详情：赛事 + 阶段 + 小组 + 报名名单
@@ -159,7 +192,7 @@ app.get("/:id", async (c) => {
 app.patch("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const body = await c.req
-    .json<{ name?: string; description?: string }>()
+    .json<{ name?: string; description?: string; config_json?: Record<string, unknown> }>()
     .catch(() => null);
   if (body?.name !== undefined) {
     const name = body.name.trim();
@@ -177,8 +210,101 @@ app.patch("/:id", async (c) => {
       .bind(body.description.trim() || null, id)
       .run();
   }
+  if (body?.config_json !== undefined) {
+    const sync = await syncStageConfigs(c.env, id, body.config_json);
+    if (sync !== true) return c.json({ message: sync }, 400);
+  }
   return c.json({ ok: true });
 });
+
+// 赛制参数改动（legs/loops/组数/出线数）同步到各阶段 config；
+// 已有开打或完赛场次时拒绝，避免赛中被改赛制
+async function syncStageConfigs(
+  env: Bindings,
+  tid: number,
+  patch: Record<string, unknown>
+): Promise<true | string> {
+  const t = await env.DB.prepare(
+    "SELECT format, config_json FROM tournament WHERE id = ?"
+  )
+    .bind(tid)
+    .first<{ format: TournamentDTO["format"]; config_json: string }>();
+  if (!t) return "赛事不存在";
+  const started =
+    (
+      await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM match WHERE stage_id IN
+           (SELECT id FROM stage WHERE tournament_id = ?) AND status IN ('live','finished')`
+      )
+        .bind(tid)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+  if (started > 0) return "已有开打或完赛的场次，不能修改赛制参数";
+
+  const base = JSON.parse(t.config_json || "{}") as Record<string, unknown>;
+  const cfg = { ...base, ...patch };
+  const stmts: D1PreparedStatement[] = [
+    env.DB.prepare("UPDATE tournament SET config_json = ? WHERE id = ?").bind(
+      JSON.stringify(cfg),
+      tid
+    ),
+  ];
+
+  if (t.format === "single_elim" || t.format === "round_robin") {
+    stmts.push(
+      env.DB.prepare(
+        "UPDATE stage SET config_json = ? WHERE tournament_id = ?"
+      ).bind(JSON.stringify(cfg), tid)
+    );
+  } else {
+    const groupCount = Number(cfg.group_count ?? 4);
+    const qualify = Number(cfg.qualify_per_group ?? 2);
+    const cross = defaultCrossTemplate(groupCount, qualify);
+    stmts.push(
+      env.DB.prepare(
+        "UPDATE stage SET config_json = ? WHERE tournament_id = ? AND kind = 'group'"
+      ).bind(JSON.stringify({ ...cfg, cross }), tid)
+    );
+    stmts.push(
+      env.DB.prepare(
+        "UPDATE stage SET config_json = ? WHERE tournament_id = ? AND kind = 'elim'"
+      ).bind(JSON.stringify({ legs: 1, source: { cross } }), tid)
+    );
+    // 组数变化时重建小组行（分组关系一并清空，需重新抽签）
+    const oldCount = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM "group" g JOIN stage s ON s.id = g.stage_id
+       WHERE s.tournament_id = ? AND s.kind = 'group'`
+    )
+      .bind(tid)
+      .first<{ n: number }>();
+    if ((oldCount?.n ?? 0) !== groupCount) {
+      const groupStage = await env.DB.prepare(
+        "SELECT id FROM stage WHERE tournament_id = ? AND kind = 'group'"
+      )
+        .bind(tid)
+        .first<{ id: number }>();
+      if (groupStage) {
+        stmts.push(
+          env.DB.prepare(
+            'UPDATE entry SET group_id = NULL WHERE group_id IN (SELECT id FROM "group" WHERE stage_id = ?)'
+          ).bind(groupStage.id)
+        );
+        stmts.push(
+          env.DB.prepare('DELETE FROM "group" WHERE stage_id = ?').bind(groupStage.id)
+        );
+        for (let i = 0; i < groupCount; i++) {
+          stmts.push(
+            env.DB.prepare(
+              'INSERT INTO "group" (stage_id, name, sort_order) VALUES (?, ?, ?)'
+            ).bind(groupStage.id, String.fromCharCode(65 + i), i)
+          );
+        }
+      }
+    }
+  }
+  await env.DB.batch(stmts);
+  return true;
+}
 
 // 状态机：draft → registering → (draft | running) → archived
 app.post("/:id/transition", async (c) => {

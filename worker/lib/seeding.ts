@@ -79,13 +79,13 @@ export function buildElimPlan(
   }
 
   if (opts.thirdPlace && rounds >= 2) {
-    matches.push({
-      round: rounds,
-      slot: size / 2 ** rounds + 1,
-      home: null,
-      away: null,
-      note: "季军赛",
-    });
+    const thirdSlot = size / 2 ** rounds + 1;
+    if (opts.legs === 2) {
+      matches.push({ round: rounds, slot: thirdSlot, leg: 1, home: null, away: null, note: "季军赛" });
+      matches.push({ round: rounds, slot: thirdSlot, leg: 2, home: null, away: null, note: "季军赛" });
+    } else {
+      matches.push({ round: rounds, slot: thirdSlot, home: null, away: null, note: "季军赛" });
+    }
   }
 
   return { matches, rounds };

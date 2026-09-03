@@ -238,6 +238,27 @@ export interface SignupCodeResp {
   expiresAt: string | null;
 }
 
+// ---------- 编排 ----------
+
+export interface MatchDTO {
+  id: number;
+  stageId: number;
+  round: number;
+  slot: number;
+  leg: number | null;
+  homeEntryId: number | null;
+  awayEntryId: number | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  scoreHome: number | null;
+  scoreAway: number | null;
+  penHome: number | null;
+  penAway: number | null;
+  status: "pending" | "live" | "finished";
+  winnerEntryId: number | null;
+  note: string | null;
+}
+
 // ---------- 排名常量（P2 才做成赛事级配置） ----------
 
 export const POINTS = { win: 3, draw: 1, loss: 0, penWin: 2, penLoss: 1 } as const;
