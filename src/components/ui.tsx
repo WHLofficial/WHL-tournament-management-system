@@ -1,15 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router";
 import { ROLE_LABEL, useAuth } from "../auth";
-import { TopBar } from "../components/TopBar";
 
+// 页面容器；TopBar 由 App 全局挂载
 export function Page({ children }: { children: ReactNode }) {
-  return (
-    <>
-      <TopBar />
-      <main className="container">{children}</main>
-    </>
-  );
+  return <main className="container">{children}</main>;
 }
 
 export function RequireRole({ roles, children }: { roles: string[]; children: ReactNode }) {

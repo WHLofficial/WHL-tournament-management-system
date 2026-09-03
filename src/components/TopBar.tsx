@@ -1,8 +1,26 @@
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ROLE_LABEL, useAuth } from "../auth";
 
 export function TopBar() {
   const { user, loading, logout } = useAuth();
+  // 登出两段式确认：点一下进入待确认，再点才真登出，5 秒不点自动还原
+  const [confirming, setConfirming] = useState(false);
+  const timer = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    };
+  }, []);
+  function requestLogout() {
+    if (!confirming) {
+      setConfirming(true);
+      timer.current = window.setTimeout(() => setConfirming(false), 5000);
+      return;
+    }
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    void logout();
+  }
   return (
     <header className="topbar">
       <Link to="/" className="brand">
@@ -22,8 +40,11 @@ export function TopBar() {
         <span className="userbox">
           {user.name}
           <span className="role-badge">{ROLE_LABEL[user.role]}</span>
-          <button className="btn btn-ghost" onClick={() => void logout()}>
-            登出
+          <button
+            className={`btn ${confirming ? "btn-danger" : "btn-ghost"}`}
+            onClick={requestLogout}
+          >
+            {confirming ? "再点一次确认退出" : "登出"}
           </button>
         </span>
       ) : (

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
-import { TopBar } from "../components/TopBar";
 import { StandingsTables } from "./StandingsTab";
 import { elimRoundName, stageTitle } from "./MatchesTab";
 import { MatchScore, computeAgg } from "../components/MatchScore";
@@ -58,7 +57,6 @@ export default function PublicTournament() {
   if (err)
     return (
       <>
-        <TopBar />
         <main className="container">
         <p className="error-msg">{err}</p>
         <Link to="/">← 返回赛事列表</Link>
@@ -68,7 +66,6 @@ export default function PublicTournament() {
   if (!detail || matches === null)
     return (
       <>
-        <TopBar />
         <main className="container">
           <p className="muted">加载中…</p>
         </main>
@@ -91,7 +88,6 @@ export default function PublicTournament() {
 
   return (
     <>
-      <TopBar />
       <main className="container">
       <p className="crumb">
         <Link to="/">← 赛事列表</Link>

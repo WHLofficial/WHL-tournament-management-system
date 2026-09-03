@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
-import { TopBar } from "../components/TopBar";
 import type { TournamentDTO } from "../../shared/types";
 
 // 公开首页：所有非草稿赛事，无需登录。
@@ -18,7 +17,6 @@ export function Home() {
 
   return (
     <>
-      <TopBar />
       <main className="container">
       <h1>WHL 赛事</h1>
       {err && <p className="error-msg">{err}</p>}

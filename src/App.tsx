@@ -1,6 +1,7 @@
-import { Route, Routes } from "react-router";
+import { Route, Routes, useLocation } from "react-router";
 import { AuthProvider } from "./auth";
 import { RequireRole } from "./components/ui";
+import { TopBar } from "./components/TopBar";
 import { Home } from "./pages/Home";
 import PublicTournament from "./pages/PublicTournament";
 import { Login } from "./pages/Login";
@@ -15,6 +16,18 @@ import MyTeam from "./pages/MyTeam";
 export default function App() {
   return (
     <AuthProvider>
+      <AppShell />
+    </AuthProvider>
+  );
+}
+
+// TopBar 全局挂载，登录/注册页不显示
+function AppShell() {
+  const { pathname } = useLocation();
+  const bare = pathname === "/login" || pathname === "/register";
+  return (
+    <>
+      {!bare && <TopBar />}
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/t/:id" element={<PublicTournament />} />
@@ -69,6 +82,6 @@ export default function App() {
           }
         />
       </Routes>
-    </AuthProvider>
+    </>
   );
 }
