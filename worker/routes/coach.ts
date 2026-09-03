@@ -83,7 +83,7 @@ app.get("/me/team", async (c) => {
        ORDER BY (number IS NULL), number, id`
     )
       .bind(tm.team_id)
-      .all<{ id: number; name: string; jersey: number | null }>(),
+      .all<{ id: number; name: string; number: string | null }>(),
     c.env.DB.prepare(
       `SELECT u.id, u.name, tm.created_at FROM team_member tm
        JOIN user u ON u.id = tm.user_id WHERE tm.team_id = ? ORDER BY tm.created_at`

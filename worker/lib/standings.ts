@@ -426,7 +426,7 @@ export async function readStandings(
   // 分组内排序；组内再按"前三项完全相同"切块，块内用相互战绩微调
   const byGroup = new Map<number | null, StandRow[]>();
   for (const r of rows) {
-    const key = r.group_id ?? 0;
+    const key = r.groupId ?? 0;
     if (!byGroup.has(key)) byGroup.set(key, []);
     byGroup.get(key)!.push(r);
   }

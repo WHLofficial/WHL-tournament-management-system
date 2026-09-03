@@ -108,8 +108,8 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
         ? rawCross.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
         : [];
     const planOpts = {
-      legs: cfg.legs === 2 ? 2 : 1,
-      finalLegs: cfg.final_legs === 2 ? 2 : cfg.final_legs === 1 ? 1 : undefined,
+      legs: (cfg.legs === 2 ? 2 : 1) as 1 | 2,
+      finalLegs: (cfg.final_legs === 2 ? 2 : cfg.final_legs === 1 ? 1 : undefined) as 1 | 2 | undefined,
       thirdPlace: !!cfg.third_place,
     };
     let plan: { matches: PlanMatch[]; rounds: number };
