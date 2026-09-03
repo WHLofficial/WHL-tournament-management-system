@@ -7,6 +7,7 @@ import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { AdminTournaments } from "./pages/AdminTournaments";
 import { AdminTeams } from "./pages/AdminTeams";
+import { AdminCodes } from "./pages/AdminCodes";
 import { TeamDetailPage } from "./pages/TeamDetail";
 import { TournamentManage } from "./pages/TournamentManage";
 import MyTeam from "./pages/MyTeam";
@@ -40,6 +41,14 @@ export default function App() {
           element={
             <RequireRole roles={["admin", "superadmin"]}>
               <AdminTeams />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/admin/codes"
+          element={
+            <RequireRole roles={["admin", "superadmin"]}>
+              <AdminCodes />
             </RequireRole>
           }
         />

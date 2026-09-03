@@ -13,6 +13,7 @@ export function TopBar() {
           <>
             <Link to="/admin">赛事管理</Link>
             <Link to="/admin/teams">球队库</Link>
+            <Link to="/admin/codes">注册码</Link>
           </>
         ) : null}
         {user ? <Link to="/my-team">我的球队</Link> : null}

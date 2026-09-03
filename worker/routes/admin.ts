@@ -35,6 +35,29 @@ app.post("/signup-codes", async (c) => {
   return c.json({ code, maxUses, expiresAt }, 201);
 });
 
+// 注册码使用记录（明码不可回查，只给次数/过期/状态）
+app.get("/signup-codes", async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, max_uses, used_count, expires_at, created_at FROM signup_code
+     ORDER BY created_at DESC, id DESC LIMIT 50`
+  ).all<{
+    id: number;
+    max_uses: number | null;
+    used_count: number;
+    expires_at: string | null;
+    created_at: string;
+  }>();
+  return c.json({
+    codes: (rows.results ?? []).map((r) => ({
+      id: r.id,
+      maxUses: r.max_uses,
+      usedCount: r.used_count,
+      expiresAt: r.expires_at,
+      createdAt: r.created_at,
+    })),
+  });
+});
+
 // ---- 球队认证码（教练绑定用）：一次有效，默认 24h ----
 app.post("/teams/:id/auth-codes", async (c) => {
   const teamId = Number(c.req.param("id"));
