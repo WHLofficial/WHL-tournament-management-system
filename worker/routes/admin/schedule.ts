@@ -178,7 +178,7 @@ app.delete("/:id/stages/:stageId", async (c) => {
     await structEditable(c.env.DB, tid);
     const { stage, started } = await loadStage(c.env.DB, tid, stageId);
     if (started > 0) {
-      return fail(c, 409, "该阶段已有开打或完赛的场次，不能删除；可先清除赛程");
+      return fail(c, 409, "该阶段已有开打或完赛的场次，不能删除");
     }
     await c.env.DB.prepare("DELETE FROM stage WHERE id = ?").bind(stage.id).run();
   } catch (e) {

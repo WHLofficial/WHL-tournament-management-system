@@ -405,7 +405,8 @@ function ManualForm({
   const cfg = stage.config as { loops?: number };
   const loops = cfg.loops === 2 ? 2 : 1;
   const maxRound = matches.reduce((mx, m) => Math.max(mx, m.round), 0);
-  const [round, setRound] = useState(String(maxRound + 1));
+  // 空 = 跟随"下一轮"；固定初始值会在赛程未加载时错误地停在第 1 轮
+  const [round, setRound] = useState("");
   const [picked, setPicked] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -493,13 +494,14 @@ function ManualForm({
             value={round}
             onChange={(e2) => setRound(e2.target.value)}
             placeholder={String(nextRound)}
+            title={`留空 = 第 ${nextRound} 轮`}
             style={{ width: 72 }}
           />
         </label>
         <span className="muted">
           {picked == null
             ? "点一支队作主队"
-            : `主队 ${pickedEntry?.teamName}——点客队成场，再点主队取消`}
+            : `主队 ${pickedEntry?.teamName}：点客队成场，再点一下主队取消`}
         </span>
       </div>
       {err && <p className="error">{err}</p>}
@@ -798,7 +800,7 @@ function AddStageForm({
           : cross
             ? "按模板对阵"
             : "使用全部报名队"}
-        。结构只在开赛前可调。
+        。开赛后就不能再增删阶段了。
       </p>
       {err && <p className="error">{err}</p>}
       <div className="add-stage-row">
