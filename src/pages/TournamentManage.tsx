@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import ScheduleTab from "./ScheduleTab";
 import MatchesTab from "./MatchesTab";
+import StandingsTab from "./StandingsTab";
 import { SubmitButton, useSubmit } from "../components/ui";
 import { FORMAT_LABEL, NEXT_ACTIONS, STATUS_LABEL } from "../labels";
 import type {
@@ -12,7 +13,7 @@ import type {
   TournamentStatus,
 } from "../../shared/types";
 
-type Tab = "entries" | "schedule" | "matches" | "settings";
+type Tab = "entries" | "schedule" | "matches" | "standings" | "settings";
 
 export function TournamentManage() {
   const { id } = useParams();
@@ -100,6 +101,7 @@ export function TournamentManage() {
             ["entries", `报名 (${detail.entries.length})`],
             ["schedule", "编排"],
             ["matches", "比赛"],
+            ["standings", "积分榜"],
             ["settings", "设置"],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -116,6 +118,7 @@ export function TournamentManage() {
       {tab === "entries" && <EntriesTab detail={detail} reload={reload} />}
       {tab === "schedule" && <ScheduleTab detail={detail} reload={reload} />}
       {tab === "matches" && <MatchesTab detail={detail} reload={reload} />}
+      {tab === "standings" && <StandingsTab tournamentId={detail.tournament.id} />}
       {tab === "settings" && <SettingsTab detail={detail} reload={reload} onDeleted={() => navigate("/admin")} />}
     </div>
   );

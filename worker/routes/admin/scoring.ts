@@ -41,6 +41,19 @@ async function loadMatch(db: D1Database, matchId: number): Promise<MatchRow> {
   return m;
 }
 
+// 归档赛事只读：比分与事件一律锁定（归档是终点状态）
+async function assertNotArchived(db: D1Database, matchId: number): Promise<void> {
+  const t = await db
+    .prepare(
+      `SELECT t.status FROM tournament t
+       WHERE t.id = (SELECT s.tournament_id FROM stage s
+                     WHERE s.id = (SELECT stage_id FROM match WHERE id = ?))`
+    )
+    .bind(matchId)
+    .first<{ status: string }>();
+  if (t?.status === "archived") throw new HttpError(400, "赛事已归档，比分已锁定");
+}
+
 // live 期间的实时比分：由 goal 事件累计（终场确认才落 score 列）
 async function liveScore(
   db: D1Database,
@@ -67,6 +80,7 @@ app.post("/:id/start", async (c) => {
   const id = Number(c.req.param("id"));
   try {
     const m = await loadMatch(c.env.DB, id);
+    await assertNotArchived(c.env.DB, id);
     if (m.note === "轮空") return fail(c, 400, "轮空场无需开赛");
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法开赛");
@@ -92,6 +106,7 @@ app.post("/:id/finish", async (c) => {
   };
   try {
     const m = await loadMatch(c.env.DB, id);
+    await assertNotArchived(c.env.DB, id);
     if (m.note === "轮空") return fail(c, 400, "轮空场无需报分");
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法报分");
@@ -277,6 +292,7 @@ app.post("/:id/events", async (c) => {
     return fail(c, 400, "分钟数应在 0-300 之间");
   try {
     const m = await loadMatch(c.env.DB, id);
+    await assertNotArchived(c.env.DB, id);
     if (m.status !== "live") return fail(c, 400, "仅进行中的比赛可录事件");
     if (body.entryId !== m.home_entry_id && body.entryId !== m.away_entry_id)
       return fail(c, 400, "该球队不在本场对阵中");
@@ -300,6 +316,7 @@ app.delete("/:id/events/:eventId", async (c) => {
   const eventId = Number(c.req.param("eventId"));
   try {
     const m = await loadMatch(c.env.DB, id);
+    await assertNotArchived(c.env.DB, id);
     const ev = await c.env.DB.prepare("SELECT id FROM match_event WHERE id = ? AND match_id = ?")
       .bind(eventId, id)
       .first<{ id: number }>();

@@ -270,6 +270,36 @@ export interface MatchEventDTO {
   createdAt: string;
 }
 
+// ---------- 积分榜（管理端与公开页共用） ----------
+export interface StandingRowDTO {
+  entryId: number;
+  teamName: string;
+  seed: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  penWon: number;
+  penLost: number;
+  pts: number;
+  rank: number;
+}
+
+export interface StandingGroupDTO {
+  groupId: number | null;
+  name: string;
+  rows: StandingRowDTO[];
+}
+
+export interface StageStandingDTO {
+  stageId: number;
+  kind: "group" | "round_robin";
+  sortOrder: number;
+  groups: StandingGroupDTO[];
+}
+
 // ---------- 排名常量（P2 才做成赛事级配置） ----------
 
 export const POINTS = { win: 3, draw: 1, loss: 0, penWin: 2, penLoss: 1 } as const;

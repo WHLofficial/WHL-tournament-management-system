@@ -352,3 +352,18 @@ button.btn-ghost {
 .ev-red { background: #dc2626; }
 .ev-minute { font-variant-numeric: tabular-nums; color: var(--muted, #64748b); min-width: 2.5em; }
 .ev-team { color: var(--muted, #64748b); }
+
+/* ---------- 积分榜 ---------- */
+.standings-stage { margin-bottom: 18px; }
+.standings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+.standings-table { border-collapse: collapse; width: 100%; background: #fff; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; overflow: hidden; }
+.standings-table caption { caption-side: top; text-align: left; font-weight: 700; padding: 8px 4px; }
+.standings-table th, .standings-table td { padding: 6px 8px; border-bottom: 1px solid var(--border, #eef2f7); font-size: 13px; }
+.standings-table th { color: var(--muted, #64748b); font-weight: 600; background: #f8fafc; }
+.standings-table .num { text-align: center; font-variant-numeric: tabular-nums; width: 2.4em; }
+.standings-table .team-col { text-align: left; min-width: 7em; }
+.standings-table .pts { font-weight: 700; }
+.standings-table tbody tr:nth-child(2n) { background: #fcfdfe; }
+.pen-hint { font-weight: 400; font-size: 11px; }
+.standings-note { font-size: 12px; margin-top: 6px; }
+.standings-table th.num { white-space: nowrap; }

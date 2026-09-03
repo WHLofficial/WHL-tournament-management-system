@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 8780",
+    "dev": "wrangler dev --port 8790",
     "dev:web": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
