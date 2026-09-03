@@ -9,6 +9,7 @@ import { AdminTournaments } from "./pages/AdminTournaments";
 import { AdminTeams } from "./pages/AdminTeams";
 import { TeamDetailPage } from "./pages/TeamDetail";
 import { TournamentManage } from "./pages/TournamentManage";
+import MyTeam from "./pages/MyTeam";
 
 export default function App() {
   return (
@@ -16,6 +17,14 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/t/:id" element={<PublicTournament />} />
+        <Route
+          path="/my-team"
+          element={
+            <RequireRole roles={["coach", "admin", "superadmin"]}>
+              <MyTeam />
+            </RequireRole>
+          }
+        />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route

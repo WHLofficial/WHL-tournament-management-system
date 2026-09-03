@@ -15,6 +15,7 @@ export function TopBar() {
             <Link to="/admin/teams">球队库</Link>
           </>
         ) : null}
+        {user ? <Link to="/my-team">我的球队</Link> : null}
       </nav>
       {loading ? null : user ? (
         <span className="userbox">

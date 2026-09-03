@@ -9,11 +9,28 @@ interface TeamDetail {
   players: PlayerDTO[];
 }
 
+interface AuthCodeRow {
+  id: number;
+  expiresAt: string | null;
+  used: boolean;
+  usedAt: string | null;
+  createdAt: string;
+}
+
+interface MemberRow {
+  userId: number;
+  name: string;
+  joinedAt: string;
+}
+
 export function TeamDetailPage() {
   const { id } = useParams();
   const teamId = Number(id);
   const [data, setData] = useState<TeamDetail | null>(null);
   const [missing, setMissing] = useState(false);
+  const [codes, setCodes] = useState<AuthCodeRow[]>([]);
+  const [newCode, setNewCode] = useState<string | null>(null);
+  const [members, setMembers] = useState<MemberRow[]>([]);
   const [name, setName] = useState("");
   const [playerName, setPlayerName] = useState("");
   const [playerNumber, setPlayerNumber] = useState("");
@@ -25,8 +42,37 @@ export function TeamDetailPage() {
       const d = await api<TeamDetail>(`/api/admin/teams/${teamId}`);
       setData(d);
       setName(d.team.name);
+      const [cs, ms] = await Promise.all([
+        api<{ codes: AuthCodeRow[] }>(`/api/admin/teams/${teamId}/auth-codes`),
+        api<{ members: MemberRow[] }>(`/api/admin/teams/${teamId}/members`),
+      ]);
+      setCodes(cs.codes);
+      setMembers(ms.members);
     } catch {
       setMissing(true);
+    }
+  }
+
+  async function genCode() {
+    try {
+      const r = await api<{ code: string }>(`/api/admin/teams/${teamId}/auth-codes`, {
+        method: "POST",
+        body: { expiresInHours: 24 },
+      });
+      setNewCode(r.code);
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "生成失败");
+    }
+  }
+
+  async function unbind(m: MemberRow) {
+    if (!window.confirm(`将「${m.name}」移出球队？`)) return;
+    try {
+      await api(`/api/admin/teams/${teamId}/members/${m.userId}`, { method: "DELETE" });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "解绑失败");
     }
   }
   useEffect(() => {
@@ -127,6 +173,69 @@ export function TeamDetailPage() {
           <SubmitButton busy={playerForm.busy}>添加</SubmitButton>
         </form>
         {playerForm.error && <p className="error-msg">{playerForm.error}</p>}
+      </div>
+
+      <div className="card">
+        <h3>教练邀请</h3>
+        <p className="muted">
+          生成 8 位认证码发给教练，对方在「我的球队」页输入即可绑定为该队教练。认证码一次有效，默认 24 小时过期。
+        </p>
+        <button className="btn btn-primary" onClick={() => void genCode()}>
+          生成认证码
+        </button>
+        {newCode && (
+          <p className="code-reveal">
+            新认证码（只显示这一次，请立即复制）：
+            <strong className="code-text">{newCode}</strong>
+          </p>
+        )}
+        {codes.length > 0 && (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>生成时间</th>
+                <th>过期时间</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {codes.slice(0, 5).map((c) => (
+                <tr key={c.id}>
+                  <td>{c.createdAt.slice(0, 16).replace("T", " ")}</td>
+                  <td>{c.expiresAt ? c.expiresAt.slice(0, 16).replace("T", " ") : "—"}</td>
+                  <td>{c.used ? `已使用 ${c.usedAt?.slice(0, 16).replace("T", " ") ?? ""}` : "未使用"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {members.length > 0 && (
+          <>
+            <h3>已绑定教练</h3>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>昵称</th>
+                  <th>绑定时间</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((m) => (
+                  <tr key={m.userId}>
+                    <td>{m.name}</td>
+                    <td>{m.joinedAt.slice(0, 16).replace("T", " ")}</td>
+                    <td>
+                      <button className="btn btn-ghost btn-sm" onClick={() => void unbind(m)}>
+                        解绑
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </div>
 
       {data.players.length === 0 ? (

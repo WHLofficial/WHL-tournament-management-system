@@ -381,3 +381,5 @@ button.btn-ghost {
 .teams-public .team-list li { padding: 8px 12px; border-bottom: 1px solid #eef2f7; font-size: 14px; }
 .teams-public .team-list li:last-child { border-bottom: none; }
 .team-seed { display: inline-block; width: 2.2em; color: var(--muted, #64748b); font-variant-numeric: tabular-nums; }
+.code-reveal { margin-top: 10px; font-size: 14px; }
+.code-text { font-size: 18px; letter-spacing: 0.25em; margin-left: 6px; color: var(--primary, #166534); }
