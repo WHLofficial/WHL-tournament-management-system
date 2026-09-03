@@ -31,18 +31,18 @@ export async function buildStandingsStmts(
     stage.kind === "group"
       ? await db
           .prepare(
-            `SELECT e.id, e.group_id FROM entry e
+            `SELECT e.id, e.group_id, e.points_deducted FROM entry e
              WHERE e.group_id IN (SELECT id FROM "group" WHERE stage_id = ?)`
           )
           .bind(stageId)
-          .all<{ id: number; group_id: number | null }>()
+          .all<{ id: number; group_id: number | null; points_deducted: number }>()
       : await db
           .prepare(
-            `SELECT e.id, e.group_id FROM entry e
+            `SELECT e.id, e.group_id, e.points_deducted FROM entry e
              WHERE e.tournament_id = (SELECT tournament_id FROM stage WHERE id = ?)`
           )
           .bind(stageId)
-          .all<{ id: number; group_id: number | null }>();
+          .all<{ id: number; group_id: number | null; points_deducted: number }>();
 
   const finished = await db
     .prepare(
@@ -54,6 +54,7 @@ export async function buildStandingsStmts(
 
   type Row = {
     group_id: number | null;
+    deduct: number;
     played: number;
     won: number;
     drawn: number;
@@ -68,6 +69,7 @@ export async function buildStandingsStmts(
   for (const e of entries.results ?? []) {
     rows.set(e.id, {
       group_id: e.group_id,
+      deduct: e.points_deducted,
       played: 0,
       won: 0,
       drawn: 0,
@@ -138,7 +140,7 @@ export async function buildStandingsStmts(
           r.won,
           r.drawn,
           r.lost,
-          r.pts,
+          r.pts - r.deduct,
           r.gf,
           r.ga,
           r.pen_won,
@@ -329,6 +331,7 @@ export type StandRow = {
   penWon: number;
   penLost: number;
   pts: number;
+  pointsDeducted: number;
   rank: number;
 };
 
@@ -340,7 +343,7 @@ export async function readStandings(
     .prepare(
       `SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name,
               s.played, s.won, s.drawn, s.lost,
-              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts
+              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted
        FROM standing s
        JOIN entry e ON e.id = s.entry_id
        JOIN team t ON t.id = e.team_id
@@ -361,6 +364,7 @@ export async function readStandings(
       pen_won: number;
       pen_lost: number;
       pts: number;
+      points_deducted: number;
     }>();
   const rows: StandRow[] = (res.results ?? []).map((r) => ({
     entryId: r.entry_id,
@@ -376,6 +380,7 @@ export async function readStandings(
     penWon: r.pen_won,
     penLost: r.pen_lost,
     pts: r.pts,
+    pointsDeducted: r.points_deducted,
     rank: 0,
   }));
   if (rows.length === 0) return [];

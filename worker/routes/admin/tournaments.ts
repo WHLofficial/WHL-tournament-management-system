@@ -6,7 +6,8 @@ import {
   type TournamentDTO,
 } from "../../../shared/types";
 import { defaultCrossTemplate } from "../../lib/seeding";
-import { readStageStandings } from "../../lib/standings";
+import { readStageStandings, buildStandingsStmts } from "../../lib/standings";
+import { requireSuperadmin } from "../../middleware/auth";
 
 type Status = TournamentDTO["status"];
 const ALLOWED: Record<Status, Status[]> = {
@@ -138,7 +139,7 @@ app.get("/:id", async (c) => {
       .bind(id)
       .all<{ id: number; stage_id: number; name: string; sort_order: number }>(),
     c.env.DB.prepare(
-      `SELECT e.id, e.team_id, e.seed, e.group_id, tm.name AS team_name,
+      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name,
          (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
        FROM entry e JOIN team tm ON tm.id = e.team_id
        WHERE e.tournament_id = ? ORDER BY e.seed`
@@ -149,6 +150,7 @@ app.get("/:id", async (c) => {
         team_id: number;
         seed: number;
         group_id: number | null;
+        points_deducted: number;
         team_name: string;
         player_count: number;
       }>(),
@@ -184,6 +186,7 @@ app.get("/:id", async (c) => {
         seed: e.seed,
         groupId: e.group_id,
         playerCount: e.player_count,
+        pointsDeducted: e.points_deducted,
       })
     ),
   };
@@ -508,5 +511,44 @@ app.delete("/:id/entries/:entryId", async (c) => {
     .run();
   return c.json({ ok: true });
 });
+
+// 扣分（仅超管）：entry 级赛事扣分，写入后重算本赛事所有积分阶段
+app.patch(
+  "/:id/entries/:entryId/deduction",
+  requireSuperadmin,
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const entryId = Number(c.req.param("entryId"));
+    const body = await c.req.json<{ points?: unknown }>().catch(() => null);
+    const points = Number(body?.points);
+    if (!Number.isInteger(points) || points < 0 || points > 999) {
+      return c.json({ message: "扣分必须是不超过 999 的非负整数（0 表示清除）" }, 400);
+    }
+    const entry = await c.env.DB.prepare(
+      "SELECT id FROM entry WHERE id = ? AND tournament_id = ?"
+    )
+      .bind(entryId, id)
+      .first();
+    if (!entry) return c.json({ message: "报名不存在" }, 404);
+
+    await c.env.DB.prepare(
+      "UPDATE entry SET points_deducted = ? WHERE id = ?"
+    )
+      .bind(points, entryId)
+      .run();
+    const stages = await c.env.DB.prepare(
+      `SELECT id FROM stage WHERE tournament_id = ? AND kind != 'elim'`
+    )
+      .bind(id)
+      .all<{ id: number }>();
+    const stmts = (
+      await Promise.all(
+        (stages.results ?? []).map((s) => buildStandingsStmts(c.env.DB, s.id))
+      )
+    ).flat();
+    if (stmts.length > 0) await c.env.DB.batch(stmts);
+    return c.json({ ok: true });
+  }
+);
 
 export default app;

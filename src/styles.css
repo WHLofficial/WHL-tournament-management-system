@@ -459,3 +459,17 @@ button.btn-ghost:hover:not(:disabled) {
   .table th, .table td { padding: 8px; font-size: 13px; }
   .format-cards { grid-template-columns: 1fr; }
 }
+
+/* 扣分标记与编辑 */
+.deduct {
+  margin-left: 6px;
+  color: var(--danger, #c92a2a);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+.deduct-edit {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}

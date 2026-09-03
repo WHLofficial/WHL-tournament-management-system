@@ -5,6 +5,7 @@ import ScheduleTab from "./ScheduleTab";
 import MatchesTab from "./MatchesTab";
 import StandingsTab from "./StandingsTab";
 import { SubmitButton, useSubmit } from "../components/ui";
+import { useAuth } from "../auth";
 import { FORMAT_LABEL, NEXT_ACTIONS, STATUS_LABEL } from "../labels";
 import type {
   EntryDTO,
@@ -126,6 +127,8 @@ export function TournamentManage() {
 
 function EntriesTab({ detail, reload }: { detail: TournamentDetailDTO; reload: () => Promise<void> }) {
   const t = detail.tournament;
+  const { user } = useAuth();
+  const isSuper = user?.role === "superadmin";
   const editable = t.status === "draft" || t.status === "registering";
   const [paste, setPaste] = useState("");
   const [teams, setTeams] = useState<TeamDTO[]>([]);
@@ -239,6 +242,7 @@ function EntriesTab({ detail, reload }: { detail: TournamentDetailDTO; reload: (
               <th>#</th>
               <th>球队</th>
               <th>名单人数</th>
+              {isSuper && <th>扣分</th>}
               {editable && <th></th>}
             </tr>
           </thead>
@@ -250,6 +254,7 @@ function EntriesTab({ detail, reload }: { detail: TournamentDetailDTO; reload: (
                   <Link to={`/admin/teams/${e.teamId}`}>{e.teamName}</Link>
                 </td>
                 <td>{e.playerCount}</td>
+                {isSuper && <DeductCell key={e.pointsDeducted} entry={e} tid={t.id} reload={reload} />}
                 {editable && (
                   <td>
                     <button className="btn btn-ghost btn-sm" onClick={() => void removeEntry(e)}>
@@ -328,5 +333,48 @@ function SettingsTab({
         删除赛事
       </button>
     </div>
+  );
+}
+
+// 超管专属：单队扣分编辑，0 表示清除；保存后后端会重算积分榜
+function DeductCell({ entry, tid, reload }: { entry: EntryDTO; tid: number; reload: () => Promise<void> }) {
+  const [v, setV] = useState<string | null>(null);
+  const { busy, error, run } = useSubmit();
+  const shown = v ?? (entry.pointsDeducted > 0 ? String(entry.pointsDeducted) : "");
+  return (
+    <td>
+      <span className="deduct-edit">
+        <input
+          className="input"
+          type="number"
+          min="0"
+          max="999"
+          style={{ width: "4.5em" }}
+          value={shown}
+          placeholder="0"
+          onChange={(e) => setV(e.target.value)}
+        />
+        <button
+          className="btn btn-sm"
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              const n = shown === "" ? 0 : Number(shown);
+              if (!Number.isInteger(n) || n < 0) throw new Error("扣分必须是非负整数");
+              await api(`/api/admin/tournaments/${tid}/entries/${entry.id}/deduction`, {
+                method: "PATCH",
+                body: { points: n },
+              });
+              setV(null);
+              await reload();
+            })
+          }
+        >
+          {busy ? "…" : "保存"}
+        </button>
+      </span>
+      {error && <span className="error-text">{error}</span>}
+    </td>
   );
 }

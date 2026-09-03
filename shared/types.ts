@@ -210,6 +210,7 @@ export interface EntryDTO {
   seed: number;
   groupId: number | null;
   playerCount: number;
+  pointsDeducted: number;
 }
 
 export interface StageDTO {
@@ -295,6 +296,7 @@ export interface StandingRowDTO {
   penWon: number;
   penLost: number;
   pts: number;
+  pointsDeducted: number;
   rank: number;
 }
 

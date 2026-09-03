@@ -61,7 +61,14 @@ export function StandingsTables({ standings }: { standings: StageStandingDTO[] }
                       <td className="num">{r.goalsFor}</td>
                       <td className="num">{r.goalsAgainst}</td>
                       <td className="num">{r.goalsFor - r.goalsAgainst}</td>
-                      <td className="num pts">{r.pts}</td>
+                      <td className="num pts">
+                        {r.pts}
+                        {r.pointsDeducted > 0 && (
+                          <span className="deduct" title={`被扣 ${r.pointsDeducted} 分`}>
+                            −{r.pointsDeducted}
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

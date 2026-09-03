@@ -68,7 +68,7 @@ app.get("/tournaments/:id", async (c) => {
       .bind(id)
       .all<{ id: number; stage_id: number; name: string; sort_order: number }>(),
     c.env.DB.prepare(
-      `SELECT e.id, e.team_id, e.seed, e.group_id, tm.name AS team_name,
+      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name,
          (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
        FROM entry e JOIN team tm ON tm.id = e.team_id
        WHERE e.tournament_id = ? ORDER BY e.seed`
@@ -79,6 +79,7 @@ app.get("/tournaments/:id", async (c) => {
         team_id: number;
         seed: number;
         group_id: number | null;
+        points_deducted: number;
         team_name: string;
         player_count: number;
       }>(),
@@ -114,6 +115,7 @@ app.get("/tournaments/:id", async (c) => {
         seed: e.seed,
         groupId: e.group_id,
         playerCount: e.player_count,
+        pointsDeducted: e.points_deducted,
       })
     ),
   });
