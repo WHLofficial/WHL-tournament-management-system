@@ -1,8 +1,14 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 
-export function ChangePassword() {
+export function ChangePassword({ forced = false }: { forced?: boolean }) {
+  const { refresh } = useAuth();
+  const navigate = useNavigate();
+  // 主动打开时可以关掉回退；强制盖卡没有关闭
+  const close = () => (window.history.length > 1 ? navigate(-1) : navigate("/"));
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [done, setDone] = useState(false);
@@ -15,6 +21,11 @@ export function ChangePassword() {
         method: "POST",
         body: { oldPassword: oldPw, newPassword: newPw },
       });
+      if (forced) {
+        // 强制模式下 refresh 完 AppShell 自动撤掉盖卡，无需跳转
+        await refresh();
+        return;
+      }
       setDone(true);
       setOldPw("");
       setNewPw("");
@@ -34,14 +45,23 @@ export function ChangePassword() {
         {done ? (
           <>
             <p>密码已改好，下次登录用新密码。</p>
-            <button className="btn btn-ghost" onClick={() => setDone(false)}>
-              再改一次
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-ghost" onClick={() => setDone(false)}>
+                再改一次
+              </button>
+              {!forced && (
+                <button className="btn btn-ghost" onClick={close}>
+                  关闭
+                </button>
+              )}
+            </div>
           </>
         ) : (
           <>
             <p className="muted">
-              如果密码是被超管重置的临时密码，在这里换成你自己的。
+              {forced
+                ? "密码刚被管理员重置，请先设置你的新密码，改完才能继续使用。"
+                : "如果密码是被超管重置的临时密码，在这里换成你自己的。"}
             </p>
             <form onSubmit={submit}>
               <label className="field">
@@ -62,7 +82,14 @@ export function ChangePassword() {
                   autoComplete="new-password"
                 />
               </label>
-              <SubmitButton busy={form.busy}>保存新密码</SubmitButton>
+              <div style={{ display: "flex", gap: 8 }}>
+                <SubmitButton busy={form.busy}>保存新密码</SubmitButton>
+                {!forced && (
+                  <button type="button" className="btn btn-ghost" onClick={close}>
+                    关闭
+                  </button>
+                )}
+              </div>
             </form>
             {form.error && <p className="error-msg">{form.error}</p>}
           </>

@@ -4,6 +4,7 @@ import { ROLE_LABEL, useAuth } from "../auth";
 
 export function TopBar() {
   const { user, loading, logout } = useAuth();
+  const forced = user?.mustChangePassword === true;
   // 登出两段式确认：点一下进入待确认，再点才真登出，5 秒不点自动还原
   const [confirming, setConfirming] = useState(false);
   const timer = useRef<number | null>(null);
@@ -27,7 +28,7 @@ export function TopBar() {
         WHL 赛事系统
       </Link>
       <nav className="nav-links">
-        {user && (user.role === "admin" || user.role === "superadmin") ? (
+        {user && !forced && (user.role === "admin" || user.role === "superadmin") ? (
           <>
             <Link to="/admin">赛事管理</Link>
             <Link to="/admin/teams">球队库</Link>
@@ -35,7 +36,7 @@ export function TopBar() {
             {user.role === "superadmin" ? <Link to="/admin/accounts">账号管理</Link> : null}
           </>
         ) : null}
-        {user ? <Link to="/my-team">我的球队</Link> : null}
+        {user && !forced ? <Link to="/my-team">我的球队</Link> : null}
       </nav>
       {loading ? null : user ? (
         <span className="userbox">

@@ -1,5 +1,5 @@
 import { Route, Routes, useLocation } from "react-router";
-import { AuthProvider } from "./auth";
+import { AuthProvider, useAuth } from "./auth";
 import { RequireRole } from "./components/ui";
 import { TopBar } from "./components/TopBar";
 import { Home } from "./pages/Home";
@@ -26,11 +26,17 @@ export default function App() {
 // TopBar 全局挂载，登录/注册页不显示
 function AppShell() {
   const { pathname } = useLocation();
+  const { user, loading } = useAuth();
   const bare = pathname === "/login" || pathname === "/register";
+  // 密码被重置后未改密：改密码卡盖在一切前面，改完自动消失
+  const forced = !loading && user?.mustChangePassword === true;
   return (
     <>
       {!bare && <TopBar />}
-      <Routes>
+      {forced ? (
+        <ChangePassword forced />
+      ) : (
+        <Routes>
         <Route
           path="/"
           element={
@@ -106,7 +112,8 @@ function AppShell() {
             </RequireRole>
           }
         />
-      </Routes>
+        </Routes>
+      )}
     </>
   );
 }
