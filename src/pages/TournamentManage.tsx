@@ -4,6 +4,8 @@ import { api } from "../api";
 import ScheduleTab from "./ScheduleTab";
 import MatchesTab from "./MatchesTab";
 import StandingsTab from "./StandingsTab";
+import { Toplists } from "../components/Toplists";
+import { StatsDashboard } from "../components/StatsDashboard";
 import { SubmitButton, useSubmit } from "../components/ui";
 import { useAuth } from "../auth";
 import { FORMAT_LABEL, NEXT_ACTIONS, STATUS_LABEL } from "../labels";
@@ -14,7 +16,7 @@ import type {
   TournamentStatus,
 } from "../../shared/types";
 
-type Tab = "entries" | "schedule" | "matches" | "standings" | "settings";
+type Tab = "entries" | "schedule" | "matches" | "standings" | "toplists" | "stats" | "settings";
 
 export function TournamentManage() {
   const { id } = useParams();
@@ -103,6 +105,8 @@ export function TournamentManage() {
             ["schedule", "编排"],
             ["matches", "比赛"],
             ["standings", "积分榜"],
+            ["toplists", "榜单"],
+            ["stats", "数据"],
             ["settings", "设置"],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -120,6 +124,8 @@ export function TournamentManage() {
       {tab === "schedule" && <ScheduleTab detail={detail} reload={reload} />}
       {tab === "matches" && <MatchesTab detail={detail} reload={reload} />}
       {tab === "standings" && <StandingsTab tournamentId={detail.tournament.id} />}
+      {tab === "toplists" && <Toplists tid={detail.tournament.id} base="/api/admin" />}
+      {tab === "stats" && <StatsDashboard tid={detail.tournament.id} base="/api/admin" />}
       {tab === "settings" && <SettingsTab detail={detail} reload={reload} onDeleted={() => navigate("/admin")} />}
     </div>
   );

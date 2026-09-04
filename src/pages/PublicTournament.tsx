@@ -5,6 +5,8 @@ import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { StandingsTables } from "./StandingsTab";
 import { elimRoundName, stageTitle } from "./MatchesTab";
 import { MatchScore, computeAgg } from "../components/MatchScore";
+import { Toplists } from "../components/Toplists";
+import { StatsDashboard } from "../components/StatsDashboard";
 import type {
   EntryDTO,
   MatchDTO,
@@ -18,7 +20,7 @@ export default function PublicTournament() {
   const tid = Number(id);
   const [detail, setDetail] = useState<TournamentDetailDTO | null>(null);
   const [matches, setMatches] = useState<MatchDTO[] | null>(null);
-  const [tab, setTab] = useState<"schedule" | "standings" | "teams">("schedule");
+  const [tab, setTab] = useState<"schedule" | "standings" | "teams" | "toplists" | "stats">("schedule");
   const [err, setErr] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
@@ -107,6 +109,8 @@ export default function PublicTournament() {
             ["schedule", "赛程"],
             ["standings", "积分榜"],
             ["teams", "参赛球队"],
+            ["toplists", "榜单"],
+            ["stats", "数据"],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -190,6 +194,8 @@ export default function PublicTournament() {
               ))}
           </div>
         ))}
+      {tab === "toplists" && <Toplists tid={tid} base="/api/public" />}
+      {tab === "stats" && <StatsDashboard tid={tid} base="/api/public" />}
       </main>
     </>
   );

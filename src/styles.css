@@ -590,3 +590,73 @@ button.add-stage {
 .btn-danger-ghost:hover:not(:disabled) {
   background: rgba(224, 49, 49, 0.12) !important;
 }
+
+/* 数据仪表盘 */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 10px 0;
+}
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  text-align: center;
+  font-size: 13px;
+}
+.stat-card .num {
+  font-size: 18px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stat-card .emoji {
+  font-size: 20px;
+}
+.stat-card .label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.trend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+.trend-label {
+  flex: 0 0 110px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.trend-bar-wrap {
+  flex: 1;
+  background: #eaf4ee;
+  border-radius: 6px;
+  height: 14px;
+  overflow: hidden;
+}
+.trend-bar {
+  height: 100%;
+  background: var(--pitch);
+  border-radius: 6px;
+}
+.trend-num {
+  flex: 0 0 34px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .trend-label {
+    flex-basis: 90px;
+  }
+}
