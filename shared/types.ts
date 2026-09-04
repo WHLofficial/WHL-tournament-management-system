@@ -262,6 +262,7 @@ export interface MatchDTO {
   status: "pending" | "live" | "finished";
   winnerEntryId: number | null;
   note: string | null;
+  events?: PublicMatchEventDTO[];
 }
 
 export type MatchEventType =
@@ -273,6 +274,27 @@ export type MatchEventType =
   | "injury_major"
   | "yellow"
   | "red";
+
+// 公开端事件视图：不暴露内部 id，side 标主/客
+export interface PublicMatchEventDTO {
+  id: number;
+  type: MatchEventType;
+  minute: number | null;
+  side: "home" | "away";
+  playerName: string | null;
+  assistPlayerName: string | null;
+}
+
+export interface UpcomingDTO {
+  tournamentId: number;
+  tournamentName: string;
+  matchId: number;
+  stageKind: "elim" | "round_robin" | "group";
+  stageOrder: number;
+  round: number;
+  homeTeamName: string;
+  awayTeamName: string;
+}
 
 export interface MatchEventDTO {
   id: number;
