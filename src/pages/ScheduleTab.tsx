@@ -109,6 +109,16 @@ export default function ScheduleTab({
       "将清除该阶段全部未开打的场次，确认？"
     );
 
+  const completeDouble = (stage: StageDTO) =>
+    act(
+      () =>
+        api(
+          `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/complete-double`,
+          { method: "POST" }
+        ),
+      "将以第一循环为镜像生成第二循环（主客对调），并覆盖第二循环未开打的场次，确认？"
+    );
+
   return (
     <div className="schedule-tab">
       {message && <p className="error">{message}</p>}
@@ -133,6 +143,9 @@ export default function ScheduleTab({
           }}
           onGenerate={() => generate(stage)}
           onDraw={stage.kind === "group" ? () => draw(stage) : undefined}
+          onCompleteDouble={
+            stage.kind === "round_robin" ? () => completeDouble(stage) : undefined
+          }
           onDelete={editable ? () => removeStage(stage) : undefined}
           onClear={editable ? () => clearStage(stage) : undefined}
         />
@@ -160,6 +173,7 @@ function StageBlock({
   onRefresh,
   onGenerate,
   onDraw,
+  onCompleteDouble,
   onDelete,
   onClear,
 }: {
@@ -171,6 +185,7 @@ function StageBlock({
   onRefresh: () => void;
   onGenerate: () => void;
   onDraw?: () => void;
+  onCompleteDouble?: () => void;
   onDelete?: () => void;
   onClear?: () => void;
 }) {
@@ -220,6 +235,16 @@ function StageBlock({
           <button className="btn" onClick={onGenerate} disabled={busy}>
             自动生成{stage.kind === "elim" ? "对阵" : "赛程"}
           </button>
+          {stage.kind === "round_robin" && onCompleteDouble && (
+            <button
+              className="btn"
+              onClick={onCompleteDouble}
+              disabled={busy}
+              title="以第一循环为镜像补齐/重排第二循环（主客对调）"
+            >
+              补全双循环
+            </button>
+          )}
           {editable && (
             <>
               {matches.length > 0 && (

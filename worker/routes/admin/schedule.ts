@@ -955,4 +955,95 @@ app.delete("/:id/stages/:stageId/matches", async (c) => {
   }
 });
 
+// 补全双循环：以第一循环（前 k 轮，偶数队 k=n-1、奇数队 k=n）为镜像源生成第二循环，
+// 主客对调、轮次对称翻转（第 m 轮 → 第 2k+1-m 轮）。只接受第一循环完整（各队互赛
+// 恰好一场）的阶段；第二循环已有 live/finished 时拒绝覆盖，pending 的直接清掉重排。
+app.post("/:id/stages/:stageId/complete-double", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  try {
+    const { stage } = await loadStage(c.env.DB, tid, stageId);
+    if (stage.kind !== "round_robin") {
+      return fail(c, 400, "补全双循环只适用于循环赛阶段");
+    }
+    const rows = await c.env.DB.prepare(
+      `SELECT id, round, slot, home_entry_id, away_entry_id, status
+       FROM match WHERE stage_id = ? ORDER BY round, slot`
+    )
+      .bind(stage.id)
+      .all<{
+        id: number;
+        round: number;
+        slot: number;
+        home_entry_id: number | null;
+        away_entry_id: number | null;
+        status: string;
+      }>();
+    const all = rows.results ?? [];
+
+    const teamSet = new Set<number>();
+    for (const m of all) {
+      if (m.home_entry_id != null) teamSet.add(m.home_entry_id);
+      if (m.away_entry_id != null) teamSet.add(m.away_entry_id);
+    }
+    const n = teamSet.size;
+    if (n < 2) return fail(c, 400, "阶段里还没有比赛，先生成赛程再补全双循环");
+
+    const k = n % 2 === 0 ? n - 1 : n;
+    const maxRound = all.reduce((mx, m) => Math.max(mx, m.round), 0);
+    if (maxRound < k) {
+      return fail(c, 400, `第一循环不完整：至少需要 ${k} 轮，当前只有 ${maxRound} 轮`);
+    }
+
+    const pairKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+    const first: typeof all = [];
+    const seen = new Set<string>();
+    for (const m of all) {
+      if (m.round > k) break;
+      if (m.home_entry_id == null || m.away_entry_id == null) continue;
+      const key = pairKey(m.home_entry_id, m.away_entry_id);
+      if (seen.has(key)) {
+        return fail(c, 400, "第一循环存在重复交手，无法镜像生成第二循环");
+      }
+      seen.add(key);
+      first.push(m);
+    }
+    const expect = (n * (n - 1)) / 2;
+    if (seen.size !== expect) {
+      return fail(
+        c,
+        400,
+        `第一循环不完整：${n} 支队单循环应有 ${expect} 场互赛，当前只有 ${seen.size} 场`
+      );
+    }
+
+    const second = all.filter((m) => m.round > k);
+    if (second.some((m) => m.status === "live" || m.status === "finished")) {
+      return fail(c, 409, "第二循环已有开打或完赛的场次，不能覆盖重排");
+    }
+
+    const stmts: D1PreparedStatement[] = second.map((m) =>
+      c.env.DB.prepare("DELETE FROM match WHERE id = ?").bind(m.id)
+    );
+    const insertStmt =
+      "INSERT INTO match (stage_id, round, slot, leg, home_entry_id, away_entry_id, status, winner_entry_id, note) VALUES (?, ?, ?, NULL, ?, ?, 'pending', NULL, NULL)";
+    for (const m of first) {
+      stmts.push(
+        c.env.DB.prepare(insertStmt).bind(
+          stage.id,
+          2 * k + 1 - m.round,
+          m.slot,
+          m.away_entry_id,
+          m.home_entry_id
+        )
+      );
+    }
+    if (stmts.length > 0) await c.env.DB.batch(stmts);
+    return c.json({ ok: true, created: first.length, deleted: second.length });
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    throw e;
+  }
+});
+
 export default app;
