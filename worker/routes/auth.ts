@@ -93,7 +93,14 @@ app.post("/register", async (c) => {
       .run();
     const userId = ins.meta.last_row_id;
     await createSession(c, userId);
-    const resp: MeResp = { id: userId, name, role, teamId: null, locked: locked === 1 };
+    const resp: MeResp = {
+      id: userId,
+      name,
+      role,
+      teamId: null,
+      locked: locked === 1,
+      mustChangePassword: false,
+    };
     return c.json(resp, 201);
   } catch {
     return c.json({ error: "conflict", message: "这个昵称已被占用" }, 409);
@@ -113,10 +120,10 @@ app.post("/login", async (c) => {
     return c.json({ error: "rate_limited", message: "这个账号尝试太频繁，请 15 分钟后再来" }, 429);
 
   const row = await c.env.DB.prepare(
-    "SELECT id, name, role, locked, password_hash FROM user WHERE name = ?",
+    "SELECT id, name, role, locked, must_change_pw, password_hash FROM user WHERE name = ?",
   )
     .bind(name)
-    .first<{ id: number; name: string; role: MeResp["role"]; locked: number; password_hash: string }>();
+    .first<{ id: number; name: string; role: MeResp["role"]; locked: number; must_change_pw: number; password_hash: string }>();
   if (!row || !(await verifyPassword(body.password ?? "", row.password_hash)))
     return c.json({ error: "unauthorized", message: "昵称或密码不正确" }, 401);
 
@@ -127,6 +134,7 @@ app.post("/login", async (c) => {
     role: row.role,
     teamId: await teamIdOf(c, row.id),
     locked: row.locked === 1,
+    mustChangePassword: row.must_change_pw === 1,
   };
   return c.json(resp);
 });
@@ -156,7 +164,7 @@ app.post("/password", requireUser, async (c) => {
   if (!row || !(await verifyPassword(body.oldPassword ?? "", row.password_hash)))
     return c.json({ error: "unauthorized", message: "旧密码不对" }, 400);
 
-  await c.env.DB.prepare("UPDATE user SET password_hash = ? WHERE id = ?")
+  await c.env.DB.prepare("UPDATE user SET password_hash = ?, must_change_pw = 0 WHERE id = ?")
     .bind(await hashPassword(newPassword), user.id)
     .run();
   return c.json({ ok: true });
@@ -170,6 +178,7 @@ app.get("/me", requireUser, async (c) => {
     role: user.role,
     teamId: await teamIdOf(c, user.id),
     locked: user.locked,
+    mustChangePassword: user.mustChangePassword,
   };
   return c.json(resp);
 });

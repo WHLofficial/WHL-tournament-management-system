@@ -2,9 +2,12 @@ import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
+import { requirePwChanged } from "../middleware/auth";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
 const app = new Hono<AppEnv>();
+
+app.use("*", requirePwChanged);
 
 app.post("/bind", async (c) => {
   const user = c.get("user")!;

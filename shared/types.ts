@@ -178,6 +178,7 @@ export interface MeResp {
   role: Role;
   teamId: number | null; // 绑定的队伍，未绑为 null
   locked: boolean; // 观众号：无码注册被锁定，解锁后才能绑队
+  mustChangePassword: boolean; // 密码被重置后未改密：强制先改密码
 }
 
 // ---------- API DTO（camelCase，路由层做映射） ----------

@@ -84,7 +84,7 @@ app.post("/:id/reset-password", async (c) => {
     return c.json({ message: "超级管理员密码不能在线重置" }, 400);
   }
   const tempPassword = genTempPassword();
-  await c.env.DB.prepare("UPDATE user SET password_hash = ? WHERE id = ?")
+  await c.env.DB.prepare("UPDATE user SET password_hash = ?, must_change_pw = 1 WHERE id = ?")
     .bind(await hashPassword(tempPassword), id)
     .run();
   return c.json({ tempPassword }, 200);

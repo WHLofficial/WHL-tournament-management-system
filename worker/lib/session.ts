@@ -24,11 +24,19 @@ export async function getSessionUser(c: Context<AppEnv>): Promise<SessionUser | 
   const raw = await c.env.KV.get(`sess:${token}`);
   if (!raw) return null;
   const { userId } = JSON.parse(raw) as { userId: number };
-  const row = await c.env.DB.prepare("SELECT id, name, role, locked FROM user WHERE id = ?")
+  const row = await c.env.DB.prepare(
+    "SELECT id, name, role, locked, must_change_pw FROM user WHERE id = ?",
+  )
     .bind(userId)
-    .first<{ id: number; name: string; role: SessionUser["role"]; locked: number }>();
+    .first<{ id: number; name: string; role: SessionUser["role"]; locked: number; must_change_pw: number }>();
   return row
-    ? { id: row.id, name: row.name, role: row.role, locked: row.locked === 1 }
+    ? {
+        id: row.id,
+        name: row.name,
+        role: row.role,
+        locked: row.locked === 1,
+        mustChangePassword: row.must_change_pw === 1,
+      }
     : null;
 }
 

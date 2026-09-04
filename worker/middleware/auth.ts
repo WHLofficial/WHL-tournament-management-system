@@ -28,3 +28,15 @@ export const requireSuperadmin = createMiddleware<AppEnv>(async (c, next) => {
     return c.json({ error: "forbidden", message: "需要超级管理员权限" }, 403);
   await next();
 });
+
+// 重置密码后未改密：除改密/登出外全部接口拦下（前端配套强制改密流程）
+export const requirePwChanged = createMiddleware<AppEnv>(async (c, next) => {
+  const user = c.get("user");
+  if (user?.mustChangePassword) {
+    return c.json(
+      { error: "password_change_required", message: "密码刚被重置，请先设置新密码" },
+      403,
+    );
+  }
+  await next();
+});
