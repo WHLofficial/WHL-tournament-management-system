@@ -278,13 +278,19 @@ function StageBlock({
       </div>
 
       {stage.kind === "group" && (
-        <GroupOverview detail={detail} stageId={stage.id} />
+        <GroupOverview
+          detail={detail}
+          stage={stage}
+          busy={busy}
+          editable={editable}
+          onRefresh={onRefresh}
+        />
       )}
 
       {matches.length === 0 ? (
         <p className="muted">
           还没有场次。
-          {stage.kind === "group" ? "先抽签分组，再生成小组赛程。" : "点右上角自动生成。"}
+          {stage.kind === "group" ? "先随机抽签或在下方点队名旁的组别字母手动分组，再生成小组赛程。" : "点右上角自动生成。"}
         </p>
       ) : (
         roundBuckets.map(({ round, third, list }) => (
@@ -389,17 +395,43 @@ function MatchRow({
   );
 }
 
+// 小组阵容概览：未分组的队点组别字母划入，组内队点 × 移出；随机抽签仍可用，两者可混用
 function GroupOverview({
   detail,
-  stageId,
+  stage,
+  busy,
+  editable,
+  onRefresh,
 }: {
   detail: TournamentDetailDTO;
-  stageId: number;
+  stage: StageDTO;
+  busy: boolean;
+  editable: boolean;
+  onRefresh: () => void;
 }) {
-  const groups = detail.groups.filter((g) => g.stageId === stageId);
+  const groups = detail.groups.filter((g) => g.stageId === stage.id);
+  const [assigning, setAssigning] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const assign = async (entryId: number, groupId: number | null) => {
+    setAssigning(true);
+    setErr(null);
+    try {
+      await api(
+        `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/entries/${entryId}/group`,
+        { method: "PATCH", body: { groupId } }
+      );
+      onRefresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAssigning(false);
+    }
+  };
+  const locked = busy || assigning || !editable;
   const undrawn = detail.entries.filter((e) => e.groupId == null);
   return (
     <div className="group-overview">
+      {err && <p className="error">{err}</p>}
       {groups.map((g) => {
         const members = detail.entries.filter((e) => e.groupId === g.id);
         return (
@@ -407,8 +439,22 @@ function GroupOverview({
             <b>{g.name} 组</b>
             <span className="muted">
               {members.length
-                ? members.map((m) => m.teamName).join("、")
-                : "待抽签"}
+                ? members.map((m) => (
+                    <span key={m.id} className="gteam">
+                      {m.teamName}
+                      {!locked && (
+                        <button
+                          className="gteam-x"
+                          onClick={() => assign(m.id, null)}
+                          disabled={assigning}
+                          title={`把 ${m.teamName} 移出分组`}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))
+                : "待抽签或手动分配"}
             </span>
           </div>
         );
@@ -417,7 +463,26 @@ function GroupOverview({
         <div className="group-chip">
           <b>未分组</b>
           <span className="muted">
-            {undrawn.length} 支：{undrawn.map((m) => m.teamName).join("、")}
+            {undrawn.map((m) => (
+              <span key={m.id} className="gteam">
+                {m.teamName}
+                {!locked && (
+                  <span className="gteam-assign">
+                    {groups.map((g) => (
+                      <button
+                        key={g.id}
+                        className="gteam-g"
+                        onClick={() => assign(m.id, g.id)}
+                        disabled={assigning}
+                        title={`把 ${m.teamName} 分到 ${g.name} 组`}
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </span>
+                )}
+              </span>
+            ))}
           </span>
         </div>
       )}

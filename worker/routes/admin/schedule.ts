@@ -515,6 +515,88 @@ app.post("/:id/stages/:stageId/draw", async (c) => {
   return c.json({ assigned: byName.size, groups: result });
 });
 
+// 手动分组：单队划入某组（groupId=null 移出未分组）；与抽签写同一个 group_id 字段
+app.patch("/:id/stages/:stageId/entries/:entryId/group", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  const entryId = Number(c.req.param("entryId"));
+  let stage: StageRow;
+  let started: number;
+  try {
+    ({ stage, started } = await loadStage(c.env.DB, tid, stageId));
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    throw e;
+  }
+  if (stage.kind !== "group") return fail(c, 400, "只有小组赛阶段支持手动分组");
+
+  const body = (await c.req.json().catch(() => ({}))) as { groupId?: number | null };
+  const groupId = body.groupId == null ? null : Number(body.groupId);
+  if (groupId != null && !Number.isInteger(groupId)) {
+    return fail(c, 400, "groupId 必须是小组 id 或 null");
+  }
+
+  const entry = await c.env.DB.prepare(
+    "SELECT id, group_id FROM entry WHERE id = ? AND tournament_id = ?"
+  )
+    .bind(entryId, tid)
+    .first<{ id: number; group_id: number | null }>();
+  if (!entry) return fail(c, 404, "参赛球队不存在");
+
+  // 原地不动直接返回，避免容量守卫误伤「点了自己所在组」
+  if (entry.group_id === groupId) return c.json({ ok: true });
+
+  let groupName = "";
+  if (groupId != null) {
+    const group = await c.env.DB.prepare(
+      'SELECT id, name FROM "group" WHERE id = ? AND stage_id = ?'
+    )
+      .bind(groupId, stageId)
+      .first<{ id: number; name: string }>();
+    if (!group) return fail(c, 400, "小组不存在或不属于该阶段");
+
+    // 容量与抽签的容量校验对齐
+    const gcfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { group_size?: number };
+    if (gcfg.group_size) {
+      const n =
+        (
+          await c.env.DB.prepare(
+            "SELECT COUNT(*) AS n FROM entry WHERE group_id = ?"
+          )
+            .bind(groupId)
+            .first<{ n: number }>()
+        )?.n ?? 0;
+      if (n >= gcfg.group_size) {
+        return fail(c, 400, `${group.name} 组已满（每组最多 ${gcfg.group_size} 队）`);
+      }
+    }
+    groupName = group.name;
+  }
+
+  if (started > 0) {
+    const busy =
+      (
+        await c.env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND status IN ('live','finished') AND (home_entry_id = ? OR away_entry_id = ?)"
+        )
+          .bind(stageId, entryId, entryId)
+          .first<{ n: number }>()
+      )?.n ?? 0;
+    if (busy > 0) {
+      return fail(c, 409, "该队已有开打或完赛的场次，不能调整分组");
+    }
+  }
+
+  // 挪组后原组内对阵不再成立：清掉该队在本阶段的未开打场次（与重新抽签语义一致）
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "DELETE FROM match WHERE stage_id = ? AND status = 'pending' AND (home_entry_id = ? OR away_entry_id = ?)"
+    ).bind(stageId, entryId, entryId),
+    c.env.DB.prepare("UPDATE entry SET group_id = ? WHERE id = ?").bind(groupId, entryId),
+  ]);
+  return c.json({ ok: true, groupId, groupName });
+});
+
 // ---------- 手动落场（仅循环/小组阶段；淘汰赛由晋级器填充） ----------
 // 守卫单场与批量共用：null = 通过；extraPairIds = 同批已检查过的其它场队伍
 // （批量场景库里还没插入，批次内互斥由调用方先查，这里只防与已有场次冲突）
