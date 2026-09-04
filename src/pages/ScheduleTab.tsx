@@ -396,6 +396,7 @@ function MatchRow({
 }
 
 // 小组阵容概览：未分组的队点组别字母划入，组内队点 × 移出；随机抽签仍可用，两者可混用
+// 点击走乐观更新：本地立即改组别，请求后台同步，失败回滚；detail 刷新回来后覆盖清空
 function GroupOverview({
   detail,
   stage,
@@ -410,9 +411,14 @@ function GroupOverview({
   onRefresh: () => void;
 }) {
   const groups = detail.groups.filter((g) => g.stageId === stage.id);
+  const [override, setOverride] = useState<Map<number, number | null>>(new Map());
   const [assigning, setAssigning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setOverride(new Map());
+  }, [detail]);
   const assign = async (entryId: number, groupId: number | null) => {
+    setOverride((m) => new Map(m).set(entryId, groupId));
     setAssigning(true);
     setErr(null);
     try {
@@ -422,18 +428,25 @@ function GroupOverview({
       );
       onRefresh();
     } catch (e) {
+      setOverride((m) => {
+        const next = new Map(m);
+        next.delete(entryId);
+        return next;
+      });
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setAssigning(false);
     }
   };
+  const effGroup = (e: { id: number; groupId: number | null }) =>
+    override.has(e.id) ? override.get(e.id)! : e.groupId;
   const locked = busy || assigning || !editable;
-  const undrawn = detail.entries.filter((e) => e.groupId == null);
+  const undrawn = detail.entries.filter((e) => effGroup(e) == null);
   return (
     <div className="group-overview">
       {err && <p className="error">{err}</p>}
       {groups.map((g) => {
-        const members = detail.entries.filter((e) => e.groupId === g.id);
+        const members = detail.entries.filter((e) => effGroup(e) === g.id);
         return (
           <div key={g.id} className="group-chip">
             <b>{g.name} 组</b>
