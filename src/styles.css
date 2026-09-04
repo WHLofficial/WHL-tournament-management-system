@@ -660,3 +660,155 @@ button.add-stage {
     flex-basis: 90px;
   }
 }
+
+/* 观赛包：事件时间线 + 即将进行 + 比赛详情 */
+.mr-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 8px;
+}
+.evt-list {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px;
+}
+.evt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.evt-row.evt-away {
+  justify-content: flex-end;
+}
+.evt-min {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 28px;
+  text-align: right;
+}
+.evt-away .evt-min {
+  text-align: left;
+  order: 3;
+}
+.evt-away .evt-who {
+  order: 1;
+}
+.evt-away .evt-icon {
+  order: 2;
+}
+.evt-ball {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  position: relative;
+  vertical-align: -1px;
+}
+/* 进球=普通足球（墨色），点球=草皮绿，乌龙=玫红 */
+.b-goal {
+  background: var(--ink);
+}
+.b-pen_goal {
+  background: var(--pitch);
+}
+.b-own_goal {
+  background: #e64980;
+}
+.evt-miss::after {
+  content: " d7";
+  position: absolute;
+  inset: 0;
+  color: #fff;
+  font-size: 12px;
+  line-height: 12px;
+  text-align: center;
+  font-weight: 700;
+}
+.evt-tag {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.evt-assist {
+  color: var(--muted);
+  font-size: 12px;
+}
+.upcoming {
+  margin: 18px 0 6px;
+}
+.upcoming h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.up-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.up-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  text-decoration: none;
+  color: var(--ink);
+}
+.up-card:hover {
+  border-color: var(--pitch);
+}
+.up-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.up-teams {
+  font-weight: 700;
+}
+.md-title {
+  margin: 10px 0;
+  font-size: 15px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.md-card {
+  padding: 20px 16px;
+}
+.md-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.md-team {
+  flex: 1;
+  font-size: 17px;
+  font-weight: 700;
+}
+.md-team.md-away {
+  text-align: right;
+}
+.md-team.md-win {
+  color: var(--pitch);
+}
+.md-card .mr-scorebox .mr-score {
+  font-size: 22px;
+}
+.md-empty {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .up-list {
+    grid-template-columns: 1fr;
+  }
+}

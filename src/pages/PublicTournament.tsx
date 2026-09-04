@@ -5,6 +5,7 @@ import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { StandingsTables } from "./StandingsTab";
 import { elimRoundName, stageTitle } from "./MatchesTab";
 import { MatchScore, computeAgg } from "../components/MatchScore";
+import { EventTimeline } from "../components/EventTimeline";
 import { Toplists } from "../components/Toplists";
 import { StatsDashboard } from "../components/StatsDashboard";
 import type {
@@ -146,6 +147,7 @@ export default function PublicTournament() {
                       {roundList.map((m) => (
                         <PublicMatchRow
                           key={m.id}
+                          tid={tid}
                           match={m}
                           agg={computeAgg(m, roundList)}
                         />
@@ -162,7 +164,7 @@ export default function PublicTournament() {
               {matches
                 .filter((m) => !detail.stages.some((s) => s.id === m.stageId))
                 .map((m) => (
-                  <PublicMatchRow key={m.id} match={m} agg={null} />
+                  <PublicMatchRow key={m.id} tid={tid} match={m} agg={null} />
                 ))}
             </section>
           )}
@@ -201,19 +203,30 @@ export default function PublicTournament() {
   );
 }
 
-function PublicMatchRow({ match: m, agg }: { match: MatchDTO; agg: [number, number] | null }) {
+function PublicMatchRow({
+  tid,
+  match: m,
+  agg,
+}: {
+  tid: number;
+  match: MatchDTO;
+  agg: [number, number] | null;
+}) {
   return (
     <div className={`match-row mr-${m.status}`}>
-      <div className="mr-line">
-        <span className={`mr-team${m.winnerEntryId === m.homeEntryId ? " mr-win" : ""}`}>
-          {m.homeTeamName ?? "待定"}
-        </span>
-        <MatchScore m={m} agg={agg} />
-        <span className={`mr-team mr-away${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
-          {m.awayTeamName ?? "待定"}
-        </span>
-        {m.status === "live" && <span className="m-badge ms-live">进行中</span>}
-      </div>
+      <Link to={`/t/${tid}/match/${m.id}`} className="mr-link">
+        <div className="mr-line">
+          <span className={`mr-team${m.winnerEntryId === m.homeEntryId ? " mr-win" : ""}`}>
+            {m.homeTeamName ?? "待定"}
+          </span>
+          <MatchScore m={m} agg={agg} />
+          <span className={`mr-team mr-away${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
+            {m.awayTeamName ?? "待定"}
+          </span>
+          {m.status === "live" && <span className="m-badge ms-live">进行中</span>}
+        </div>
+      </Link>
+      <EventTimeline events={m.events ?? []} />
     </div>
   );
 }

@@ -263,6 +263,7 @@ export interface MatchDTO {
   winnerEntryId: number | null;
   note: string | null;
   events?: PublicMatchEventDTO[];
+  stageKind?: "elim" | "round_robin" | "group";
 }
 
 export type MatchEventType =

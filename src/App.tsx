@@ -4,6 +4,7 @@ import { RequireRole } from "./components/ui";
 import { TopBar } from "./components/TopBar";
 import { Home } from "./pages/Home";
 import PublicTournament from "./pages/PublicTournament";
+import PublicMatchDetail from "./pages/PublicMatchDetail";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { AdminTournaments } from "./pages/AdminTournaments";
@@ -46,6 +47,7 @@ function AppShell() {
           }
         />
         <Route path="/t/:id" element={<PublicTournament />} />
+        <Route path="/t/:id/match/:mid" element={<PublicMatchDetail />} />
         <Route
           path="/my-team"
           element={

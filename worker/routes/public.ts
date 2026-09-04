@@ -234,13 +234,14 @@ app.get("/tournaments/:id/matches", async (c) => {
     score_home: number | null; score_away: number | null;
     pen_home: number | null; pen_away: number | null;
     status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
+    stage_kind: MatchDTO["stageKind"];
   };
   const rows = await c.env.DB.prepare(
     `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
        m.home_entry_id, m.away_entry_id,
        ht.name AS home_team_name, at.name AS away_team_name,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
-       m.status, m.winner_entry_id, m.note
+       m.status, m.winner_entry_id, m.note, s.kind AS stage_kind
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      LEFT JOIN entry he ON he.id = m.home_entry_id
@@ -285,6 +286,7 @@ app.get("/tournaments/:id/matches", async (c) => {
       winnerEntryId: r.winner_entry_id,
       note: r.note,
       events: eventsByMatch.get(r.id) ?? [],
+      stageKind: r.stage_kind,
     };
   });
   return c.json({ matches });
@@ -306,7 +308,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
        m.home_entry_id, m.away_entry_id,
        ht.name AS home_team_name, at.name AS away_team_name,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
-       m.status, m.winner_entry_id, m.note
+       m.status, m.winner_entry_id, m.note, s.kind AS stage_kind
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      LEFT JOIN entry he ON he.id = m.home_entry_id
@@ -323,6 +325,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
       score_home: number | null; score_away: number | null;
       pen_home: number | null; pen_away: number | null;
       status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
+      stage_kind: MatchDTO["stageKind"];
     }>();
   if (!row) return c.json({ message: "比赛不存在" }, 404);
 
@@ -354,6 +357,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
     winnerEntryId: row.winner_entry_id,
     note: row.note,
     events: eventsByMatch.get(row.id) ?? [],
+    stageKind: row.stage_kind,
   };
   return c.json({ match });
 });
