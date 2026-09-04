@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { requireAdmin } from "../../middleware/auth";
+import { mediaUrl } from "../../lib/media";
 import type { MatchDTO } from "../../../shared/types";
 import {
   buildCrossPlan,
@@ -549,6 +550,7 @@ app.get("/:id/matches", async (c) => {
     id: number; stage_id: number; round: number; slot: number; leg: number | null;
     home_entry_id: number | null; away_entry_id: number | null;
     home_team_name: string | null; away_team_name: string | null;
+    home_logo_key: string | null; away_logo_key: string | null;
     score_home: number | null; score_away: number | null;
     pen_home: number | null; pen_away: number | null;
     status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
@@ -557,6 +559,7 @@ app.get("/:id/matches", async (c) => {
     `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
        m.home_entry_id, m.away_entry_id,
        ht.name AS home_team_name, at.name AS away_team_name,
+       ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
        m.status, m.winner_entry_id, m.note
      FROM match m
@@ -592,6 +595,8 @@ app.get("/:id/matches", async (c) => {
     awayEntryId: r.away_entry_id,
     homeTeamName: r.home_team_name,
     awayTeamName: r.away_team_name,
+    homeLogoUrl: mediaUrl(r.home_logo_key),
+    awayLogoUrl: mediaUrl(r.away_logo_key),
     scoreHome:
       r.status === "live"
         ? liveGoals.get(`${r.id}:${r.home_entry_id}`) ?? 0
