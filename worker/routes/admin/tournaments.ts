@@ -7,6 +7,7 @@ import {
 } from "../../../shared/types";
 import { defaultCrossTemplate } from "../../lib/seeding";
 import { readStageStandings, buildStandingsStmts } from "../../lib/standings";
+import { buildStats, buildToplists } from "../../lib/topstats";
 import { requireSuperadmin } from "../../middleware/auth";
 
 type Status = TournamentDTO["status"];
@@ -551,6 +552,31 @@ app.patch(
     ).flat();
     if (stmts.length > 0) await c.env.DB.batch(stmts);
     return c.json({ ok: true });
+  }
+);
+
+// ---------- 榜单与数据统计（复用公开计算；草稿赛事管理端也要能看） ----------
+app.get(
+  "/:id/toplists",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ id: number }>();
+    if (!t) return c.json({ message: "赛事不存在" }, 404);
+    return c.json(await buildToplists(c.env.DB, id));
+  }
+);
+
+app.get(
+  "/:id/stats",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ id: number }>();
+    if (!t) return c.json({ message: "赛事不存在" }, 404);
+    return c.json(await buildStats(c.env.DB, id));
   }
 );
 

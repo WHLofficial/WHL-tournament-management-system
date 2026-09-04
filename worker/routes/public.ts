@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import type { EntryDTO, MatchDTO, TournamentDTO } from "../../shared/types";
 import { readStageStandings } from "../lib/standings";
+import { buildStats, buildToplists } from "../lib/topstats";
 
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
 const app = new Hono<AppEnv>();
@@ -204,6 +205,29 @@ app.get("/tournaments/:id/standings", async (c) => {
   if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
   const standings = await readStageStandings(c.env.DB, id);
   return c.json({ standings });
+});
+
+// 榜单（球员榜+球队榜）与数据统计：单赛事内；管理端另有不受草稿限制的同名端点
+app.get("/tournaments/:id/toplists", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare(
+    "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
+  )
+    .bind(id)
+    .first<{ id: number }>();
+  if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
+  return c.json(await buildToplists(c.env.DB, id));
+});
+
+app.get("/tournaments/:id/stats", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare(
+    "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
+  )
+    .bind(id)
+    .first<{ id: number }>();
+  if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
+  return c.json(await buildStats(c.env.DB, id));
 });
 
 export default app;
