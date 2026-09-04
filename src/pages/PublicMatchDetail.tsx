@@ -38,14 +38,14 @@ export default function PublicMatchDetail() {
   const tid = Number(id);
   const matchId = Number(mid);
   const [m, setM] = useState<MatchDTO | null>(null);
-  const [tournamentName, setTournamentName] = useState<string | null>(null);
+  const [tInfo, setTInfo] = useState<{ name: string; coverUrl: string | null } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   // 分享卡标题需要赛事名，进来时顺手拉一次
   useEffect(() => {
-    api<{ tournament: { name: string } }>(`/api/public/tournaments/${tid}`)
-      .then((b) => setTournamentName(b.tournament.name))
-      .catch(() => setTournamentName(null));
+    api<{ tournament: { name: string; coverUrl: string | null } }>(`/api/public/tournaments/${tid}`)
+      .then((b) => setTInfo({ name: b.tournament.name, coverUrl: b.tournament.coverUrl ?? null }))
+      .catch(() => setTInfo(null));
   }, [tid]);
 
   const refetch = useCallback(async () => {
@@ -87,13 +87,14 @@ export default function PublicMatchDetail() {
               {m.stageKind ? STAGE_TITLE[m.stageKind] : ""} 第{m.round}轮
               {m.leg ? ` · 第${m.leg}回合` : ""}
             </h2>
-            {tournamentName && (
+            {tInfo && (
               <ShareButton
                 title={`分享这场比赛`}
                 url={`${window.location.origin}/t/${tid}/match/${matchId}`}
                 draw={(c) =>
                   drawMatchCard(c, {
-                    tournamentName,
+                    tournamentName: tInfo.name,
+                    coverUrl: tInfo.coverUrl,
                     subtitle:
                       (m.stageKind ? STAGE_TITLE[m.stageKind] : "") +
                       ` 第${m.round}轮` +

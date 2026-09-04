@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 // 队徽缺失时按队名 hash 取色画色块+首字（与 TeamLogo 组件同款色板）。
 
 export const CARD_W = 800;
+/** 基准高度：内容不足时保持 4:5 海报比例，内容多时自动拉高成长图 */
 export const CARD_H = 1000;
 
 const PALETTE = ["#0e7a46", "#e8590c", "#1971c2", "#9c36b5", "#e64980", "#f08c00"];
@@ -12,6 +13,12 @@ const FONT = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans S
 export interface ShareTeam {
   name: string;
   logoUrl?: string | null;
+}
+
+export interface ShareEvent {
+  type: string;
+  side: "home" | "away";
+  playerName: string | null;
 }
 
 export interface ShareMatch {
@@ -23,6 +30,7 @@ export interface ShareMatch {
   penAway?: number | null;
   status: "pending" | "live" | "finished";
   note?: string | null;
+  events?: ShareEvent[];
 }
 
 // MatchDTO 等兼容结构 → ShareMatch（待定队占位名）
@@ -37,6 +45,7 @@ export interface ShareMatchInput {
   penAway: number | null;
   status: "pending" | "live" | "finished";
   note?: string | null;
+  events?: { type: string; side: "home" | "away"; playerName: string | null }[];
 }
 
 export function matchToShare(m: ShareMatchInput): ShareMatch {
@@ -49,7 +58,35 @@ export function matchToShare(m: ShareMatchInput): ShareMatch {
     penAway: m.penAway,
     status: m.status,
     note: m.note ?? null,
+    events: m.events ?? [],
   };
+}
+
+// 对阵行事件摘要：⚽进球（点球进球不特殊标注，乌龙归受益侧标 OG）+ 🟥红牌。
+// 同侧多人逗号分隔，同一人多球聚合 ×n。返回主/客两侧文本。
+function eventSummaries(m: ShareMatch): { home: string | null; away: string | null } {
+  const goals: Record<"home" | "away", Map<string, number>> = { home: new Map(), away: new Map() };
+  const reds: Record<"home" | "away", string[]> = { home: [], away: [] };
+  for (const e of m.events ?? []) {
+    const name = e.playerName || "球员";
+    if (e.type === "goal" || e.type === "pen_goal") {
+      goals[e.side].set(name, (goals[e.side].get(name) ?? 0) + 1);
+    } else if (e.type === "own_goal") {
+      const s = e.side === "home" ? "away" : "home";
+      const key = `${name}(OG)`;
+      goals[s].set(key, (goals[s].get(key) ?? 0) + 1);
+    } else if (e.type === "red") {
+      reds[e.side].push(name);
+    }
+  }
+  const fmt = (side: "home" | "away"): string | null => {
+    const parts: string[] = [];
+    const names = [...goals[side].entries()].map(([n, c]) => (c >= 2 ? `${n} ×${c}` : n));
+    if (names.length > 0) parts.push(`⚽ ${names.join(", ")}`);
+    if (reds[side].length > 0) parts.push(`🟥 ${reds[side].join(", ")}`);
+    return parts.length > 0 ? parts.join("  ") : null;
+  };
+  return { home: fmt("home"), away: fmt("away") };
 }
 
 export interface TournamentCardData {
@@ -64,6 +101,7 @@ export interface TournamentCardData {
 export interface MatchCardData {
   tournamentName: string;
   subtitle: string;
+  coverUrl?: string | null;
   match: ShareMatch;
   eventLines?: string[];
   url: string;
@@ -72,6 +110,7 @@ export interface MatchCardData {
 export interface RoundCardData {
   tournamentName: string;
   title: string;
+  coverUrl?: string | null;
   matches: ShareMatch[];
   url: string;
 }
@@ -79,9 +118,14 @@ export interface RoundCardData {
 export interface TableCardData {
   tournamentName: string;
   title: string;
+  coverUrl?: string | null;
   columns: string[];
   rows: string[][];
   url: string;
+  /** 每列相对宽度权重（如队名列加宽），不传则均分 */
+  colWidths?: number[];
+  /** 左对齐的名称列序号（默认第 1 列；可传多个，如榜单的球员+球队列） */
+  nameCol?: number | number[];
 }
 
 function colorOf(name: string): string {
@@ -148,10 +192,10 @@ async function drawTeamBadge(
   ctx.restore();
 }
 
-async function drawQr(ctx: CanvasRenderingContext2D, url: string): Promise<void> {
+async function drawQr(ctx: CanvasRenderingContext2D, url: string, h: number): Promise<void> {
   const size = 168;
   const x = CARD_W - size - 44;
-  const y = CARD_H - size - 40;
+  const y = h - size - 40;
   ctx.fillStyle = "rgba(255,255,255,0.94)";
   roundRectPath(ctx, x - 10, y - 10, size + 20, size + 20, 14);
   ctx.fill();
@@ -163,47 +207,51 @@ async function drawQr(ctx: CanvasRenderingContext2D, url: string): Promise<void>
   });
   ctx.drawImage(off, x, y);
   ctx.fillStyle = "rgba(255,255,255,0.85)";
-  ctx.textAlign = "left";
+  ctx.textAlign = "right";
   ctx.textBaseline = "alphabetic";
   font(ctx, 400, 15);
-  ctx.fillText("扫码打开这个页面", x - 10, y + size + 32);
+  ctx.fillText("扫码打开这个页面", x + size + 10, y + size + 32);
 }
 
-// 画卡底：渐变球场绿 + 顶部标题区。返回内容区起始 y。
-function drawBase(
-  ctx: CanvasRenderingContext2D,
-  title: string,
-  subtitle: string,
-): number {
-  const grad = ctx.createLinearGradient(0, 0, CARD_W, CARD_H);
+// 画卡底：渐变球场绿 + 中圈装饰（标题区由各卡自行排）
+function drawBaseBg(ctx: CanvasRenderingContext2D, h: number): void {
+  const grad = ctx.createLinearGradient(0, 0, CARD_W, h);
   grad.addColorStop(0, "#0a3d24");
   grad.addColorStop(1, "#116237");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CARD_W, CARD_H);
+  ctx.fillRect(0, 0, CARD_W, h);
 
-  // 球场中圈装饰
   ctx.strokeStyle = "rgba(255,255,255,0.06)";
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(CARD_W / 2, CARD_H / 2, 230, 0, Math.PI * 2);
+  ctx.arc(CARD_W / 2, h / 2, 230, 0, Math.PI * 2);
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(CARD_W / 2, 0);
-  ctx.lineTo(CARD_W / 2, CARD_H);
+  ctx.lineTo(CARD_W / 2, h);
   ctx.stroke();
+}
 
+// 封面打头标题区：封面 + 赛事名 + 副标题 + 金线。返回内容区起始 y。
+async function drawCoverHeader(
+  ctx: CanvasRenderingContext2D,
+  coverUrl: string | null | undefined,
+  title: string,
+  subtitle: string,
+  coverH: number,
+): Promise<number> {
+  const end = await drawCover(ctx, coverUrl, 36, coverH);
   ctx.fillStyle = "#fff";
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   font(ctx, 700, 40);
-  ctx.fillText(fitText(ctx, title, CARD_W - 96), 48, 76);
+  ctx.fillText(fitText(ctx, title, CARD_W - 96), 48, end + 40);
   font(ctx, 400, 20);
   ctx.fillStyle = "rgba(255,255,255,0.72)";
-  ctx.fillText(fitText(ctx, subtitle, CARD_W - 96), 48, 112);
-
+  ctx.fillText(fitText(ctx, subtitle ?? "", CARD_W - 96), 48, end + 76);
   ctx.fillStyle = "rgba(240,200,90,0.9)";
-  ctx.fillRect(48, 130, 56, 4);
-  return 170;
+  ctx.fillRect(48, end + 96, 56, 4);
+  return end + 140;
 }
 
 // 一行对阵：主队名贴中左侧、客队名贴中右侧、中间比分/vs 胶囊
@@ -214,24 +262,32 @@ async function drawMatchLine(
 ): Promise<void> {
   const cx = CARD_W / 2;
   const badge = 34;
-  const gap = 10;
+  const pill = 88;
+  const gapPill = 12; // 文字与胶囊的间隙
+  const gapBadge = 8; // 文字与徽标的间隙
   font(ctx, 600, 21);
+
+  // 文字锚点在胶囊外侧，徽标再往外；保证最长文字（fitText 截断后）也不碰胶囊、不越边距
+  const anchorH = cx - pill / 2 - gapPill;
+  const anchorA = cx + pill / 2 + gapPill;
+  const textMax = anchorH - 48 - badge - gapBadge;
 
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  const homeName = fitText(ctx, m.home.name, cx - badge - 76);
+  const homeName = fitText(ctx, m.home.name, textMax);
   ctx.fillStyle = "#fff";
-  ctx.fillText(homeName, cx - badge / 2 - gap, y);
-  await drawTeamBadge(ctx, m.home, cx - badge / 2 - gap - ctx.measureText(homeName).width - badge, y - badge / 2, badge);
+  ctx.fillText(homeName, anchorH, y);
+  const hw = ctx.measureText(homeName).width;
+  await drawTeamBadge(ctx, m.home, anchorH - hw - gapBadge - badge, y - badge / 2, badge);
 
   ctx.textAlign = "left";
-  const awayName = fitText(ctx, m.away.name, cx - badge - 76);
+  const awayName = fitText(ctx, m.away.name, textMax);
   ctx.fillStyle = "#fff";
-  ctx.fillText(awayName, cx + badge / 2 + gap, y);
-  await drawTeamBadge(ctx, m.away, cx + badge / 2 + gap + ctx.measureText(awayName).width + 4, y - badge / 2, badge);
+  ctx.fillText(awayName, anchorA, y);
+  const aw = ctx.measureText(awayName).width;
+  await drawTeamBadge(ctx, m.away, anchorA + aw + gapBadge, y - badge / 2, badge);
 
   // 中央胶囊
-  const pill = 88;
   ctx.fillStyle = "rgba(0,0,0,0.28)";
   roundRectPath(ctx, cx - pill / 2, y - 22, pill, 44, 22);
   ctx.fill();
@@ -254,6 +310,21 @@ async function drawMatchLine(
     ctx.fillStyle = "rgba(255,255,255,0.62)";
     ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, y + 36);
   }
+  // 事件摘要：主侧贴胶囊左侧右对齐、客侧贴胶囊右侧左对齐，与点球括注同排（水平错开）
+  const sum = eventSummaries(m);
+  if (sum.home || sum.away) {
+    font(ctx, 400, 14);
+    ctx.fillStyle = "rgba(255,255,255,0.78)";
+    ctx.textBaseline = "middle";
+    if (sum.home) {
+      ctx.textAlign = "right";
+      ctx.fillText(fitText(ctx, sum.home, anchorH - 48), anchorH, y + 36);
+    }
+    if (sum.away) {
+      ctx.textAlign = "left";
+      ctx.fillText(fitText(ctx, sum.away, CARD_W - 48 - anchorA), anchorA, y + 36);
+    }
+  }
   if (m.status === "live") {
     ctx.fillStyle = "#ff7a33";
     ctx.beginPath();
@@ -262,15 +333,15 @@ async function drawMatchLine(
   }
 }
 
-function drawFootBrand(ctx: CanvasRenderingContext2D): void {
+function drawFootBrand(ctx: CanvasRenderingContext2D, h: number): void {
   ctx.fillStyle = "rgba(255,255,255,0.55)";
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   font(ctx, 700, 26);
-  ctx.fillText("WHL 赛事", 48, CARD_H - 64);
+  ctx.fillText("WHL 赛事", 48, h - 64);
   font(ctx, 400, 14);
   ctx.fillStyle = "rgba(255,255,255,0.4)";
-  ctx.fillText("由 WHL 赛事系统生成", 48, CARD_H - 36);
+  ctx.fillText("由 WHL 赛事系统生成", 48, h - 36);
 }
 
 async function drawCover(ctx: CanvasRenderingContext2D, url: string | null | undefined, y: number, h: number): Promise<number> {
@@ -298,56 +369,75 @@ function sectionLabel(ctx: CanvasRenderingContext2D, text: string, y: number): v
   ctx.fillText(text, 48, y);
 }
 
-// 赛事卡：封面 + 近期赛果/对阵预告
+// 赛事卡：封面打头（海报式），下方标题、信息、近期赛果/对阵预告
 export async function drawTournamentCard(canvas: HTMLCanvasElement, data: TournamentCardData): Promise<void> {
   canvas.width = CARD_W;
-  canvas.height = CARD_H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  let y = drawBase(ctx, data.name, data.subtitle);
-  y = await drawCover(ctx, data.coverUrl, y, 300);
 
-  const listY = y + 34;
-  sectionLabel(ctx, data.resultLabel, listY);
-  const list = data.matches.slice(0, 4);
-  let my = listY + 46;
+  // 高度自适应：先算内容总高，再定画布，QR/脚注锚底
+  const rowsStart = 480; // contentStart 434 + 46
+  const list = data.matches.slice(0, 6);
+  const contentEnd = list.length > 0 ? rowsStart + (list.length - 1) * 78 + 36 : rowsStart;
+  const H = Math.max(CARD_H, contentEnd + 210);
+  canvas.height = H;
+  drawBaseBg(ctx, H);
+
+  const cs = await drawCoverHeader(ctx, data.coverUrl, data.name, data.subtitle, 240);
+  sectionLabel(ctx, data.resultLabel, cs);
+  let my = cs + 46;
   for (const m of list) {
     await drawMatchLine(ctx, m, my);
-    my += 66;
+    my += 78;
   }
   if (list.length === 0) {
     font(ctx, 400, 18);
     ctx.fillStyle = "rgba(255,255,255,0.55)";
     ctx.fillText("比赛安排即将公布", 48, my);
   }
-  drawFootBrand(ctx);
-  await drawQr(ctx, data.url);
+  drawFootBrand(ctx, H);
+  await drawQr(ctx, data.url, H);
 }
 
-// 单场卡：大比分 + 事件行
+// 单场卡：封面打头 + 大比分 + 事件行
 export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardData): Promise<void> {
   canvas.width = CARD_W;
-  canvas.height = CARD_H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  drawBase(ctx, data.tournamentName, data.subtitle);
+
+  const cs = 434; // 封面 240 的内容区起点
+  const cy = cs + 106;
+  const lines = (data.eventLines ?? []).slice(0, 10);
+  const linesStart = cy + 130;
+  const contentEnd = lines.length > 0 ? linesStart + (lines.length - 1) * 30 : cy + 70;
+  const H = Math.max(CARD_H, contentEnd + 210);
+  canvas.height = H;
+  drawBaseBg(ctx, H);
+  await drawCoverHeader(ctx, data.coverUrl, data.tournamentName, data.subtitle, 240);
+
   const m = data.match;
-  const cy = 400;
-  const badge = 96;
+  const badge = 84;
   const cx = CARD_W / 2;
 
-  font(ctx, 700, 30);
-  ctx.fillStyle = "#fff";
   ctx.textBaseline = "middle";
-  ctx.textAlign = "right";
-  const homeName = fitText(ctx, m.home.name, cx - badge - 160);
-  ctx.fillText(homeName, cx - 130, cy);
-  await drawTeamBadge(ctx, m.home, cx - 130 - ctx.measureText(homeName).width - badge - 12, cy - badge / 2, badge);
+  // 长队名先缩号（最低 15px，10 个汉字可完整显示），缩到下限仍放不下才截断
+  const nameMax = cx - 112 - badge - 8 - 36;
+  const drawCardName = (name: string, x: number, align: CanvasTextAlign): number => {
+    font(ctx, 700, 30);
+    const w = ctx.measureText(name).width;
+    if (w > nameMax) font(ctx, 700, Math.max(15, Math.floor((30 * nameMax) / w)));
+    const shown = ctx.measureText(name).width > nameMax ? fitText(ctx, name, nameMax) : name;
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = align;
+    ctx.fillText(shown, x, cy);
+    return ctx.measureText(shown).width;
+  };
 
-  ctx.textAlign = "left";
-  const awayName = fitText(ctx, m.away.name, cx - badge - 160);
-  ctx.fillText(awayName, cx + 130, cy);
-  await drawTeamBadge(ctx, m.away, cx + 130 + ctx.measureText(awayName).width + 12, cy - badge / 2, badge);
+  const hw = drawCardName(m.home.name, cx - 112, "right");
+  await drawTeamBadge(ctx, m.home, cx - 112 - hw - 8 - badge, cy - badge / 2, badge);
+
+  const aw = drawCardName(m.away.name, cx + 112, "left");
+  await drawTeamBadge(ctx, m.away, cx + 112 + aw + 8, cy - badge / 2, badge);
 
   ctx.textAlign = "center";
   if (m.status === "pending") {
@@ -375,13 +465,12 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
   if (m.note) {
     font(ctx, 400, 16);
     ctx.fillStyle = "rgba(255,255,255,0.5)";
-    ctx.fillText(fitText(ctx, m.note, CARD_W - 96), cx, cy - 78);
+    ctx.fillText(fitText(ctx, m.note, CARD_W - 96), cx, cs + 26);
   }
 
-  const lines = (data.eventLines ?? []).slice(0, 6);
   if (lines.length > 0) {
-    let ey = cy + 140;
-    sectionLabel(ctx, "比赛事件", ey - 30);
+    sectionLabel(ctx, "比赛事件", cy + 100);
+    let ey = linesStart;
     font(ctx, 400, 17);
     ctx.textBaseline = "middle";
     for (const line of lines) {
@@ -391,63 +480,94 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
       ey += 30;
     }
   }
-  drawFootBrand(ctx);
-  await drawQr(ctx, data.url);
+  drawFootBrand(ctx, H);
+  await drawQr(ctx, data.url, H);
 }
 
-// 轮次卡：该轮全部对阵
+// 轮次卡：封面打头 + 该轮全部对阵
 export async function drawRoundCard(canvas: HTMLCanvasElement, data: RoundCardData): Promise<void> {
   canvas.width = CARD_W;
-  canvas.height = CARD_H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  let y = drawBase(ctx, data.tournamentName, data.title);
-  sectionLabel(ctx, "本轮对阵", y + 20);
-  let my = y + 60;
-  const list = data.matches.slice(0, 7);
+
+  const rowsStart = 480; // contentStart 434 + 46
+  const list = data.matches.slice(0, 12);
+  const overflow = data.matches.length > list.length;
+  const contentEnd = list.length > 0 ? rowsStart + (list.length - 1) * 78 + 36 + (overflow ? 34 : 0) : rowsStart;
+  const H = Math.max(CARD_H, contentEnd + 210);
+  canvas.height = H;
+  drawBaseBg(ctx, H);
+  await drawCoverHeader(ctx, data.coverUrl, data.tournamentName, data.title, 240);
+
+  sectionLabel(ctx, "本轮对阵", 434);
+  let my = rowsStart;
   for (const m of list) {
     await drawMatchLine(ctx, m, my);
-    my += 72;
+    my += 78;
   }
-  if (data.matches.length > 7) {
+  if (list.length === 0) {
+    font(ctx, 400, 18);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillText("本轮还没有安排比赛", 48, my);
+  }
+  if (overflow) {
     font(ctx, 400, 16);
     ctx.fillStyle = "rgba(255,255,255,0.5)";
     ctx.textAlign = "center";
-    ctx.fillText(`还有 ${data.matches.length - 7} 场未展示`, CARD_W / 2, my);
+    ctx.fillText(`还有 ${data.matches.length - list.length} 场未展示`, CARD_W / 2, my + 6);
   }
-  drawFootBrand(ctx);
-  await drawQr(ctx, data.url);
+  drawFootBrand(ctx, H);
+  await drawQr(ctx, data.url, H);
 }
 
-// 通用表卡：积分榜 / 球员球队榜单共用
+// 通用表卡：封面打头 + 积分榜 / 球员球队榜单共用
 export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardData): Promise<void> {
   canvas.width = CARD_W;
-  canvas.height = CARD_H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  let y = drawBase(ctx, data.tournamentName, data.title);
+
+  const cs = 434; // 封面 240 的内容区起点（200 会把默认封面标题裁顶）
+  const headerY = cs + 16;
+  const headerH = 46;
+  const rowH = 42;
+  const rowsStart = headerY + headerH + 6;
+  const rows = data.rows.slice(0, 20);
+  const overflow = data.rows.length > rows.length;
+  const contentEnd = rowsStart + rows.length * rowH + (overflow ? 28 : 0);
+  const H = Math.max(CARD_H, contentEnd + 210);
+  canvas.height = H;
+  drawBaseBg(ctx, H);
+  await drawCoverHeader(ctx, data.coverUrl, data.tournamentName, data.title, 240);
 
   const x = 48;
   const w = CARD_W - 96;
-  const cols = data.columns.length;
-  const colW = w / cols;
-  const rowH = 46;
-  const maxRows = Math.floor((CARD_H - 260 - (y + 40)) / rowH);
-  const rows = data.rows.slice(0, maxRows);
+  const weights = data.colWidths ?? data.columns.map(() => 1);
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  const colWs = weights.map((wt) => (wt / wsum) * w);
+  let colAcc = x;
+  const colLeft = colWs.map((cw) => {
+    const l = colAcc;
+    colAcc += cw;
+    return l;
+  });
+  // 名称列左对齐（默认第 1 列），其余居中
+  const rawName = data.nameCol ?? 1;
+  const nameCols = new Set(Array.isArray(rawName) ? rawName : [rawName]);
+  const cellX = (ci: number) => colLeft[ci] + (nameCols.has(ci) ? 16 : colWs[ci] / 2);
 
   // 表头
   ctx.fillStyle = "rgba(0,0,0,0.3)";
-  roundRectPath(ctx, x, y + 16, w, rowH, 10);
+  roundRectPath(ctx, x, headerY, w, headerH, 10);
   ctx.fill();
   font(ctx, 600, 16);
   ctx.fillStyle = "rgba(255,255,255,0.65)";
   ctx.textBaseline = "middle";
   data.columns.forEach((c, i) => {
-    ctx.textAlign = i === 0 ? "center" : i === 1 ? "left" : "center";
-    ctx.fillText(c, x + colW * i + (i === 1 ? 16 : colW / 2), y + 16 + rowH / 2);
+    ctx.textAlign = nameCols.has(i) ? "left" : "center";
+    ctx.fillText(c, cellX(i), headerY + headerH / 2);
   });
 
-  let ry = y + 16 + rowH + 6;
+  let ry = rowsStart;
   font(ctx, 500, 17);
   rows.forEach((row, ri) => {
     if (ri % 2 === 0) {
@@ -457,19 +577,19 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
     }
     ctx.fillStyle = "rgba(255,255,255,0.88)";
     row.forEach((cell, ci) => {
-      ctx.textAlign = ci === 0 ? "center" : ci === 1 ? "left" : "center";
-      ctx.fillText(fitText(ctx, cell, colW - 12), x + colW * ci + (ci === 1 ? 16 : colW / 2), ry + (rowH - 4) / 2);
+      ctx.textAlign = nameCols.has(ci) ? "left" : "center";
+      ctx.fillText(fitText(ctx, cell, colWs[ci] - 12), cellX(ci), ry + (rowH - 4) / 2);
     });
     ry += rowH;
   });
-  if (data.rows.length > rows.length) {
+  if (overflow) {
     font(ctx, 400, 14);
     ctx.fillStyle = "rgba(255,255,255,0.45)";
     ctx.textAlign = "center";
     ctx.fillText(`仅展示前 ${rows.length} 项，扫码看完整榜单`, CARD_W / 2, ry + 6);
   }
-  drawFootBrand(ctx);
-  await drawQr(ctx, data.url);
+  drawFootBrand(ctx, H);
+  await drawQr(ctx, data.url, H);
 }
 
 export function downloadCanvas(canvas: HTMLCanvasElement, filename: string): void {

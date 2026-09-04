@@ -91,6 +91,8 @@ interface ListDef {
   head: string[];
   rows: React.ReactNode[][];
   plain: string[][];
+  colWidths: number[];
+  nameCol: number[];
 }
 
 // 单赛事榜单：顶部球员榜/球队榜分段，左列菜单选具体榜单
@@ -101,7 +103,7 @@ export function Toplists({
 }: {
   tid: number;
   base: string;
-  share?: { tournamentName: string; url: string } | null;
+  share?: { tournamentName: string; url: string; coverUrl?: string | null } | null;
 }) {
   const [data, setData] = useState<ToplistsData | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -147,6 +149,8 @@ export function Toplists({
       head: ["#", "球员", "球队", "进球"],
       rows: data.scorers.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
       plain: data.scorers.map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      colWidths: [0.5, 2.2, 2.0, 1],
+      nameCol: [1, 2],
     },
     {
       key: "assists",
@@ -155,6 +159,8 @@ export function Toplists({
       head: ["#", "球员", "球队", "助攻"],
       rows: data.assists.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
       plain: data.assists.map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      colWidths: [0.5, 2.2, 2.0, 1],
+      nameCol: [1, 2],
     },
     {
       key: "cardsPlayers",
@@ -163,6 +169,8 @@ export function Toplists({
       head: ["#", "球员", "球队", "牌"],
       rows: data.cardsPlayers.map((r, i) => [i + 1, r.playerName, r.teamName, cards(r.yellows, r.reds)]),
       plain: data.cardsPlayers.map((r, i) => [String(i + 1), r.playerName, r.teamName, cardsText(r.yellows, r.reds)]),
+      colWidths: [0.5, 2.2, 2.0, 1],
+      nameCol: [1, 2],
     },
     {
       key: "injuries",
@@ -171,6 +179,8 @@ export function Toplists({
       head: ["#", "球员", "球队", "次数"],
       rows: data.injuries.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
       plain: data.injuries.map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      colWidths: [0.5, 2.2, 2.0, 1],
+      nameCol: [1, 2],
     },
   ];
 
@@ -182,6 +192,8 @@ export function Toplists({
       head: ["#", "球队", "进球"],
       rows: data.teamGoals.map((r, i) => [i + 1, r.teamName, r.count]),
       plain: data.teamGoals.map((r, i) => [String(i + 1), r.teamName, String(r.count)]),
+      colWidths: [0.5, 2.6, 1],
+      nameCol: [1],
     },
     {
       key: "teamConceded",
@@ -190,6 +202,8 @@ export function Toplists({
       head: ["#", "球队", "失球"],
       rows: data.teamConceded.map((r, i) => [i + 1, r.teamName, r.count]),
       plain: data.teamConceded.map((r, i) => [String(i + 1), r.teamName, String(r.count)]),
+      colWidths: [0.5, 2.6, 1],
+      nameCol: [1],
     },
     {
       key: "cleanSheets",
@@ -198,6 +212,8 @@ export function Toplists({
       head: ["#", "球队", "零封"],
       rows: data.cleanSheets.map((r, i) => [i + 1, r.teamName, r.count]),
       plain: data.cleanSheets.map((r, i) => [String(i + 1), r.teamName, String(r.count)]),
+      colWidths: [0.5, 2.6, 1],
+      nameCol: [1],
     },
     {
       key: "cardsTeams",
@@ -206,6 +222,8 @@ export function Toplists({
       head: ["#", "球队", "牌"],
       rows: data.cardsTeams.map((r, i) => [i + 1, r.teamName, cards(r.yellows, r.reds)]),
       plain: data.cardsTeams.map((r, i) => [String(i + 1), r.teamName, cardsText(r.yellows, r.reds)]),
+      colWidths: [0.5, 2.6, 1],
+      nameCol: [1],
     },
   ];
 
@@ -277,7 +295,10 @@ export function Toplists({
                       drawTableCard(c, {
                         tournamentName: share.tournamentName,
                         title: current.title,
+                        coverUrl: share.coverUrl ?? null,
                         columns: current.head,
+                        colWidths: current.colWidths,
+                        nameCol: current.nameCol,
                         rows: current.plain,
                         url: share.url,
                       })

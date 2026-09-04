@@ -215,6 +215,7 @@ export default function PublicTournament() {
                             drawRoundCard(c, {
                               tournamentName: t.name,
                               title: label,
+                              coverUrl: t.coverUrl ?? null,
                               matches: roundList.map(matchToShare),
                               url: `${origin}/t/${tid}?tab=schedule`,
                             })
@@ -248,7 +249,9 @@ export default function PublicTournament() {
         </div>
       )}
 
-      {tab === "standings" && <PublicStandings tid={tid} tournamentName={t.name} />}
+      {tab === "standings" && (
+        <PublicStandings tid={tid} tournamentName={t.name} coverUrl={t.coverUrl ?? null} />
+      )}
 
       {tab === "teams" &&
         (detail.entries.length === 0 ? (
@@ -280,7 +283,7 @@ export default function PublicTournament() {
         <Toplists
           tid={tid}
           base="/api/public"
-          share={{ tournamentName: t.name, url: `${origin}/t/${tid}?tab=toplists` }}
+          share={{ tournamentName: t.name, url: `${origin}/t/${tid}?tab=toplists`, coverUrl: t.coverUrl ?? null }}
         />
       )}
       {tab === "stats" && <StatsDashboard tid={tid} base="/api/public" />}
@@ -331,7 +334,15 @@ function PublicMatchRow({
   );
 }
 
-function PublicStandings({ tid, tournamentName }: { tid: number; tournamentName: string }) {
+function PublicStandings({
+  tid,
+  tournamentName,
+  coverUrl,
+}: {
+  tid: number;
+  tournamentName: string;
+  coverUrl: string | null;
+}) {
   const [standings, setStandings] = useState<StageStandingDTO[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -351,6 +362,7 @@ function PublicStandings({ tid, tournamentName }: { tid: number; tournamentName:
       share={{
         tournamentName,
         url: `${window.location.origin}/t/${tid}?tab=standings`,
+        coverUrl,
       }}
     />
   );

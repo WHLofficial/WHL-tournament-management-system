@@ -30,20 +30,24 @@ export function StandingsTables({
   share,
 }: {
   standings: StageStandingDTO[];
-  share?: { tournamentName: string; url: string } | null;
+  share?: { tournamentName: string; url: string; coverUrl?: string | null } | null;
 }) {
   const stageTitle = { group: "小组赛", round_robin: "循环赛" } as const;
   return (
     <>
       {standings.map((st) => {
         const allRows = st.groups.flatMap((g) => g.rows.map((r) => ({ g, r })));
-        const columns = st.groups.length > 1
-          ? ["#", "组", "球队", "赛", "净胜", "积分"]
-          : ["#", "球队", "赛", "净胜", "积分"];
+        const multi = st.groups.length > 1;
+        const columns = multi
+          ? ["#", "组", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分"]
+          : ["#", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分"];
+        const colWidths = multi
+          ? [0.6, 1.1, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1]
+          : [0.6, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1];
         const tableRows = allRows.map(({ g, r }) =>
-          st.groups.length > 1
-            ? [String(r.rank), g.name || "-", r.teamName, String(r.played), String(r.goalsFor - r.goalsAgainst), String(r.pts)]
-            : [String(r.rank), r.teamName, String(r.played), String(r.goalsFor - r.goalsAgainst), String(r.pts)],
+          multi
+            ? [String(r.rank), g.name || "-", r.teamName, String(r.played), String(r.won), String(r.drawn), String(r.lost), String(r.goalsFor), String(r.goalsAgainst), String(r.goalsFor - r.goalsAgainst), String(r.pts)]
+            : [String(r.rank), r.teamName, String(r.played), String(r.won), String(r.drawn), String(r.lost), String(r.goalsFor), String(r.goalsAgainst), String(r.goalsFor - r.goalsAgainst), String(r.pts)],
         );
         return (
         <section key={st.stageId} className="standings-stage">
@@ -57,7 +61,10 @@ export function StandingsTables({
                   drawTableCard(c, {
                     tournamentName: share.tournamentName,
                     title: `${stageTitle[st.kind]}积分榜`,
+                    coverUrl: share.coverUrl ?? null,
                     columns,
+                    colWidths,
+                    nameCol: multi ? 2 : 1,
                     rows: tableRows,
                     url: share.url,
                   })
