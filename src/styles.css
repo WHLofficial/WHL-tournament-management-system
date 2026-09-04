@@ -668,66 +668,75 @@ button.add-stage {
   color: inherit;
   border-radius: 8px;
 }
+/* 中央链条-节点式事件时间线：中轴贯穿，节点坐轴，主队向左/客队向右展开 */
 .evt-list {
-  margin-top: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 4px;
+  position: relative;
+  margin-top: 8px;
+  padding: 2px 0;
+}
+.evt-list::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+  transform: translateX(-50%);
 }
 .evt-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+}
+.evt-mid {
+  grid-column: 2;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 5px;
+  background: var(--card);
+  padding: 2px 3px;
 }
-.evt-row.evt-away {
-  justify-content: flex-end;
+.evt-home .evt-mid {
+  flex-direction: row;
+}
+.evt-away .evt-mid {
+  flex-direction: row-reverse;
+}
+.evt-ball {
+  display: block;
+}
+.evt-node {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 0 0 2px var(--card);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
 }
 .evt-min {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
-  min-width: 28px;
+}
+.evt-who {
+  font-size: 13px;
+}
+.evt-home .evt-who {
+  grid-column: 1;
+  justify-self: end;
   text-align: right;
 }
-.evt-away .evt-min {
-  text-align: left;
-  order: 3;
-}
 .evt-away .evt-who {
-  order: 1;
-}
-.evt-away .evt-icon {
-  order: 2;
-}
-.evt-ball {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  display: inline-block;
-  position: relative;
-  vertical-align: -1px;
-}
-/* 进球=普通足球（墨色），点球=草皮绿，乌龙=玫红 */
-.b-goal {
-  background: var(--ink);
-}
-.b-pen_goal {
-  background: var(--pitch);
-}
-.b-own_goal {
-  background: #e64980;
-}
-.evt-miss::after {
-  content: " d7";
-  position: absolute;
-  inset: 0;
-  color: #fff;
-  font-size: 12px;
-  line-height: 12px;
-  text-align: center;
-  font-weight: 700;
+  grid-column: 3;
+  justify-self: start;
+  text-align: left;
 }
 .evt-tag {
   margin-left: 6px;
