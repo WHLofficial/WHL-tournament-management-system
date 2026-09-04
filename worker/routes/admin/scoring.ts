@@ -164,7 +164,8 @@ app.post("/:id/finish", async (c) => {
     const stmts: D1PreparedStatement[] = [
       c.env.DB.prepare(
         `UPDATE match SET score_home = ?, score_away = ?, pen_home = ?, pen_away = ?,
-         status = 'finished', winner_entry_id = ? WHERE id = ?`
+         status = 'finished', winner_entry_id = ?,
+         finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
         ).bind(scoreHome, scoreAway, penHome, penAway, winner, id),
     ];
 

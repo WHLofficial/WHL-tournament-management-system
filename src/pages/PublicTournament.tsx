@@ -129,8 +129,25 @@ export default function PublicTournament() {
           {stagesWithMatches.length === 0 && (
             <p className="muted card">赛程还没排出来，排好后会显示在这里。</p>
           )}
+          {matches.some((m) => m.status === "live") && (
+            <section className="stage-block">
+              <h3 className="stage-head stage-head-live">
+                进行中 <span className="live-dot" aria-hidden />
+              </h3>
+              {matches
+                .filter((m) => m.status === "live")
+                .map((m) => (
+                  <PublicMatchRow
+                    key={m.id}
+                    tid={tid}
+                    match={m}
+                    agg={null}
+                  />
+                ))}
+            </section>
+          )}
           {stagesWithMatches.map((stage) => {
-            const list = matches.filter((m) => m.stageId === stage.id);
+            const list = matches.filter((m) => m.stageId === stage.id && m.status !== "live");
             const rounds = [...new Set(list.map((m) => m.round))].sort((a, b) => a - b);
             return (
               <section key={stage.id} className="stage-block">
@@ -158,11 +175,11 @@ export default function PublicTournament() {
               </section>
             );
           })}
-          {matches.filter((m) => !detail.stages.some((s) => s.id === m.stageId)).length > 0 && (
+          {matches.filter((m) => !detail.stages.some((s) => s.id === m.stageId) && m.status !== "live").length > 0 && (
             <section className="stage-block">
               <h3 className="stage-head">其他比赛</h3>
               {matches
-                .filter((m) => !detail.stages.some((s) => s.id === m.stageId))
+                .filter((m) => !detail.stages.some((s) => s.id === m.stageId) && m.status !== "live")
                 .map((m) => (
                   <PublicMatchRow key={m.id} tid={tid} match={m} agg={null} />
                 ))}

@@ -668,7 +668,8 @@ button.add-stage {
   color: inherit;
   border-radius: 8px;
 }
-/* 中央链条-节点式事件时间线：中轴贯穿，节点坐轴，主队向左/客队向右展开 */
+/* 中央链条-节点式事件时间线：中轴贯穿、轴上是素色链环节点，
+   事件图标+分钟+信息块贴在轴旁，主队向左/客队向右展开 */
 .evt-list {
   position: relative;
   margin-top: 8px;
@@ -696,29 +697,71 @@ button.add-stage {
   grid-column: 2;
   display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
   background: var(--card);
-  padding: 2px 3px;
+  padding: 3px 2px;
 }
-.evt-home .evt-mid {
-  flex-direction: row;
-}
-.evt-away .evt-mid {
-  flex-direction: row-reverse;
-}
-.evt-ball {
-  display: block;
-}
-.evt-node {
-  width: 16px;
-  height: 16px;
+.evt-chain {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--card);
-  box-shadow: 0 0 0 2px var(--card);
+  border: 2.5px solid var(--border);
+}
+.evt-info {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  font-size: 11px;
+  gap: 6px;
+  background: var(--card);
+  padding: 2px 6px;
+  font-size: 13px;
+}
+.evt-home .evt-info {
+  grid-column: 1;
+  justify-self: end;
+  text-align: right;
+}
+.evt-away .evt-info {
+  grid-column: 3;
+  justify-self: start;
+}
+.evt-icon {
+  display: inline-flex;
+  line-height: 1;
+}
+/* ⚽ emoji + 类型角标：点球绿点、乌龙玫红点、点球不进红叉 */
+.evt-ball {
+  position: relative;
+  font-size: 16px;
+}
+.evt-ball::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--card);
+}
+.evt-ball.pen::after {
+  background: var(--pitch);
+}
+.evt-ball.own::after {
+  background: #e64980;
+}
+.evt-ball.miss::after {
+  content: " d7";
+  top: -5px;
+  right: -6px;
+  width: auto;
+  height: auto;
+  background: var(--card);
+  border: none;
+  color: #c92a2a;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
 }
 .evt-min {
   font-family: var(--mono);
@@ -726,17 +769,7 @@ button.add-stage {
   color: var(--muted);
 }
 .evt-who {
-  font-size: 13px;
-}
-.evt-home .evt-who {
-  grid-column: 1;
-  justify-self: end;
-  text-align: right;
-}
-.evt-away .evt-who {
-  grid-column: 3;
-  justify-self: start;
-  text-align: left;
+  font-weight: 500;
 }
 .evt-tag {
   margin-left: 6px;
@@ -779,6 +812,29 @@ button.add-stage {
 .up-meta {
   color: var(--muted);
   font-size: 12px;
+}
+.stage-head-live,
+.upcoming h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: livepulse 1.6s ease-out infinite;
+}
+.up-score {
+  font-family: var(--mono);
+  font-weight: 700;
+}
+.up-score-live {
+  color: var(--live);
+}
+.up-live {
+  border-color: var(--live);
 }
 .up-teams {
   font-weight: 700;

@@ -3,7 +3,9 @@ import type { AppEnv } from "../env";
 import type {
   EntryDTO,
   MatchDTO,
+  LiveDTO,
   PublicMatchEventDTO,
+  RecentDTO,
   TournamentDTO,
   UpcomingDTO,
 } from "../../shared/types";
@@ -398,6 +400,122 @@ app.get("/upcoming", async (c) => {
     awayTeamName: r.away_team_name,
   }));
   return c.json({ upcoming });
+});
+
+// 跨赛事"进行中"：live 场，实时比分与 liveScore 同口径（goal/pen_goal 计事件方，own_goal 记对方）
+app.get("/live", async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT t.id AS tournament_id, t.name AS tournament_name,
+       m.id AS match_id, s.kind AS stage_kind, m.round,
+       he.id AS home_entry_id, ae.id AS away_entry_id,
+       ht.name AS home_team_name, at.name AS away_team_name
+     FROM match m
+     JOIN stage s ON s.id = m.stage_id
+     JOIN tournament t ON t.id = s.tournament_id
+     JOIN entry he ON he.id = m.home_entry_id
+     JOIN team ht ON ht.id = he.team_id
+     JOIN entry ae ON ae.id = m.away_entry_id
+     JOIN team at ON at.id = ae.team_id
+     WHERE t.status != 'draft' AND m.status = 'live'
+     ORDER BY t.id, s.sort_order, m.round, m.slot`
+  ).all<{
+    tournament_id: number; tournament_name: string;
+    match_id: number; stage_kind: "elim" | "round_robin" | "group"; round: number;
+    home_entry_id: number; away_entry_id: number;
+    home_team_name: string; away_team_name: string;
+  }>();
+  const list = rows.results ?? [];
+
+  // 一条聚合查询取全部 live 场的事件计分，再按 entry 归边
+  const scores = new Map<number, { home: number; away: number }>();
+  const sideByEvent = new Map<string, "home" | "away">();
+  for (const r of list) {
+    sideByEvent.set(`${r.match_id}:${r.home_entry_id}`, "home");
+    sideByEvent.set(`${r.match_id}:${r.away_entry_id}`, "away");
+  }
+  if (list.length > 0) {
+    const ev = await c.env.DB.prepare(
+      `SELECT me.match_id, me.entry_id, me.type, COUNT(*) AS n
+       FROM match_event me
+       JOIN match m ON m.id = me.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id
+       WHERE m.status = 'live' AND t.status != 'draft'
+       GROUP BY me.match_id, me.entry_id, me.type`
+    )
+      .all<{ match_id: number; entry_id: number | null; type: string; n: number }>();
+    for (const r of ev.results ?? []) {
+      if (r.entry_id === null) continue;
+      const side = sideByEvent.get(`${r.match_id}:${r.entry_id}`);
+      if (!side) continue;
+      const sc = scores.get(r.match_id) ?? { home: 0, away: 0 };
+      const goalsFor = r.type === "goal" || r.type === "pen_goal" ? r.n : 0;
+      const ownGoals = r.type === "own_goal" ? r.n : 0;
+      if (side === "home") {
+        sc.home += goalsFor;
+        sc.away += ownGoals;
+      } else {
+        sc.away += goalsFor;
+        sc.home += ownGoals;
+      }
+      scores.set(r.match_id, sc);
+    }
+  }
+
+  const live: LiveDTO[] = list.map((r) => {
+    const sc = scores.get(r.match_id) ?? { home: 0, away: 0 };
+    return {
+      tournamentId: r.tournament_id,
+      tournamentName: r.tournament_name,
+      matchId: r.match_id,
+      stageKind: r.stage_kind,
+      round: r.round,
+      homeTeamName: r.home_team_name,
+      awayTeamName: r.away_team_name,
+      scoreHome: sc.home,
+      scoreAway: sc.away,
+    };
+  });
+  return c.json({ live });
+});
+
+// 跨赛事"最近进行"：最近完赛的 10 场，按完赛时间倒序（改判刷新时间）
+app.get("/recent", async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT t.id AS tournament_id, t.name AS tournament_name,
+       m.id AS match_id, s.kind AS stage_kind, m.round,
+       ht.name AS home_team_name, at.name AS away_team_name,
+       m.score_home, m.score_away, m.finished_at
+     FROM match m
+     JOIN stage s ON s.id = m.stage_id
+     JOIN tournament t ON t.id = s.tournament_id
+     JOIN entry he ON he.id = m.home_entry_id
+     JOIN team ht ON ht.id = he.team_id
+     JOIN entry ae ON ae.id = m.away_entry_id
+     JOIN team at ON at.id = ae.team_id
+     WHERE t.status != 'draft' AND m.status = 'finished'
+       AND m.score_home IS NOT NULL AND m.score_away IS NOT NULL
+     ORDER BY m.finished_at DESC, m.id DESC
+     LIMIT 10`
+  ).all<{
+    tournament_id: number; tournament_name: string;
+    match_id: number; stage_kind: "elim" | "round_robin" | "group"; round: number;
+    home_team_name: string; away_team_name: string;
+    score_home: number; score_away: number; finished_at: string | null;
+  }>();
+  const recent: RecentDTO[] = (rows.results ?? []).map((r) => ({
+    tournamentId: r.tournament_id,
+    tournamentName: r.tournament_name,
+    matchId: r.match_id,
+    stageKind: r.stage_kind,
+    round: r.round,
+    homeTeamName: r.home_team_name,
+    awayTeamName: r.away_team_name,
+    scoreHome: r.score_home,
+    scoreAway: r.score_away,
+    finishedAt: r.finished_at,
+  }));
+  return c.json({ recent });
 });
 
 app.get("/tournaments/:id/standings", async (c) => {

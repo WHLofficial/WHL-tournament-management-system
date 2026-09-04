@@ -297,6 +297,31 @@ export interface UpcomingDTO {
   awayTeamName: string;
 }
 
+export interface RecentDTO {
+  tournamentId: number;
+  tournamentName: string;
+  matchId: number;
+  stageKind: "elim" | "round_robin" | "group";
+  round: number;
+  homeTeamName: string;
+  awayTeamName: string;
+  scoreHome: number;
+  scoreAway: number;
+  finishedAt: string | null;
+}
+
+export interface LiveDTO {
+  tournamentId: number;
+  tournamentName: string;
+  matchId: number;
+  stageKind: "elim" | "round_robin" | "group";
+  round: number;
+  homeTeamName: string;
+  awayTeamName: string;
+  scoreHome: number;
+  scoreAway: number;
+}
+
 export interface MatchEventDTO {
   id: number;
   matchId: number;
