@@ -730,12 +730,17 @@ button.add-stage {
 }
 .evt-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   line-height: 1;
+  font-size: 15px;
+  flex-shrink: 0;
 }
 /* ⚽ emoji + 类型角标：点球绿点、乌龙玫红点、点球不进红叉 */
 .evt-ball {
   position: relative;
-  font-size: 16px;
 }
 .evt-ball::after {
   content: "";
@@ -841,6 +846,15 @@ button.add-stage {
 }
 .up-teams {
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+/* 主页卡片与下方链条时间线对齐：对阵行居中、比分等宽 */
+.up-teams .up-score {
+  font-family: var(--mono);
 }
 .md-title {
   margin: 10px 0;
