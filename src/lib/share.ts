@@ -98,12 +98,21 @@ export interface TournamentCardData {
   url: string;
 }
 
+export interface ShareEventRow {
+  side: "home" | "away";
+  icon: string;
+  tag?: string | null;
+  minute: number | null;
+  playerName: string | null;
+  assistName?: string | null;
+}
+
 export interface MatchCardData {
   tournamentName: string;
   subtitle: string;
   coverUrl?: string | null;
   match: ShareMatch;
-  eventLines?: string[];
+  eventRows?: ShareEventRow[];
   url: string;
 }
 
@@ -407,9 +416,10 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
 
   const cs = 434; // 封面 240 的内容区起点
   const cy = cs + 106;
-  const lines = (data.eventLines ?? []).slice(0, 10);
-  const linesStart = cy + 130;
-  const contentEnd = lines.length > 0 ? linesStart + (lines.length - 1) * 30 : cy + 70;
+  const rows = (data.eventRows ?? []).slice(0, 10);
+  const rowsStart = cy + 150;
+  const rowH = 52;
+  const contentEnd = rows.length > 0 ? rowsStart + (rows.length - 1) * rowH + 24 : cy + 70;
   const H = Math.max(CARD_H, contentEnd + 210);
   canvas.height = H;
   drawBaseBg(ctx, H);
@@ -468,16 +478,34 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
     ctx.fillText(fitText(ctx, m.note, CARD_W - 96), cx, cs + 26);
   }
 
-  if (lines.length > 0) {
+  if (rows.length > 0) {
     sectionLabel(ctx, "比赛事件", cy + 100);
-    let ey = linesStart;
-    font(ctx, 400, 17);
+    // 与页面 EventTimeline 同款链条式：中轴素色节点，主队信息向左、客队信息向右
+    ctx.fillStyle = "rgba(255,255,255,0.16)";
+    ctx.fillRect(cx - 1, rowsStart - 14, 2, (rows.length - 1) * rowH + 28);
     ctx.textBaseline = "middle";
-    for (const line of lines) {
-      ctx.fillStyle = "rgba(255,255,255,0.78)";
-      ctx.textAlign = "center";
-      ctx.fillText(fitText(ctx, line, CARD_W - 96), cx, ey);
-      ey += 30;
+    let ry = rowsStart;
+    for (const ev of rows) {
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.beginPath();
+      ctx.arc(cx, ry, 5, 0, Math.PI * 2);
+      ctx.fill();
+      const min = ev.minute != null ? ` ${ev.minute}′` : "";
+      const who = ev.playerName ?? "";
+      const tag = ev.tag ? `（${ev.tag}）` : "";
+      const assist = ev.assistName ? ` 👟 ${ev.assistName}` : "";
+      const text = `${ev.icon}${min} ${who}${tag}${assist}`;
+      font(ctx, 400, 17);
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      const maxW = cx - 80;
+      if (ev.side === "home") {
+        ctx.textAlign = "right";
+        ctx.fillText(fitText(ctx, text, maxW), cx - 32, ry);
+      } else {
+        ctx.textAlign = "left";
+        ctx.fillText(fitText(ctx, text, maxW), cx + 32, ry);
+      }
+      ry += rowH;
     }
   }
   drawFootBrand(ctx, H);

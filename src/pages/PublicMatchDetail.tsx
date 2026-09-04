@@ -2,35 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
 import { MatchScore } from "../components/MatchScore";
-import { EventTimeline } from "../components/EventTimeline";
+import { EventTimeline, eventMeta } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawMatchCard, matchToShare } from "../lib/share";
-import type { MatchDTO, PublicMatchEventDTO } from "../../shared/types";
+import type { MatchDTO } from "../../shared/types";
 
 const STAGE_TITLE: Record<string, string> = {
   elim: "淘汰赛",
   round_robin: "循环赛",
   group: "小组赛",
 };
-
-const EVENT_ICON: Record<PublicMatchEventDTO["type"], string> = {
-  goal: "⚽",
-  pen_goal: "⚽点球",
-  pen_miss: "⚽点球不进",
-  own_goal: "⚽乌龙",
-  injury_minor: "🩹",
-  injury_major: "🚑",
-  yellow: "🟨",
-  red: "🟥",
-};
-
-function eventLine(e: PublicMatchEventDTO): string {
-  const min = e.minute != null ? `${e.minute}'` : "";
-  const who = e.playerName ?? "";
-  const assist = e.assistPlayerName ? `（助攻 ${e.assistPlayerName}）` : "";
-  return `${min} ${EVENT_ICON[e.type]} ${who}${assist}`.trim();
-}
 
 // 公开比赛详情页：大比分 + 完整事件时间线，30 秒轮询（后台标签页暂停）
 export default function PublicMatchDetail() {
@@ -100,9 +82,22 @@ export default function PublicMatchDetail() {
                       ` 第${m.round}轮` +
                       (m.leg ? ` · 第${m.leg}回合` : ""),
                     match: matchToShare(m),
-                    eventLines: [...(m.events ?? [])]
+                    eventRows: [...(m.events ?? [])]
                       .sort((a, b) => (a.minute ?? 0) - (b.minute ?? 0))
-                      .map(eventLine),
+                      .flatMap((e) => {
+                        const meta = eventMeta(e.type);
+                        if (!meta) return [];
+                        return [
+                          {
+                            side: e.side,
+                            icon: meta.icon,
+                            tag: meta.tag ?? null,
+                            minute: e.minute,
+                            playerName: e.playerName,
+                            assistName: e.assistPlayerName,
+                          },
+                        ];
+                      }),
                     url: `${window.location.origin}/t/${tid}/match/${matchId}`,
                   })
                 }

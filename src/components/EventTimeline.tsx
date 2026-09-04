@@ -22,6 +22,11 @@ const EXTRA: Partial<Record<EType, { icon: string; tag?: string }>> = {
   pen_miss: { icon: "⚽", tag: "点球不进" },
 };
 
+// 事件是否上时间线（详情页 showAll = 全部 8 类）；分享卡与页面共用同一口径
+export function eventMeta(type: EType): { icon: string; tag?: string } | null {
+  return SHOW[type] ?? EXTRA[type] ?? null;
+}
+
 // 中央链条-节点式时间线：中轴贯穿、轴上是素色链环节点；
 // 事件图标+分钟+球员信息作为信息块贴在轴旁——主队向左展开、客队向右展开
 export function EventTimeline({
