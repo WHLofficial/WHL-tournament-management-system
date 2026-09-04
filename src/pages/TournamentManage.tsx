@@ -377,10 +377,10 @@ function SettingsTab({
         </label>
         {t.coverUrl && (
           <button type="button" className="btn btn-ghost" onClick={() => void removeCover()}>
-            删除
+            恢复默认封面
           </button>
         )}
-        <span className="muted">显示在赛事列表与公开页头部；png / jpg / webp，不超过 1MB</span>
+        <span className="muted">显示在赛事列表与公开页头部；png / jpg / webp，不超过 1MB；删除自定义封面会回到默认模板</span>
       </div>
       <hr className="divider" />
       <h3>危险操作</h3>

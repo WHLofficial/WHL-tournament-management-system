@@ -9,6 +9,7 @@ import { defaultCrossTemplate } from "../../lib/seeding";
 import { readStageStandings, buildStandingsStmts } from "../../lib/standings";
 import { buildStats, buildToplists } from "../../lib/topstats";
 import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
+import { putDefaultCover } from "../../lib/defaultCover";
 import { requireSuperadmin } from "../../middleware/auth";
 
 type Status = TournamentDTO["status"];
@@ -109,6 +110,13 @@ app.post("/", async (c) => {
     }
   }
   if (stmts.length > 0) await c.env.DB.batch(stmts);
+
+  // 默认封面：创建时按赛事名生成一次，之后改名不重生成；生成失败不影响建赛
+  try {
+    const key = await putDefaultCover(c.env, tid, name);
+    await c.env.DB.prepare("UPDATE tournament SET cover_key = ? WHERE id = ?").bind(key, tid).run();
+  } catch {}
+
   return c.json({ id: tid }, 201);
 });
 
@@ -604,18 +612,24 @@ app.put(
   }
 );
 
-// 删除封面
+// 删除封面：清掉自定义图后回到默认模板（按当前赛事名重新生成）
 app.delete(
   "/:id/cover",
   async (c) => {
     const id = Number(c.req.param("id"));
-    const t = await c.env.DB.prepare("SELECT cover_key FROM tournament WHERE id = ?")
+    const t = await c.env.DB.prepare("SELECT cover_key, name FROM tournament WHERE id = ?")
       .bind(id)
-      .first<{ cover_key: string | null }>();
+      .first<{ cover_key: string | null; name: string }>();
     if (!t) return c.json({ message: "赛事不存在" }, 404);
     await c.env.DB.prepare("UPDATE tournament SET cover_key = NULL WHERE id = ?").bind(id).run();
     await deleteImage(c, t.cover_key);
-    return c.json({ ok: true });
+    let coverUrl: string | null = null;
+    try {
+      const key = await putDefaultCover(c.env, id, t.name);
+      await c.env.DB.prepare("UPDATE tournament SET cover_key = ? WHERE id = ?").bind(key, id).run();
+      coverUrl = mediaUrl(key);
+    } catch {}
+    return c.json({ ok: true, coverUrl });
   }
 );
 
