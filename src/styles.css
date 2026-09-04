@@ -994,3 +994,77 @@ button.add-stage {
     grid-template-columns: 1fr;
   }
 }
+
+/* 榜单页：球员榜/球队榜分段 + 左列菜单 */
+.seg-control {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: var(--chalk);
+  margin-bottom: 16px;
+}
+.seg-btn {
+  border: 0;
+  background: transparent;
+  padding: 8px 26px;
+  border-radius: 999px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.seg-btn.active {
+  background: var(--pitch);
+  color: #fff;
+  font-weight: 600;
+}
+.toplists-layout {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.toplist-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.menu-item {
+  text-align: left;
+  border: 1.5px solid transparent;
+  background: transparent;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: #eaf4ee;
+}
+.menu-item.active {
+  background: #eaf4ee;
+  border-color: var(--pitch);
+  color: var(--pitch-deep);
+  font-weight: 600;
+}
+.rank-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .toplists-layout {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .toplist-menu {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .menu-item {
+    padding: 7px 12px;
+  }
+}

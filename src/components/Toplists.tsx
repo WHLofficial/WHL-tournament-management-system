@@ -44,15 +44,20 @@ function RankTable({
   title,
   head,
   rows,
+  action,
 }: {
   title: string;
   head: string[];
   rows: React.ReactNode[][];
+  action?: React.ReactNode;
 }) {
   if (rows.length === 0) return null;
   return (
     <>
-      <h3>{title}</h3>
+      <div className="rank-head">
+        <h3>{title}</h3>
+        {action}
+      </div>
       <table className="table">
         <thead>
           <tr>
@@ -75,10 +80,22 @@ function RankTable({
   );
 }
 
-// 单赛事榜单：球员榜（射手/助攻/红黄牌/伤病）+ 球队榜（进球/失球/零封/红黄牌）
+type Seg = "player" | "team";
+
+interface ListDef {
+  key: string;
+  name: string;
+  title: string;
+  head: string[];
+  rows: React.ReactNode[][];
+}
+
+// 单赛事榜单：顶部球员榜/球队榜分段，左列菜单选具体榜单
 export function Toplists({ tid, base }: { tid: number; base: string }) {
   const [data, setData] = useState<ToplistsData | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [seg, setSeg] = useState<Seg>("player");
+  const [sel, setSel] = useState("scorers");
 
   useEffect(() => {
     let on = true;
@@ -97,6 +114,79 @@ export function Toplists({ tid, base }: { tid: number; base: string }) {
   if (err) return <p className="error-msg">{err}</p>;
   if (!data) return <p className="muted">加载中…</p>;
 
+  const cards = (y: number, r: number) => (
+    <>
+      {y > 0 && <span title="黄牌">🟨 {y}</span>}
+      {r > 0 && (
+        <span title="红牌" style={{ marginLeft: y > 0 ? 8 : 0 }}>
+          🟥 {r}
+        </span>
+      )}
+    </>
+  );
+
+  const playerLists: ListDef[] = [
+    {
+      key: "scorers",
+      name: "射手榜",
+      title: "射手榜",
+      head: ["#", "球员", "球队", "进球"],
+      rows: data.scorers.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
+    },
+    {
+      key: "assists",
+      name: "助攻榜",
+      title: "助攻榜",
+      head: ["#", "球员", "球队", "助攻"],
+      rows: data.assists.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
+    },
+    {
+      key: "cardsPlayers",
+      name: "红黄牌榜",
+      title: "红黄牌榜",
+      head: ["#", "球员", "球队", "牌"],
+      rows: data.cardsPlayers.map((r, i) => [i + 1, r.playerName, r.teamName, cards(r.yellows, r.reds)]),
+    },
+    {
+      key: "injuries",
+      name: "伤病榜",
+      title: "伤病榜",
+      head: ["#", "球员", "球队", "次数"],
+      rows: data.injuries.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
+    },
+  ];
+
+  const teamLists: ListDef[] = [
+    {
+      key: "teamGoals",
+      name: "进球榜",
+      title: "球队进球榜",
+      head: ["#", "球队", "进球"],
+      rows: data.teamGoals.map((r, i) => [i + 1, r.teamName, r.count]),
+    },
+    {
+      key: "teamConceded",
+      name: "失球榜",
+      title: "球队失球榜（少者前）",
+      head: ["#", "球队", "失球"],
+      rows: data.teamConceded.map((r, i) => [i + 1, r.teamName, r.count]),
+    },
+    {
+      key: "cleanSheets",
+      name: "零封榜",
+      title: "零封榜",
+      head: ["#", "球队", "零封"],
+      rows: data.cleanSheets.map((r, i) => [i + 1, r.teamName, r.count]),
+    },
+    {
+      key: "cardsTeams",
+      name: "红黄牌榜",
+      title: "球队红黄牌榜",
+      head: ["#", "球队", "牌"],
+      rows: data.cardsTeams.map((r, i) => [i + 1, r.teamName, cards(r.yellows, r.reds)]),
+    },
+  ];
+
   const allEmpty =
     data.scorers.length +
       data.assists.length +
@@ -109,61 +199,53 @@ export function Toplists({ tid, base }: { tid: number; base: string }) {
     0;
   if (allEmpty) return <p className="muted">还没有比赛数据，打完比赛这里就有榜了。</p>;
 
-  const cards = (y: number, r: number) => (
-    <>
-      {y > 0 && <span title="黄牌">🟨 {y}</span>}
-      {r > 0 && (
-        <span title="红牌" style={{ marginLeft: y > 0 ? 8 : 0 }}>
-          🟥 {r}
-        </span>
-      )}
-    </>
-  );
+  const lists = seg === "player" ? playerLists : teamLists;
+  const current = lists.find((l) => l.key === sel) ?? lists[0];
+
+  const switchSeg = (s: Seg) => {
+    setSeg(s);
+    setSel(s === "player" ? "scorers" : "teamGoals");
+  };
 
   return (
     <div className="toplists-tab">
-      <h3>球员榜</h3>
-      <RankTable
-        title="射手榜"
-        head={["#", "球员", "球队", "进球"]}
-        rows={data.scorers.map((r, i) => [i + 1, r.playerName, r.teamName, r.count])}
-      />
-      <RankTable
-        title="助攻榜"
-        head={["#", "球员", "球队", "助攻"]}
-        rows={data.assists.map((r, i) => [i + 1, r.playerName, r.teamName, r.count])}
-      />
-      <RankTable
-        title="红黄牌榜"
-        head={["#", "球员", "球队", "牌"]}
-        rows={data.cardsPlayers.map((r, i) => [i + 1, r.playerName, r.teamName, cards(r.yellows, r.reds)])}
-      />
-      <RankTable
-        title="伤病榜"
-        head={["#", "球员", "球队", "次数"]}
-        rows={data.injuries.map((r, i) => [i + 1, r.playerName, r.teamName, r.count])}
-      />
-      <h3>球队榜</h3>
-      <RankTable
-        title="球队进球榜"
-        head={["#", "球队", "进球"]}
-        rows={data.teamGoals.map((r, i) => [i + 1, r.teamName, r.count])}
-      />
-      <RankTable
-        title="球队失球榜（少者前）"
-        head={["#", "球队", "失球"]}
-        rows={data.teamConceded.map((r, i) => [i + 1, r.teamName, r.count])}
-      />
-      <RankTable
-        title="零封榜"
-        head={["#", "球队", "零封"]}
-        rows={data.cleanSheets.map((r, i) => [i + 1, r.teamName, r.count])}
-      />
-      <RankTable
-        title="球队红黄牌榜"
-        head={["#", "球队", "牌"]}
-        rows={data.cardsTeams.map((r, i) => [i + 1, r.teamName, cards(r.yellows, r.reds)])}
-      />
+      <div className="seg-control">
+        <button
+          type="button"
+          className={seg === "player" ? "seg-btn active" : "seg-btn"}
+          onClick={() => switchSeg("player")}
+        >
+          球员榜
+        </button>
+        <button
+          type="button"
+          className={seg === "team" ? "seg-btn active" : "seg-btn"}
+          onClick={() => switchSeg("team")}
+        >
+          球队榜
+        </button>
+      </div>
+      <div className="toplists-layout">
+        <div className="toplist-menu">
+          {lists.map((l) => (
+            <button
+              type="button"
+              key={l.key}
+              className={l.key === current.key ? "menu-item active" : "menu-item"}
+              onClick={() => setSel(l.key)}
+            >
+              {l.name}
+            </button>
+          ))}
+        </div>
+        <div className="toplist-panel">
+          {current.rows.length === 0 ? (
+            <p className="muted">这项还没有数据，打完比赛就有了。</p>
+          ) : (
+            <RankTable title={current.title} head={current.head} rows={current.rows} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
