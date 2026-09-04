@@ -124,6 +124,32 @@ app.post("/logout", async (c) => {
   return c.json({ ok: true });
 });
 
+// 修改自己的密码：验证旧密码；改完当前会话保持有效
+app.post("/password", requireUser, async (c) => {
+  const user = c.get("user")!;
+  if (!(await rateLimit(c.env, `pwd:${user.id}`, 5, 900)))
+    return c.json({ error: "rate_limited", message: "尝试太频繁，请 15 分钟后再来" }, 429);
+
+  const body = await c.req
+    .json<{ oldPassword?: string; newPassword?: string }>()
+    .catch(() => null);
+  if (!body) return c.json({ error: "bad_request", message: "请求格式不对" }, 400);
+  const newPassword = body.newPassword ?? "";
+  if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword))
+    return c.json({ error: "bad_request", message: "新密码至少 8 位，且要同时包含字母和数字" }, 400);
+
+  const row = await c.env.DB.prepare("SELECT password_hash FROM user WHERE id = ?")
+    .bind(user.id)
+    .first<{ password_hash: string }>();
+  if (!row || !(await verifyPassword(body.oldPassword ?? "", row.password_hash)))
+    return c.json({ error: "unauthorized", message: "旧密码不对" }, 400);
+
+  await c.env.DB.prepare("UPDATE user SET password_hash = ? WHERE id = ?")
+    .bind(await hashPassword(newPassword), user.id)
+    .run();
+  return c.json({ ok: true });
+});
+
 app.get("/me", requireUser, async (c) => {
   const user = c.get("user")!;
   const resp: MeResp = {

@@ -61,3 +61,14 @@ export function generateCode(length = 8): string {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
   return [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
 }
+
+// 临时密码：字母段 + 数字段，保证满足「≥8 位且同时含字母数字」的密码规则
+export function genTempPassword(): string {
+  const letters = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
+  const digits = "23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let s = "";
+  for (let i = 0; i < 4; i++) s += letters[bytes[i] % letters.length];
+  for (let i = 0; i < 4; i++) s += digits[bytes[4 + i] % digits.length];
+  return s;
+}
