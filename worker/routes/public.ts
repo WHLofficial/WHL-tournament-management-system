@@ -200,8 +200,9 @@ async function fetchLiveScores(
   const scores = new Map<number, { home: number; away: number }>();
   for (const r of rows.results ?? []) {
     if (r.entry_id === null) continue;
-    const isHome = sideByEvent.get(`${r.match_id}:${r.entry_id}`) === "home";
-    if (isHome === undefined) continue;
+    const side = sideByEvent.get(`${r.match_id}:${r.entry_id}`);
+    if (!side) continue;
+    const isHome = side === "home";
     const sc = scores.get(r.match_id) ?? { home: 0, away: 0 };
     const goalsFor = r.type === "goal" || r.type === "pen_goal" ? r.n : 0;
     const ownGoals = r.type === "own_goal" ? r.n : 0;
