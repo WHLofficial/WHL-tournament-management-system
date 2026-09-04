@@ -63,6 +63,11 @@ export interface Stats {
   };
   topMatches: (MatchHighlight & { total: number })[];
   roundTrend: { label: string; goals: number }[];
+  injuryMatch: (Omit<MatchHighlight, "scoreHome" | "scoreAway"> & {
+    scoreHome: number | null;
+    scoreAway: number | null;
+    count: number;
+  }) | null;
 }
 
 interface EventRow {
@@ -267,7 +272,7 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
 }
 
 export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
-  const [statusRows, typeRows, fin] = await Promise.all([
+  const [statusRows, typeRows, fin, injuryRows] = await Promise.all([
     db
       .prepare(
         `SELECT m.status, COUNT(*) AS n FROM match m
@@ -281,6 +286,14 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
       .bind(tid)
       .all<{ type: string; n: number }>(),
     fetchFinished(db, tid),
+    db
+      .prepare(
+        `SELECT me.match_id, COUNT(*) AS n ${EVENTS_SQL}
+         AND me.type IN ('injury_minor', 'injury_major')
+         GROUP BY me.match_id ORDER BY n DESC, me.match_id ASC LIMIT 1`
+      )
+      .bind(tid)
+      .all<{ match_id: number; n: number }>(),
   ]);
 
   const progress = { total: 0, finished: 0, live: 0, pending: 0 };
@@ -356,6 +369,47 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
     : null;
   const maxMatch = topMatches.length ? topMatches[0] : null;
 
+  // 刺刀见红：伤病人次最多的一场（live 也可入选，比分可能尚未写入）
+  let injuryMatch: Stats["injuryMatch"] = null;
+  const inj = injuryRows.results?.[0];
+  if (inj) {
+    const row = await db
+      .prepare(
+        `SELECT m.round, m.score_home, m.score_away,
+           ht.name AS home_team_name, at.name AS away_team_name,
+           s.kind AS stage_kind, s.sort_order AS stage_order
+         FROM match m
+         JOIN stage s ON s.id = m.stage_id
+         JOIN entry he ON he.id = m.home_entry_id
+         JOIN team ht ON ht.id = he.team_id
+         JOIN entry ae ON ae.id = m.away_entry_id
+         JOIN team at ON at.id = ae.team_id
+         WHERE m.id = ?`
+      )
+      .bind(inj.match_id)
+      .first<{
+        round: number;
+        score_home: number | null;
+        score_away: number | null;
+        home_team_name: string;
+        away_team_name: string;
+        stage_kind: string;
+        stage_order: number;
+      }>();
+    if (row) {
+      injuryMatch = {
+        matchId: inj.match_id,
+        homeName: row.home_team_name,
+        awayName: row.away_team_name,
+        scoreHome: row.score_home,
+        scoreAway: row.score_away,
+        stageName: stageLabel(row.stage_kind, row.stage_order),
+        round: row.round,
+        count: inj.n,
+      };
+    }
+  }
+
   return {
     progress,
     goals,
@@ -373,5 +427,6 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
     },
     topMatches,
     roundTrend,
+    injuryMatch,
   };
 }

@@ -16,6 +16,11 @@ interface StatsData {
   goals: { total: number; avg: number; penScored: number; penMissed: number };
   cards: { yellows: number; reds: number };
   biggestMargin: (MatchHighlight & { margin: number }) | null;
+  injuryMatch: (Omit<MatchHighlight, "scoreHome" | "scoreAway"> & {
+    scoreHome: number | null;
+    scoreAway: number | null;
+    count: number;
+  }) | null;
   fun: {
     topTeam: { teamId: number; teamName: string; total: number; avg: number } | null;
     bestDefense: { teamId: number; teamName: string; total: number; avg: number } | null;
@@ -72,12 +77,11 @@ export function StatsDashboard({ tid, base }: { tid: number; base: string }) {
         <NumCard label="未开打" num={progress.pending} />
       </div>
       <div className="stat-grid">
-        <NumCard label="总进球" num={goals.total} />
-        <NumCard label="场均进球" num={goals.avg} />
-        <NumCard label="点球命中" num={goals.penScored} />
-        <NumCard label="点球未中" num={goals.penMissed} />
-      </div>
-      <div className="stat-grid">
+        <NumCard label="总进球 / 场均" num={`${goals.total} / ${goals.avg.toFixed(2)}`} />
+        <NumCard
+          label="点球（进/总）"
+          num={`${goals.penScored} / ${goals.penScored + goals.penMissed}`}
+        />
         <NumCard label="黄牌" num={cards.yellows} />
         <NumCard label="红牌" num={cards.reds} />
       </div>
@@ -88,14 +92,14 @@ export function StatsDashboard({ tid, base }: { tid: number; base: string }) {
           <span className="emoji">🔥</span>
           <span className="num">{fun.topTeam ? fun.topTeam.teamName : "—"}</span>
           <span className="label">
-            火力最强{fun.topTeam ? ` · ${fun.topTeam.total} 球 · 场均 ${fun.topTeam.avg}` : "暂无"}
+            火力最强{fun.topTeam ? ` · ${fun.topTeam.total} 球 · 场均 ${fun.topTeam.avg.toFixed(2)}` : "暂无"}
           </span>
         </div>
         <div className="stat-card">
           <span className="emoji">🛡️</span>
           <span className="num">{fun.bestDefense ? fun.bestDefense.teamName : "—"}</span>
           <span className="label">
-            防守最好{fun.bestDefense ? ` · 失 ${fun.bestDefense.total} 球 · 场均 ${fun.bestDefense.avg}` : "暂无"}
+            防守最好{fun.bestDefense ? ` · 失 ${fun.bestDefense.total} 球 · 场均 ${fun.bestDefense.avg.toFixed(2)}` : "暂无"}
           </span>
         </div>
         <div className="stat-card">
@@ -112,19 +116,35 @@ export function StatsDashboard({ tid, base }: { tid: number; base: string }) {
         </div>
       </div>
 
-      {data.biggestMargin && (
+      {(data.biggestMargin || data.injuryMatch) && (
         <>
-          <h3>最大分差</h3>
+          <h3>对决之最</h3>
           <div className="stat-grid">
-            <div className="stat-card">
-              <span className="num">
-                {data.biggestMargin.homeName} {data.biggestMargin.scoreHome}:{data.biggestMargin.scoreAway}{" "}
-                {data.biggestMargin.awayName}
-              </span>
-              <span className="label">
-                净胜 {data.biggestMargin.margin} 球 · {data.biggestMargin.stageName} 第{data.biggestMargin.round}轮
-              </span>
-            </div>
+            {data.biggestMargin && (
+              <div className="stat-card wide">
+                <span className="num">
+                  {data.biggestMargin.homeName} {data.biggestMargin.scoreHome}:{data.biggestMargin.scoreAway}{" "}
+                  {data.biggestMargin.awayName}
+                </span>
+                <span className="label">
+                  净胜 {data.biggestMargin.margin} 球 · {data.biggestMargin.stageName} 第
+                  {data.biggestMargin.round}轮
+                </span>
+              </div>
+            )}
+            {data.injuryMatch && (
+              <div className="stat-card">
+                <span className="num">
+                  {data.injuryMatch.scoreHome === null || data.injuryMatch.scoreAway === null
+                    ? `${data.injuryMatch.homeName} vs ${data.injuryMatch.awayName}`
+                    : `${data.injuryMatch.homeName} ${data.injuryMatch.scoreHome}:${data.injuryMatch.scoreAway} ${data.injuryMatch.awayName}`}
+                </span>
+                <span className="label">
+                  ⚔️ 刺刀见红 · 伤 {data.injuryMatch.count} 人次 · {data.injuryMatch.stageName} 第
+                  {data.injuryMatch.round}轮
+                </span>
+              </div>
+            )}
           </div>
         </>
       )}

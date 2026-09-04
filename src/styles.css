@@ -611,6 +611,9 @@ button.add-stage {
   text-align: center;
   font-size: 13px;
 }
+.stat-card.wide {
+  grid-column: span 2;
+}
 .stat-card .num {
   font-size: 18px;
   font-weight: 700;
