@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { StandingsTables } from "./StandingsTab";
@@ -22,7 +22,17 @@ export default function PublicTournament() {
   const tid = Number(id);
   const [detail, setDetail] = useState<TournamentDetailDTO | null>(null);
   const [matches, setMatches] = useState<MatchDTO[] | null>(null);
-  const [tab, setTab] = useState<"schedule" | "standings" | "teams" | "toplists" | "stats">("schedule");
+  const [searchParams, setSearchParams] = useSearchParams();
+  type PubTab = "schedule" | "standings" | "teams" | "toplists" | "stats";
+  const TAB_KEYS: PubTab[] = ["schedule", "standings", "teams", "toplists", "stats"];
+  const [tab, setTabState] = useState<PubTab>(() => {
+    const t = searchParams.get("tab");
+    return TAB_KEYS.includes(t as PubTab) ? (t as PubTab) : "schedule";
+  });
+  const setTab = (t: PubTab) => {
+    setTabState(t);
+    setSearchParams(t === "schedule" ? {} : { tab: t }, { replace: true });
+  };
   const [err, setErr] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {

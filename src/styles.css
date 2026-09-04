@@ -1068,3 +1068,68 @@ button.add-stage {
     padding: 7px 12px;
   }
 }
+
+/* 分享按钮 + 预览弹窗 */
+.share-btn {
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.share-btn:hover {
+  border-color: var(--pitch);
+  color: var(--pitch-deep);
+}
+.share-dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 25, 18, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 20px;
+}
+.share-dialog {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 16px;
+  max-width: min(430px, 94vw);
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+}
+.share-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.share-dialog-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.share-close {
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.share-canvas {
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--pitch-deep);
+}
+.share-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
