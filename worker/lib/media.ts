@@ -28,6 +28,18 @@ export async function saveImage(
   if (buf.byteLength > MAX_IMAGE_BYTES) {
     return { ok: false, status: 413, message: "图片不能超过 1MB" };
   }
+  // 按文件头魔数二次校验，只认真实图片字节（Content-Type 可被伪造）
+  const b = new Uint8Array(buf);
+  const head = (n: number) => Array.from(b.slice(0, n)).join(",");
+  const magicOk =
+    (contentType === "image/png" && head(4) === "137,80,78,71") ||
+    (contentType === "image/jpeg" && head(3) === "255,216,255") ||
+    (contentType === "image/webp" &&
+      head(4) === "82,73,70,70" &&
+      String.fromCharCode(...b.slice(8, 12)) === "WEBP");
+  if (!magicOk) {
+    return { ok: false, status: 415, message: "文件内容不是有效的图片" };
+  }
   // 版本化 key：换图即换 URL，客户端缓存天然失效
   const key = `${kind}/${id}/${Date.now()}.${ext}`;
   await c.env.MEDIA.put(key, buf, { httpMetadata: { contentType } });
