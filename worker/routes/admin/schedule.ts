@@ -12,7 +12,7 @@ import {
   shuffle,
   type PlanMatch,
 } from "../../lib/seeding";
-import { getTiebreakers, readStandings } from "../../lib/standings";
+import { getTiebreakers, readStandings, type StandRow } from "../../lib/standings";
 
 const app = new Hono<AppEnv>();
 app.use("*", requireAdmin);
@@ -476,6 +476,18 @@ app.post("/:id/stages/:stageId/draw", async (c) => {
       `报名 ${entryIds.length} 支不足 ${groupRows.length} 组每组 2 队，无法抽签`
     );
   }
+  // 配置了每组队数（group_size）时按容量校验；旧赛事没配过沿用现状
+  const gcfg = (JSON.parse(stage.config_json || "{}") ?? {}) as {
+    group_size?: number;
+  };
+  const groupSize = gcfg.group_size;
+  if (groupSize && entryIds.length > groupRows.length * groupSize) {
+    return fail(
+      c,
+      400,
+      `报名 ${entryIds.length} 队超出 ${groupRows.length} 组 × ${groupSize} 队的容量，请先调整组数或每组队数`
+    );
+  }
 
   const byName = drawGroups(entryIds, groupRows.length); // Map entryId -> 组名
   const groupIdByName = new Map(groupRows.map((g) => [g.name, g.id]));
@@ -811,6 +823,23 @@ export async function takeRangePool(
   const to = src.to ?? src.take ?? from;
   const chain = await getTiebreakers(env.DB, tid);
   const ranked = await readStandings(env.DB, srcStage.id, chain);
+  // 跨组取人：组内名次优先（所有小组第一先进），同名次内按 积分 → 同分链
+  // （跨组没有相互战绩可比较，跳过 h2h）→ 种子位兜底。
+  // 例：4 组取前 6 = 全部小组第一 + 2 个最好的小组第二。
+  if (srcStage.kind === "group") {
+    const nonH2h = chain.filter((t) => t !== "h2h");
+    const cmp = (a: StandRow, b: StandRow): number => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      if (a.pts !== b.pts) return b.pts - a.pts;
+      for (const t of nonH2h) {
+        const va = t === "gd" ? a.goalsFor - a.goalsAgainst : a.goalsFor;
+        const vb = t === "gd" ? b.goalsFor - b.goalsAgainst : b.goalsFor;
+        if (va !== vb) return vb - va;
+      }
+      return a.seed - b.seed;
+    };
+    ranked.sort(cmp);
+  }
   if (ranked.length === 0) {
     throw new HttpError(400, "来源阶段还没有积分榜数据，先生成并完赛它的赛程");
   }
