@@ -8,6 +8,10 @@ const app = new Hono<AppEnv>();
 
 app.post("/bind", async (c) => {
   const user = c.get("user")!;
+  // 观众号锁定：放限流前，不烧失败次数
+  if (user.locked) {
+    return c.json({ message: "你的账号暂不能绑定球队，请联系管理员解锁" }, 403);
+  }
   // 按 IP 限尝试次数：10 分钟窗口 5 次（正常输入一次就成功，够防爆破）
   const ip = c.req.header("CF-Connecting-IP") ?? "local";
   const ok = await rateLimit(c.env, `bindfail:${ip}`, 5, 600);

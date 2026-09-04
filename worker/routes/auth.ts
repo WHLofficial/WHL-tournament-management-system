@@ -44,28 +44,37 @@ app.post("/register", async (c) => {
 
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM user").first<{ n: number }>();
   const isFirst = (count?.n ?? 0) === 0;
+  const code = (body.signupCode ?? "").trim();
+  // 观众号：无注册码注册（需组织开关放开），锁定绑队直到超管解锁
+  let locked = 0;
 
   if (!isFirst) {
-    const code = (body.signupCode ?? "").trim();
-    if (!code) return c.json({ error: "bad_request", message: "需要注册码" }, 400);
-    const codeHash = await sha256Hex(code);
-    const sc = await c.env.DB.prepare(
-      "SELECT id, expires_at, max_uses, used_count FROM signup_code WHERE code_hash = ?",
-    )
-      .bind(codeHash)
-      .first<{ id: number; expires_at: string | null; max_uses: number | null; used_count: number }>();
-    if (!sc) return c.json({ error: "bad_request", message: "注册码无效" }, 400);
-    if (sc.expires_at && sc.expires_at < nowIso())
-      return c.json({ error: "bad_request", message: "注册码已过期" }, 400);
-    if (sc.max_uses !== null && sc.used_count >= sc.max_uses)
-      return c.json({ error: "bad_request", message: "注册码已用完" }, 400);
+    if (code) {
+      const codeHash = await sha256Hex(code);
+      const sc = await c.env.DB.prepare(
+        "SELECT id, expires_at, max_uses, used_count FROM signup_code WHERE code_hash = ?",
+      )
+        .bind(codeHash)
+        .first<{ id: number; expires_at: string | null; max_uses: number | null; used_count: number }>();
+      if (!sc) return c.json({ error: "bad_request", message: "注册码无效" }, 400);
+      if (sc.expires_at && sc.expires_at < nowIso())
+        return c.json({ error: "bad_request", message: "注册码已过期" }, 400);
+      if (sc.max_uses !== null && sc.used_count >= sc.max_uses)
+        return c.json({ error: "bad_request", message: "注册码已用完" }, 400);
+    } else {
+      const org = await c.env.DB.prepare("SELECT allow_open_reg FROM organization WHERE id = 1")
+        .first<{ allow_open_reg: number }>();
+      if (!org?.allow_open_reg)
+        return c.json({ error: "bad_request", message: "需要注册码" }, 400);
+      locked = 1;
+    }
   }
 
   const dup = await c.env.DB.prepare("SELECT id FROM user WHERE name = ?").bind(name).first();
   if (dup) return c.json({ error: "conflict", message: "这个昵称已被占用" }, 409);
 
-  if (!isFirst) {
-    const codeHash = await sha256Hex(body.signupCode!.trim());
+  if (!isFirst && code) {
+    const codeHash = await sha256Hex(code);
     const upd = await c.env.DB.prepare(
       "UPDATE signup_code SET used_count = used_count + 1 WHERE code_hash = ? AND (max_uses IS NULL OR used_count < max_uses) AND (expires_at IS NULL OR expires_at > ?)",
     )
@@ -78,13 +87,13 @@ app.post("/register", async (c) => {
   const role = isFirst ? "superadmin" : "coach";
   try {
     const ins = await c.env.DB.prepare(
-      "INSERT INTO user (name, email, password_hash, role) VALUES (?, ?, ?, ?)",
+      "INSERT INTO user (name, email, password_hash, role, locked) VALUES (?, ?, ?, ?, ?)",
     )
-      .bind(name, email, await hashPassword(password), role)
+      .bind(name, email, await hashPassword(password), role, locked)
       .run();
     const userId = ins.meta.last_row_id;
     await createSession(c, userId);
-    const resp: MeResp = { id: userId, name, role, teamId: null };
+    const resp: MeResp = { id: userId, name, role, teamId: null, locked: locked === 1 };
     return c.json(resp, 201);
   } catch {
     return c.json({ error: "conflict", message: "这个昵称已被占用" }, 409);
@@ -103,9 +112,11 @@ app.post("/login", async (c) => {
   if (!(await rateLimit(c.env, `login-name:${name}`, 5, 900)))
     return c.json({ error: "rate_limited", message: "这个账号尝试太频繁，请 15 分钟后再来" }, 429);
 
-  const row = await c.env.DB.prepare("SELECT id, name, role, password_hash FROM user WHERE name = ?")
+  const row = await c.env.DB.prepare(
+    "SELECT id, name, role, locked, password_hash FROM user WHERE name = ?",
+  )
     .bind(name)
-    .first<{ id: number; name: string; role: MeResp["role"]; password_hash: string }>();
+    .first<{ id: number; name: string; role: MeResp["role"]; locked: number; password_hash: string }>();
   if (!row || !(await verifyPassword(body.password ?? "", row.password_hash)))
     return c.json({ error: "unauthorized", message: "昵称或密码不正确" }, 401);
 
@@ -115,6 +126,7 @@ app.post("/login", async (c) => {
     name: row.name,
     role: row.role,
     teamId: await teamIdOf(c, row.id),
+    locked: row.locked === 1,
   };
   return c.json(resp);
 });
@@ -157,6 +169,7 @@ app.get("/me", requireUser, async (c) => {
     name: user.name,
     role: user.role,
     teamId: await teamIdOf(c, user.id),
+    locked: user.locked,
   };
   return c.json(resp);
 });

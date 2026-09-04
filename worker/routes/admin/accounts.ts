@@ -10,7 +10,7 @@ app.use("*", requireSuperadmin);
 // 账号列表（含绑定球队；一账号一队，LEFT JOIN 至多一行）
 app.get("/", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT u.id, u.name, u.email, u.role, u.created_at,
+    `SELECT u.id, u.name, u.email, u.role, u.locked, u.created_at,
             tm.team_id AS team_id, t.name AS team_name
      FROM user u
      LEFT JOIN team_member tm ON tm.user_id = u.id
@@ -21,6 +21,7 @@ app.get("/", async (c) => {
     name: string;
     email: string | null;
     role: string;
+    locked: number;
     created_at: string;
     team_id: number | null;
     team_name: string | null;
@@ -31,6 +32,7 @@ app.get("/", async (c) => {
       name: r.name,
       email: r.email,
       role: r.role,
+      locked: r.locked === 1,
       createdAt: r.created_at,
       teamId: r.team_id,
       teamName: r.team_name,
@@ -57,6 +59,17 @@ app.patch("/:id/role", async (c) => {
     return c.json({ message: "超级管理员角色不可修改" }, 400);
   }
   await c.env.DB.prepare("UPDATE user SET role = ? WHERE id = ?").bind(role, id).run();
+  return c.json({ ok: true });
+});
+
+// 解锁观众号：locked 置 0，解锁后即可凭认证码绑队
+app.post("/:id/unlock", async (c) => {
+  const id = Number(c.req.param("id"));
+  const target = await c.env.DB.prepare("SELECT id FROM user WHERE id = ?")
+    .bind(id)
+    .first<{ id: number }>();
+  if (!target) return c.json({ message: "账号不存在" }, 404);
+  await c.env.DB.prepare("UPDATE user SET locked = 0 WHERE id = ?").bind(id).run();
   return c.json({ ok: true });
 });
 

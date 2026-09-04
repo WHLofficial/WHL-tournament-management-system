@@ -24,10 +24,12 @@ export async function getSessionUser(c: Context<AppEnv>): Promise<SessionUser | 
   const raw = await c.env.KV.get(`sess:${token}`);
   if (!raw) return null;
   const { userId } = JSON.parse(raw) as { userId: number };
-  const row = await c.env.DB.prepare("SELECT id, name, role FROM user WHERE id = ?")
+  const row = await c.env.DB.prepare("SELECT id, name, role, locked FROM user WHERE id = ?")
     .bind(userId)
-    .first<{ id: number; name: string; role: SessionUser["role"] }>();
-  return row ? { id: row.id, name: row.name, role: row.role } : null;
+    .first<{ id: number; name: string; role: SessionUser["role"]; locked: number }>();
+  return row
+    ? { id: row.id, name: row.name, role: row.role, locked: row.locked === 1 }
+    : null;
 }
 
 export async function destroySession(c: Context<AppEnv>): Promise<void> {

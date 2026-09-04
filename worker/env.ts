@@ -6,7 +6,7 @@ export type Bindings = {
   ASSETS: Fetcher;
 };
 
-export type SessionUser = { id: number; name: string; role: Role };
+export type SessionUser = { id: number; name: string; role: Role; locked: boolean };
 
 export type AppEnv = {
   Bindings: Bindings;

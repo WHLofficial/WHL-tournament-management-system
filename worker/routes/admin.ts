@@ -18,6 +18,27 @@ app.route("/tournaments", scheduleRoutes);
 app.route("/matches", scoringRoutes);
 app.route("/accounts", accountsRoutes);
 
+// 组织级设置：允许无码注册（建锁定观众号）。改开关仅超管
+app.get("/org-settings", async (c) => {
+  const row = await c.env.DB.prepare("SELECT allow_open_reg FROM organization WHERE id = 1")
+    .first<{ allow_open_reg: number }>();
+  return c.json({ allowOpenReg: row?.allow_open_reg === 1 });
+});
+
+app.put("/org-settings", async (c) => {
+  if (c.get("user")!.role !== "superadmin") {
+    return c.json({ message: "需要超级管理员权限" }, 403);
+  }
+  const body = await c.req.json<{ allowOpenReg?: boolean }>().catch(() => null);
+  if (typeof body?.allowOpenReg !== "boolean") {
+    return c.json({ message: "请求格式不对" }, 400);
+  }
+  await c.env.DB.prepare("UPDATE organization SET allow_open_reg = ? WHERE id = 1")
+    .bind(body.allowOpenReg ? 1 : 0)
+    .run();
+  return c.json({ ok: true });
+});
+
 // 生成注册码；明码只在这一次响应里出现，库存 sha256
 app.post("/signup-codes", async (c) => {
   const body = await c.req
