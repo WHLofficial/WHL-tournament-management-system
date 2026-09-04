@@ -23,6 +23,28 @@ interface MemberRow {
   joinedAt: string;
 }
 
+interface ImportResult {
+  inserted: number;
+  updated: number;
+  skipped: { line: number; reason: string }[];
+}
+
+// 每行「号码 姓名」，号码可省略；Tab/空格分隔都认（Excel 直接复制粘贴）
+function parseImportRows(text: string) {
+  const rows: { line: number; name: string; number: string | null }[] = [];
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const t = raw.trim();
+    if (!t) return;
+    const parts = t.split(/\s+/);
+    if (parts.length === 1) {
+      rows.push({ line: i + 1, name: parts[0], number: null });
+    } else {
+      rows.push({ line: i + 1, name: parts.slice(1).join(" "), number: parts[0] });
+    }
+  });
+  return rows;
+}
+
 export function TeamDetailPage() {
   const { id } = useParams();
   const teamId = Number(id);
@@ -36,6 +58,10 @@ export function TeamDetailPage() {
   const [playerNumber, setPlayerNumber] = useState("");
   const editForm = useSubmit();
   const playerForm = useSubmit();
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const importForm = useSubmit();
 
   async function reload() {
     try {
@@ -112,6 +138,25 @@ export function TeamDetailPage() {
     });
   }
 
+  function importPlayers(e: React.FormEvent) {
+    e.preventDefault();
+    void importForm.run(async () => {
+      const rows = parseImportRows(importText);
+      if (rows.length === 0) {
+        throw new Error("请先粘贴名单：每行一名球员，格式「号码 姓名」，号码可省略");
+      }
+      if (rows.length > 100) throw new Error("一次最多导入 100 名球员");
+      const r = await api<ImportResult>(`/api/admin/teams/${teamId}/players/bulk`, {
+        method: "POST",
+        body: { rows },
+      });
+      setImportResult(r);
+      setImportText("");
+      importForm.setError(null);
+      await reload();
+    });
+  }
+
   async function renamePlayer(p: PlayerDTO) {
     const newName = window.prompt("修改球员名", p.name);
     if (newName === null || !newName.trim()) return;
@@ -173,6 +218,57 @@ export function TeamDetailPage() {
           <SubmitButton busy={playerForm.busy}>添加</SubmitButton>
         </form>
         {playerForm.error && <p className="error-msg">{playerForm.error}</p>}
+        {!importOpen ? (
+          <p>
+            <button
+              className="btn btn-ghost"
+              onClick={() => {
+                setImportOpen(true);
+                setImportResult(null);
+              }}
+            >
+              批量导入（从表格粘贴）
+            </button>
+          </p>
+        ) : (
+          <form onSubmit={importPlayers}>
+            <p className="muted">
+              每行一名球员，格式「号码 姓名」，号码可省略，可直接从 Excel
+              复制粘贴。名字相同的会更新号码，号码被占用的行会跳过。
+            </p>
+            <textarea
+              className="paste-box"
+              rows={6}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={"10 张三\n11 李四\n王五"}
+            />
+            <div className="inline-form">
+              <SubmitButton busy={importForm.busy}>导入</SubmitButton>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setImportOpen(false)}
+              >
+                收起
+              </button>
+            </div>
+          </form>
+        )}
+        {importForm.error && <p className="error-msg">{importForm.error}</p>}
+        {importResult && (
+          <p className="muted">
+            导入完成：新增 {importResult.inserted} 人、更新{" "}
+            {importResult.updated} 人
+            {importResult.skipped.length > 0 &&
+              `，跳过 ${importResult.skipped.length} 行`}
+          </p>
+        )}
+        {importResult?.skipped.map((s) => (
+          <p key={s.line} className="error-msg">
+            第 {s.line} 行：{s.reason}
+          </p>
+        ))}
       </div>
 
       <div className="card">
