@@ -720,6 +720,7 @@ button.add-stage {
   grid-column: 1;
   justify-self: end;
   text-align: right;
+  flex-direction: row-reverse;
 }
 .evt-away .evt-info {
   grid-column: 3;
@@ -751,7 +752,7 @@ button.add-stage {
   background: #e64980;
 }
 .evt-ball.miss::after {
-  content: " d7";
+  content: "×";
   top: -5px;
   right: -6px;
   width: auto;
