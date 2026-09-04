@@ -196,7 +196,6 @@ export interface RrSchedule {
 }
 
 // 主客健康约束：任何队不连续三场同侧。
-// 注："首战与末战一主一客"只在场次为偶数时可满足（双循环自动成立），单循环不检查。
 export function checkHomeStreaks(matches: RrMatch[], teamCount: number): string[] {
   const byTeam = new Map<number, Array<0 | 1>>();
   for (let t = 0; t < teamCount; t++) byTeam.set(t, []);
@@ -217,18 +216,84 @@ export function checkHomeStreaks(matches: RrMatch[], teamCount: number): string[
   return bad;
 }
 
+// 首末一主一客：每队第一场与最后一场侧别不同（轮空队按实际出场的首末场计）。
+export function checkEdgeHomeAway(matches: RrMatch[], teamCount: number): string[] {
+  const byTeam = new Map<number, { first?: 0 | 1; last?: 0 | 1 }>();
+  for (let t = 0; t < teamCount; t++) byTeam.set(t, {});
+  const sorted = [...matches].sort((x, y) => x.round - y.round);
+  for (const m of sorted) {
+    const h = byTeam.get(m.home)!;
+    if (h.first === undefined) h.first = 1;
+    h.last = 1;
+    const a = byTeam.get(m.away)!;
+    if (a.first === undefined) a.first = 0;
+    a.last = 0;
+  }
+  const bad: string[] = [];
+  for (const [t, e] of byTeam) {
+    if (e.first !== undefined && e.first === e.last) {
+      bad.push(`team ${t} 首末同${e.first === 1 ? "主" : "客"}`);
+    }
+  }
+  return bad;
+}
+
+const totalViolations = (matches: RrMatch[], teamCount: number): number =>
+  checkHomeStreaks(matches, teamCount).length + checkEdgeHomeAway(matches, teamCount).length;
+
+// 固定种子的 LCG，保证退火结果可复现（同一队数+轮次永远生成同一赛程）
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+// 模拟退火：贪心卡在局部极小（如奇数队单循环首末违例）时的逃逸。
+// 只翻方向不改变配对；接受标准逐步降温，最终按总违例收敛为 0 或返回 null。
+function annealFix(matches: RrMatch[], teamCount: number): RrMatch[] | null {
+  let cur = matches.map((m) => ({ ...m }));
+  let bad = totalViolations(cur, teamCount);
+  if (bad === 0) return cur;
+  const rng = lcg(teamCount * 31 + 7);
+  let T = 2.0;
+  for (let s = 0; s < 6000; s++) {
+    if (bad === 0) return cur;
+    const mode = rng() < 0.7 ? "single" : "round";
+    const cand =
+      mode === "single"
+        ? cur.map((m, i) =>
+            i === Math.floor(rng() * cur.length) ? { ...m, home: m.away, away: m.home } : { ...m }
+          )
+        : (() => {
+            const rnd = 1 + Math.floor(rng() * teamCount);
+            return cur.map((m) => (m.round === rnd ? { ...m, home: m.away, away: m.home } : { ...m }));
+          })();
+    const nb = totalViolations(cand, teamCount);
+    if (nb < bad || rng() < Math.exp((bad - nb) / T)) {
+      cur = cand;
+      bad = nb;
+    }
+    T = Math.max(0.05, T * 0.999);
+  }
+  return totalViolations(cur, teamCount) === 0 ? cur : null;
+}
+
 // 修复手段：单场翻转 + 整轮翻转，贪心接受违例数下降的一步，最多 60 轮。
+// 贪心卡在「单步不下降」且只剩首末违例（三连已净）时，试两步：
+// 翻某违例队的末战场 → 只接受「三连下降且首末不恶化」的翻转修三连 → 总违例下降则接受。
 export function balanceHomeAway(matches: RrMatch[], teamCount: number): RrSchedule {
   let current = matches.map((m) => ({ ...m }));
   for (let iter = 0; iter < 60; iter++) {
-    const bad = checkHomeStreaks(current, teamCount);
-    if (bad.length === 0) return { matches: current, balanced: true };
+    const bad = totalViolations(current, teamCount);
+    if (bad === 0) return { matches: current, balanced: true };
     let improved = false;
     for (let i = 0; i < current.length && !improved; i++) {
       const flipped = current.map((m, j) =>
         j === i ? { ...m, home: m.away, away: m.home } : { ...m }
       );
-      if (checkHomeStreaks(flipped, teamCount).length < bad.length) {
+      if (totalViolations(flipped, teamCount) < bad) {
         current = flipped;
         improved = true;
       }
@@ -239,15 +304,97 @@ export function balanceHomeAway(matches: RrMatch[], teamCount: number): RrSchedu
         const flipped = current.map((m) =>
           m.round === r ? { ...m, home: m.away, away: m.home } : { ...m }
         );
-        if (checkHomeStreaks(flipped, teamCount).length < bad.length) {
+        if (totalViolations(flipped, teamCount) < bad) {
           current = flipped;
           improved = true;
         }
       }
     }
+    // 两步搜索：翻违例队的首战或末战场，随后只修三连（首末不恶化）
+    if (!improved) {
+      const edgeBad = checkEdgeHomeAway(current, teamCount);
+      if (edgeBad.length > 0 && checkHomeStreaks(current, teamCount).length === 0) {
+        const edgeTeams = new Set<number>();
+        for (const s of edgeBad) {
+          const m = s.match(/team (\d+)/);
+          if (m) edgeTeams.add(Number(m[1]));
+        }
+        const edgeIdx = new Map<number, Set<number>>(); // team -> 首战/末战场次下标集合
+        const sorted = [...current].sort((x, y) => x.round - y.round);
+        for (const t of edgeTeams) {
+          const kept: number[] = [];
+          sorted.forEach((m, i) => {
+            if (m.home === t || m.away === t) kept.push(i);
+          });
+          // kept 按轮次排序：首场与末场
+          const cands = new Set<number>();
+          for (const i of [kept[0], kept[kept.length - 1]]) {
+            if (i !== undefined) cands.add(i);
+          }
+          edgeIdx.set(t, cands);
+        }
+        // 候选场下标（sorted 顺序）→ 还原到 current 的下标
+        const sortedIdxOfCurrent = (si: number) =>
+          current.findIndex(
+            (m) => m.round === sorted[si].round && m.home === sorted[si].home && m.away === sorted[si].away
+          );
+        for (const t of edgeTeams) {
+          for (const si of edgeIdx.get(t) ?? []) {
+            const cand = sortedIdxOfCurrent(si);
+            if (cand < 0) continue;
+            let f2 = current.map((m, j) =>
+              j === cand ? { ...m, home: m.away, away: m.home } : { ...m }
+            );
+            for (let sub = 0; sub < 12; sub++) {
+              const st = checkHomeStreaks(f2, teamCount);
+              if (st.length === 0) break;
+              let subImproved = false;
+              for (let j = 0; j < f2.length && !subImproved; j++) {
+                const ff = f2.map((m, k) =>
+                  k === j ? { ...m, home: m.away, away: m.home } : { ...m }
+                );
+                if (
+                  checkHomeStreaks(ff, teamCount).length < st.length &&
+                  checkEdgeHomeAway(ff, teamCount).length <= edgeBad.length
+                ) {
+                  f2 = ff;
+                  subImproved = true;
+                }
+              }
+              if (!subImproved) {
+                const mx = Math.max(...f2.map((m) => m.round));
+                for (let r = 1; r <= mx && !subImproved; r++) {
+                  const ff = f2.map((m) =>
+                    m.round === r ? { ...m, home: m.away, away: m.home } : { ...m }
+                  );
+                  if (
+                    checkHomeStreaks(ff, teamCount).length < st.length &&
+                    checkEdgeHomeAway(ff, teamCount).length <= edgeBad.length
+                  ) {
+                    f2 = ff;
+                    subImproved = true;
+                  }
+                }
+              }
+              if (!subImproved) break;
+            }
+            if (totalViolations(f2, teamCount) < bad) {
+              current = f2;
+              improved = true;
+              break;
+            }
+          }
+          if (improved) break;
+        }
+      }
+    }
     if (!improved) break;
   }
-  return { matches: current, balanced: checkHomeStreaks(current, teamCount).length === 0 };
+  if (totalViolations(current, teamCount) > 0) {
+    const fixed = annealFix(current, teamCount);
+    if (fixed) current = fixed;
+  }
+  return { matches: current, balanced: totalViolations(current, teamCount) === 0 };
 }
 
 export function roundRobinSchedule(
@@ -262,17 +409,21 @@ export function roundRobinSchedule(
     });
   });
   if (loops === 1) return balanceHomeAway(first, teamCount);
-  // 双循环：第一循环修到无三连后，第二循环主客对调 + 轮序反向拼接。
-  // 每对必然主客互换；且可证拼接后无三连、每队首末一主一客（只要第一循环无三连）。
+  // 双循环：第一循环修到健康后，第二循环主客对调 + 轮序反向拼接。
+  // 每对必然主客互换；拼接可证无三连、每队首末一主一客（对调反向后首末与第一循环首轮互异）。
   // 不能在拼接后再跑修复——整轮/单场翻转会破坏"每对主客互换"。
-  const { matches: balancedFirst, balanced } = balanceHomeAway(first, teamCount);
+  const { matches: balancedFirst } = balanceHomeAway(first, teamCount);
   const k = base.length;
   const second = balancedFirst.map((m) => ({
     round: k + (k - m.round) + 1, // 轮序反向：第 1 轮的对调场排到最后
     home: m.away,
     away: m.home,
   }));
-  return { matches: [...balancedFirst, ...second], balanced };
+  const merged = [...balancedFirst, ...second];
+  const balanced =
+    checkHomeStreaks(merged, teamCount).length === 0 &&
+    checkEdgeHomeAway(merged, teamCount).length === 0;
+  return { matches: merged, balanced };
 }
 
 // ---------- 小组抽签 ----------
