@@ -387,7 +387,16 @@ button.btn-ghost:hover:not(:disabled) {
 
 /* ---------- 比赛 tab（报分/事件） ---------- */
 .matches-tab .stage-block { margin-bottom: 20px; }
-.round-head { margin: 10px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.round-head {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
 .match-row { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; background: #fff; }
 .match-row.mr-live { border-color: var(--live); box-shadow: inset 3px 0 0 var(--live); }
 .mr-line { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; }
@@ -463,6 +472,7 @@ button.btn-ghost:hover:not(:disabled) {
 .home-card-desc { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 .home-card-meta { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 .pub-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.pub-head-side { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .crumb { margin-bottom: 8px; font-size: 13px; }
 .teams-public .team-list { list-style: none; padding: 0; margin: 0; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
 .teams-public .team-list li { padding: 8px 12px; border-bottom: 1px solid #edf1ed; font-size: 14px; }
@@ -869,6 +879,12 @@ button.add-stage {
 /* 主页卡片与下方链条时间线对齐：比分等宽 */
 .up-teams .up-score {
   font-family: var(--mono);
+}
+.md-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
 }
 .md-title {
   margin: 10px 0;

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { TeamLogo } from "../components/TeamLogo";
+import { ShareButton } from "../components/ShareButton";
+import { drawTableCard } from "../lib/share";
 import type { StageStandingDTO } from "../../shared/types";
 
 // 积分榜：小组/循环阶段各一张表，行序已由后端排好（积分→净胜→进球→相互战绩）。
@@ -23,13 +25,46 @@ export default function StandingsTab({ tournamentId }: { tournamentId: number })
   return <StandingsTables standings={standings} />;
 }
 
-export function StandingsTables({ standings }: { standings: StageStandingDTO[] }) {
+export function StandingsTables({
+  standings,
+  share,
+}: {
+  standings: StageStandingDTO[];
+  share?: { tournamentName: string; url: string } | null;
+}) {
   const stageTitle = { group: "小组赛", round_robin: "循环赛" } as const;
   return (
     <>
-      {standings.map((st) => (
+      {standings.map((st) => {
+        const allRows = st.groups.flatMap((g) => g.rows.map((r) => ({ g, r })));
+        const columns = st.groups.length > 1
+          ? ["#", "组", "球队", "赛", "净胜", "积分"]
+          : ["#", "球队", "赛", "净胜", "积分"];
+        const tableRows = allRows.map(({ g, r }) =>
+          st.groups.length > 1
+            ? [String(r.rank), g.name || "-", r.teamName, String(r.played), String(r.goalsFor - r.goalsAgainst), String(r.pts)]
+            : [String(r.rank), r.teamName, String(r.played), String(r.goalsFor - r.goalsAgainst), String(r.pts)],
+        );
+        return (
         <section key={st.stageId} className="standings-stage">
-          <h3 className="stage-head">{stageTitle[st.kind]}</h3>
+          <h3 className="stage-head">
+            <span>{stageTitle[st.kind]}</span>
+            {share && tableRows.length > 0 && (
+              <ShareButton
+                title={`分享「${stageTitle[st.kind]}积分榜」`}
+                url={share.url}
+                draw={(c) =>
+                  drawTableCard(c, {
+                    tournamentName: share.tournamentName,
+                    title: `${stageTitle[st.kind]}积分榜`,
+                    columns,
+                    rows: tableRows,
+                    url: share.url,
+                  })
+                }
+              />
+            )}
+          </h3>
           <div className={st.groups.length > 1 ? "standings-grid" : ""}>
             {st.groups.map((g) => (
               <table key={g.groupId ?? 0} className="standings-table">
@@ -82,7 +117,8 @@ export function StandingsTables({ standings }: { standings: StageStandingDTO[] }
             ))}
           </div>
         </section>
-      ))}
+        );
+      })}
       <p className="muted standings-note">
         * 积分：胜 3、平 1、负 0；平局后点球决胜的点球胜者记 2 分、负者记 1 分。排名依次比较积分、净胜球、进球数、相互战绩。
       </p>

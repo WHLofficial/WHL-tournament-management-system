@@ -9,6 +9,8 @@ import { EventTimeline } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
 import { Toplists } from "../components/Toplists";
 import { StatsDashboard } from "../components/StatsDashboard";
+import { ShareButton } from "../components/ShareButton";
+import { drawTournamentCard, drawRoundCard, matchToShare } from "../lib/share";
 import type {
   EntryDTO,
   MatchDTO,
@@ -100,6 +102,18 @@ export default function PublicTournament() {
     detail.groups.map((g) => [g.id, g.name] as const),
   );
 
+  const origin = window.location.origin;
+  // 分享卡对阵区：有完赛展示最近赛果，否则展示对阵预告
+  const finishedMatches = matches.filter((m) => m.status === "finished" && m.homeTeamName);
+  const shareMatchList = (
+    finishedMatches.length > 0
+      ? [...finishedMatches].sort((a, b) => b.id - a.id).slice(0, 4)
+      : matches
+          .filter((m) => m.status === "pending" && m.homeTeamName && m.awayTeamName)
+          .slice(0, 4)
+  ).map(matchToShare);
+  const shareResultLabel = finishedMatches.length > 0 ? "最近赛果" : "对阵预告";
+
   return (
     <>
       <main className="container">
@@ -113,7 +127,23 @@ export default function PublicTournament() {
       )}
       <header className="pub-head">
         <h1>{t.name}</h1>
-        <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
+        <span className="pub-head-side">
+          <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
+          <ShareButton
+            title={`分享「${t.name}」`}
+            url={`${origin}/t/${tid}`}
+            draw={(c) =>
+              drawTournamentCard(c, {
+                name: t.name,
+                subtitle: `${STATUS_LABEL[t.status]} · ${FORMAT_LABEL[t.format]} · ${t.entryCount} 支球队`,
+                coverUrl: t.coverUrl ?? null,
+                resultLabel: shareResultLabel,
+                matches: shareMatchList,
+                url: `${origin}/t/${tid}`,
+              })
+            }
+          />
+        </span>
       </header>
       <p className="muted">
         {FORMAT_LABEL[t.format]} · {t.entryCount} 支球队
@@ -176,7 +206,21 @@ export default function PublicTournament() {
                       : `第 ${round} 轮`;
                   return (
                     <div key={round} className="round-block">
-                      <h4 className="round-head">{label}</h4>
+                      <h4 className="round-head">
+                        <span>{label}</span>
+                        <ShareButton
+                          title={`分享「${label}」`}
+                          url={`${origin}/t/${tid}?tab=schedule`}
+                          draw={(c) =>
+                            drawRoundCard(c, {
+                              tournamentName: t.name,
+                              title: label,
+                              matches: roundList.map(matchToShare),
+                              url: `${origin}/t/${tid}?tab=schedule`,
+                            })
+                          }
+                        />
+                      </h4>
                       {roundList.map((m) => (
                         <PublicMatchRow
                           key={m.id}
@@ -204,7 +248,7 @@ export default function PublicTournament() {
         </div>
       )}
 
-      {tab === "standings" && <PublicStandings tid={tid} />}
+      {tab === "standings" && <PublicStandings tid={tid} tournamentName={t.name} />}
 
       {tab === "teams" &&
         (detail.entries.length === 0 ? (
@@ -232,7 +276,13 @@ export default function PublicTournament() {
               ))}
           </div>
         ))}
-      {tab === "toplists" && <Toplists tid={tid} base="/api/public" />}
+      {tab === "toplists" && (
+        <Toplists
+          tid={tid}
+          base="/api/public"
+          share={{ tournamentName: t.name, url: `${origin}/t/${tid}?tab=toplists` }}
+        />
+      )}
       {tab === "stats" && <StatsDashboard tid={tid} base="/api/public" />}
       </main>
     </>
@@ -281,7 +331,7 @@ function PublicMatchRow({
   );
 }
 
-function PublicStandings({ tid }: { tid: number }) {
+function PublicStandings({ tid, tournamentName }: { tid: number; tournamentName: string }) {
   const [standings, setStandings] = useState<StageStandingDTO[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -295,5 +345,13 @@ function PublicStandings({ tid }: { tid: number }) {
   if (standings === null) return <p className="muted card">加载中…</p>;
   if (standings.length === 0)
     return <p className="muted card">积分榜尚未产生。比赛开打后这里会显示排名。</p>;
-  return <StandingsTables standings={standings} />;
+  return (
+    <StandingsTables
+      standings={standings}
+      share={{
+        tournamentName,
+        url: `${window.location.origin}/t/${tid}?tab=standings`,
+      }}
+    />
+  );
 }

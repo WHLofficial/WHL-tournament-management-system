@@ -25,6 +25,33 @@ export interface ShareMatch {
   note?: string | null;
 }
 
+// MatchDTO 等兼容结构 → ShareMatch（待定队占位名）
+export interface ShareMatchInput {
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  homeLogoUrl?: string | null;
+  awayLogoUrl?: string | null;
+  scoreHome: number | null;
+  scoreAway: number | null;
+  penHome: number | null;
+  penAway: number | null;
+  status: "pending" | "live" | "finished";
+  note?: string | null;
+}
+
+export function matchToShare(m: ShareMatchInput): ShareMatch {
+  return {
+    home: { name: m.homeTeamName ?? "待定", logoUrl: m.homeLogoUrl ?? null },
+    away: { name: m.awayTeamName ?? "待定", logoUrl: m.awayLogoUrl ?? null },
+    scoreHome: m.scoreHome,
+    scoreAway: m.scoreAway,
+    penHome: m.penHome,
+    penAway: m.penAway,
+    status: m.status,
+    note: m.note ?? null,
+  };
+}
+
 export interface TournamentCardData {
   name: string;
   subtitle: string;
