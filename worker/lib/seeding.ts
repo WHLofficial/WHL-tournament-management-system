@@ -7,6 +7,17 @@ export interface SeedEntry {
   seed: number;
 }
 
+// Fisher-Yates 洗牌：循环赛编排前打散队序，让轮次安排与主客分布每次不同。
+// 只影响"谁第几轮碰谁/谁主场"，不影响交手集合（单循环每对恰好一场）。
+export function shuffle<T>(arr: readonly T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export interface PlanMatch {
   round: number; // 1-based 轮次
   slot: number; // 轮内位次 1-based

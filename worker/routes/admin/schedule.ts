@@ -9,6 +9,7 @@ import {
   defaultCrossTemplate,
   drawGroups,
   roundRobinSchedule,
+  shuffle,
   type PlanMatch,
 } from "../../lib/seeding";
 
@@ -324,6 +325,7 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       }
     }
     if (poolList.length < 2) return fail(c, 400, "报名不足 2 支，无法生成赛程");
+    poolList = shuffle(poolList);
     const sched = roundRobinSchedule(poolList.length, cfg.loops === 2 ? 2 : 1);
     balanced = sched.balanced;
     rounds = sched.matches.reduce((mx, m) => Math.max(mx, m.round), 0);
@@ -363,7 +365,7 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
     }
     const skipped: string[] = [];
     for (const g of groups.results ?? []) {
-      const members = byGroup.get(g.id) ?? [];
+      const members = shuffle(byGroup.get(g.id) ?? []);
       if (members.length < 2) {
         skipped.push(g.name);
         continue;
@@ -919,11 +921,13 @@ export async function buildAutoFillStmts(
       pushPlan(buildElimPlan(pool.length, planOpts).matches, false, pool);
     } else {
       const sched = roundRobinSchedule(pool.length, cfg.loops === 2 ? 2 : 1);
+      // 淘汰赛分支要用原序做种子位映射，洗牌只用于循环赛分支的映射数组
+      const mixed = shuffle(pool);
       // roundRobinSchedule 的 home/away 是 0-based 队号，+1 对齐 pushPlan 的 1-based 种子位
       pushPlan(
         sched.matches.map((m) => ({ round: m.round, home: m.home + 1, away: m.away + 1 })),
         false,
-        pool
+        mixed
       );
     }
     return stmts;
