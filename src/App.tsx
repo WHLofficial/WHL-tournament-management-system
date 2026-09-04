@@ -12,6 +12,8 @@ import { AdminCodes } from "./pages/AdminCodes";
 import { TeamDetailPage } from "./pages/TeamDetail";
 import { TournamentManage } from "./pages/TournamentManage";
 import MyTeam from "./pages/MyTeam";
+import { Accounts } from "./pages/Accounts";
+import { ChangePassword } from "./pages/ChangePassword";
 
 export default function App() {
   return (
@@ -85,6 +87,22 @@ function AppShell() {
           element={
             <RequireRole roles={["admin", "superadmin"]}>
               <TournamentManage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/admin/accounts"
+          element={
+            <RequireRole roles={["superadmin"]}>
+              <Accounts />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/password"
+          element={
+            <RequireRole roles={["coach", "admin", "superadmin"]}>
+              <ChangePassword />
             </RequireRole>
           }
         />

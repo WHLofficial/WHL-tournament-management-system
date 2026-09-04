@@ -32,6 +32,7 @@ export function TopBar() {
             <Link to="/admin">赛事管理</Link>
             <Link to="/admin/teams">球队库</Link>
             <Link to="/admin/codes">注册码</Link>
+            {user.role === "superadmin" ? <Link to="/admin/accounts">账号管理</Link> : null}
           </>
         ) : null}
         {user ? <Link to="/my-team">我的球队</Link> : null}
@@ -40,6 +41,7 @@ export function TopBar() {
         <span className="userbox">
           {user.name}
           <span className="role-badge">{ROLE_LABEL[user.role]}</span>
+          <Link to="/password">改密码</Link>
           <button
             className={`btn ${confirming ? "btn-danger" : "btn-ghost"}`}
             onClick={requestLogout}

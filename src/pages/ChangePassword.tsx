@@ -1,0 +1,73 @@
+import { useState } from "react";
+import { api } from "../api";
+import { Page, SubmitButton, useSubmit } from "../components/ui";
+
+export function ChangePassword() {
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [done, setDone] = useState(false);
+  const form = useSubmit();
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    void form.run(async () => {
+      await api("/api/auth/password", {
+        method: "POST",
+        body: { oldPassword: oldPw, newPassword: newPw },
+      });
+      setDone(true);
+      setOldPw("");
+      setNewPw("");
+      form.setError(null);
+    });
+  }
+
+  return (
+    <Page>
+      <div className="page-head">
+        <div>
+          <h2>改密码</h2>
+        </div>
+      </div>
+
+      <div className="card">
+        {done ? (
+          <>
+            <p>密码已改好，下次登录用新密码。</p>
+            <button className="btn btn-ghost" onClick={() => setDone(false)}>
+              再改一次
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="muted">
+              如果密码是被超管重置的临时密码，在这里换成你自己的。
+            </p>
+            <form onSubmit={submit}>
+              <label className="field">
+                旧密码
+                <input
+                  type="password"
+                  value={oldPw}
+                  onChange={(e) => setOldPw(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </label>
+              <label className="field">
+                新密码（至少 8 位，同时包含字母和数字）
+                <input
+                  type="password"
+                  value={newPw}
+                  onChange={(e) => setNewPw(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <SubmitButton busy={form.busy}>保存新密码</SubmitButton>
+            </form>
+            {form.error && <p className="error-msg">{form.error}</p>}
+          </>
+        )}
+      </div>
+    </Page>
+  );
+}
