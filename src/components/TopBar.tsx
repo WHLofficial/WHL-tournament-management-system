@@ -40,7 +40,7 @@ export function TopBar() {
       {loading ? null : user ? (
         <span className="userbox">
           {user.name}
-          <span className="role-badge">{ROLE_LABEL[user.role]}</span>
+          <span className="role-badge">{user.locked ? "观众" : ROLE_LABEL[user.role]}</span>
           <Link to="/password">改密码</Link>
           <button
             className={`btn ${confirming ? "btn-danger" : "btn-ghost"}`}

@@ -18,6 +18,7 @@ interface Account {
   name: string;
   email: string | null;
   role: Role;
+  locked: boolean;
   createdAt: string;
   teamId: number | null;
   teamName: string | null;
@@ -60,6 +61,17 @@ export function Accounts() {
       setError(null);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "重置失败");
+    }
+  }
+
+  async function unlock(a: Account) {
+    if (!window.confirm(`解锁「${a.name}」？解锁后就能凭认证码绑定球队。`)) return;
+    try {
+      await api(`/api/admin/accounts/${a.id}/unlock`, { method: "POST" });
+      setError(null);
+      await load();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "解锁失败");
     }
   }
 
@@ -107,7 +119,9 @@ export function Accounts() {
                     <td>{a.name}</td>
                     <td className="muted">{a.email ?? "—"}</td>
                     <td>
-                      {locked ? (
+                      {a.locked ? (
+                        "观众（锁定）"
+                      ) : locked ? (
                         ROLE_TEXT[a.role]
                       ) : (
                         <select
@@ -128,13 +142,17 @@ export function Accounts() {
                     </td>
                     <td className="muted">{a.createdAt.slice(0, 16).replace("T", " ")}</td>
                     <td>
-                      {a.role === "superadmin" ? (
-                        <span className="muted">—</span>
-                      ) : (
+                      {a.locked && (
+                        <button className="btn btn-ghost" onClick={() => void unlock(a)}>
+                          解锁
+                        </button>
+                      )}
+                      {a.role !== "superadmin" && (
                         <button className="btn btn-ghost" onClick={() => void resetPassword(a)}>
                           重置密码
                         </button>
                       )}
+                      {a.role === "superadmin" && !a.locked && <span className="muted">—</span>}
                     </td>
                   </tr>
                 );

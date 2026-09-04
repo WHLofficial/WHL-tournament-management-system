@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 
 type SignupCodeRow = {
@@ -24,20 +25,43 @@ function codeStatus(r: SignupCodeRow) {
 }
 
 export function AdminCodes() {
+  const { user } = useAuth();
+  const isSuper = user?.role === "superadmin";
   const [rows, setRows] = useState<SignupCodeRow[] | null>(null);
   const [maxUses, setMaxUses] = useState("1");
   const [hours, setHours] = useState("24");
   const [newCode, setNewCode] = useState<string | null>(null);
+  const [allowOpen, setAllowOpen] = useState<boolean | null>(null);
+  const [toggleErr, setToggleErr] = useState<string | null>(null);
   const gen = useSubmit();
 
   async function load() {
-    const d = await api<{ codes: SignupCodeRow[] }>("/api/admin/signup-codes");
+    const [d, s] = await Promise.all([
+      api<{ codes: SignupCodeRow[] }>("/api/admin/signup-codes"),
+      api<{ allowOpenReg: boolean }>("/api/admin/org-settings"),
+    ]);
     setRows(d.codes);
+    setAllowOpen(s.allowOpenReg);
   }
 
   useEffect(() => {
     load().catch(() => setRows([]));
   }, []);
+
+  async function toggleOpen(checked: boolean) {
+    const prev = allowOpen;
+    setAllowOpen(checked);
+    try {
+      await api("/api/admin/org-settings", {
+        method: "PUT",
+        body: { allowOpenReg: checked },
+      });
+      setToggleErr(null);
+    } catch (err) {
+      setAllowOpen(prev);
+      setToggleErr(err instanceof Error ? err.message : "保存失败");
+    }
+  }
 
   function generate(e: React.FormEvent) {
     e.preventDefault();
@@ -60,8 +84,24 @@ export function AdminCodes() {
         <h2>注册码</h2>
       </div>
       <p className="hint">
-        新账号注册时要填注册码。明码只在生成时显示一次，库里的哈希查不回来——发给要注册的人就行。
+        注册码选填：有码注册可直接绑队；开关打开后没码也能注册，会建「观众」账号（锁定绑队，需在账号管理解锁）。
+        明码只在生成时显示一次，库里的哈希查不回来——发给要注册的人就行。
       </p>
+
+      <div className="card">
+        <h3>无码注册</h3>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={allowOpen ?? false}
+            disabled={allowOpen === null || !isSuper}
+            onChange={(e) => void toggleOpen(e.target.checked)}
+          />
+          允许无注册码注册（观众号，锁定绑队，账号管理里可解锁）
+        </label>
+        {!isSuper && <p className="muted">开关仅超管可改。</p>}
+        {toggleErr && <p className="error-msg">{toggleErr}</p>}
+      </div>
 
       <div className="card">
         <h3>生成注册码</h3>

@@ -47,7 +47,7 @@ export function Register() {
           autoComplete="new-password"
         />
         <Field
-          label="注册码（找管理员要）"
+          label="注册码（选填）"
           value={signupCode}
           onChange={setSignupCode}
           placeholder="8 位注册码"
