@@ -157,7 +157,8 @@ async function fetchFinished(db: D1Database, tid: number) {
          he.team_id AS home_team_id, ht.name AS home_team_name,
          ae.team_id AS away_team_id, at.name AS away_team_name,
          s.kind AS stage_kind, s.sort_order AS stage_order
-       ${FINISHED_SQL}`
+       ${FINISHED_SQL}
+       ORDER BY m.id`
     )
     .bind(tid)
     .all<FinishedRow>();
