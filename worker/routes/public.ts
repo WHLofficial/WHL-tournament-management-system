@@ -11,13 +11,14 @@ import type {
 } from "../../shared/types";
 import { readStageStandings } from "../lib/standings";
 import { buildStats, buildToplists } from "../lib/topstats";
+import { mediaUrl } from "../lib/media";
 
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
 const app = new Hono<AppEnv>();
 
 app.get("/tournaments", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at,
+    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
      FROM tournament t
      WHERE t.status != 'draft'
@@ -31,6 +32,7 @@ app.get("/tournaments", async (c) => {
     status: TournamentDTO["status"];
     created_at: string;
     entry_count: number;
+    cover_key: string | null;
   }>();
   const tournaments: TournamentDTO[] = rows.results.map((r) => ({
     id: r.id,
@@ -40,6 +42,7 @@ app.get("/tournaments", async (c) => {
     status: r.status,
     createdAt: r.created_at,
     entryCount: r.entry_count,
+    coverUrl: mediaUrl(r.cover_key),
   }));
   return c.json({ tournaments });
 });
@@ -47,7 +50,7 @@ app.get("/tournaments", async (c) => {
 app.get("/tournaments/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
-    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at,
+    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
      FROM tournament t WHERE t.id = ? AND t.status != 'draft'`
   )
@@ -60,6 +63,7 @@ app.get("/tournaments/:id", async (c) => {
       status: TournamentDTO["status"];
       created_at: string;
       entry_count: number;
+      cover_key: string | null;
     }>();
   if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
 
@@ -77,7 +81,7 @@ app.get("/tournaments/:id", async (c) => {
       .bind(id)
       .all<{ id: number; stage_id: number; name: string; sort_order: number }>(),
     c.env.DB.prepare(
-      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name,
+      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key,
          (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
        FROM entry e JOIN team tm ON tm.id = e.team_id
        WHERE e.tournament_id = ? ORDER BY e.seed`
@@ -90,6 +94,7 @@ app.get("/tournaments/:id", async (c) => {
         group_id: number | null;
         points_deducted: number;
         team_name: string;
+        logo_key: string | null;
         player_count: number;
       }>(),
   ]);
@@ -103,6 +108,7 @@ app.get("/tournaments/:id", async (c) => {
       status: t.status,
       createdAt: t.created_at,
       entryCount: t.entry_count,
+      coverUrl: mediaUrl(t.cover_key),
     } satisfies TournamentDTO,
     stages: stages.results.map((s) => ({
       id: s.id,
@@ -125,6 +131,7 @@ app.get("/tournaments/:id", async (c) => {
         groupId: e.group_id,
         playerCount: e.player_count,
         pointsDeducted: e.points_deducted,
+        teamLogoUrl: mediaUrl(e.logo_key),
       })
     ),
   });
@@ -232,6 +239,7 @@ app.get("/tournaments/:id/matches", async (c) => {
     id: number; stage_id: number; round: number; slot: number; leg: number | null;
     home_entry_id: number | null; away_entry_id: number | null;
     home_team_name: string | null; away_team_name: string | null;
+    home_logo_key: string | null; away_logo_key: string | null;
     score_home: number | null; score_away: number | null;
     pen_home: number | null; pen_away: number | null;
     status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
@@ -241,6 +249,7 @@ app.get("/tournaments/:id/matches", async (c) => {
     `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
        m.home_entry_id, m.away_entry_id,
        ht.name AS home_team_name, at.name AS away_team_name,
+       ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
        m.status, m.winner_entry_id, m.note, s.kind AS stage_kind
      FROM match m
@@ -288,6 +297,8 @@ app.get("/tournaments/:id/matches", async (c) => {
       note: r.note,
       events: eventsByMatch.get(r.id) ?? [],
       stageKind: r.stage_kind,
+      homeLogoUrl: mediaUrl(r.home_logo_key),
+      awayLogoUrl: mediaUrl(r.away_logo_key),
     };
   });
   return c.json({ matches });
@@ -308,6 +319,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
     `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
        m.home_entry_id, m.away_entry_id,
        ht.name AS home_team_name, at.name AS away_team_name,
+       ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
        m.status, m.winner_entry_id, m.note, s.kind AS stage_kind
      FROM match m
@@ -323,6 +335,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
       id: number; stage_id: number; round: number; slot: number; leg: number | null;
       home_entry_id: number | null; away_entry_id: number | null;
       home_team_name: string | null; away_team_name: string | null;
+      home_logo_key: string | null; away_logo_key: string | null;
       score_home: number | null; score_away: number | null;
       pen_home: number | null; pen_away: number | null;
       status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
@@ -359,6 +372,8 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
     note: row.note,
     events: eventsByMatch.get(row.id) ?? [],
     stageKind: row.stage_kind,
+    homeLogoUrl: mediaUrl(row.home_logo_key),
+    awayLogoUrl: mediaUrl(row.away_logo_key),
   };
   return c.json({ match });
 });

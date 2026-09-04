@@ -8,6 +8,7 @@ import {
 import { defaultCrossTemplate } from "../../lib/seeding";
 import { readStageStandings, buildStandingsStmts } from "../../lib/standings";
 import { buildStats, buildToplists } from "../../lib/topstats";
+import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
 import { requireSuperadmin } from "../../middleware/auth";
 
 type Status = TournamentDTO["status"];
@@ -24,7 +25,7 @@ const app = new Hono<AppEnv>();
 
 app.get("/", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at,
+    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
      FROM tournament t ORDER BY t.created_at DESC`
   ).all<{
@@ -35,6 +36,7 @@ app.get("/", async (c) => {
     status: Status;
     created_at: string;
     entry_count: number;
+    cover_key: string | null;
   }>();
   const tournaments: TournamentDTO[] = rows.results.map((r) => ({
     id: r.id,
@@ -44,6 +46,7 @@ app.get("/", async (c) => {
     status: r.status,
     createdAt: r.created_at,
     entryCount: r.entry_count,
+    coverUrl: mediaUrl(r.cover_key),
   }));
   return c.json({ tournaments });
 });
@@ -113,7 +116,7 @@ app.post("/", async (c) => {
 app.get("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
-    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at,
+    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
      FROM tournament t WHERE t.id = ?`
   )
@@ -126,6 +129,7 @@ app.get("/:id", async (c) => {
       status: Status;
       created_at: string;
       entry_count: number;
+      cover_key: string | null;
     }>();
   if (!t) return c.json({ message: "赛事不存在" }, 404);
 
@@ -143,7 +147,7 @@ app.get("/:id", async (c) => {
       .bind(id)
       .all<{ id: number; stage_id: number; name: string; sort_order: number }>(),
     c.env.DB.prepare(
-      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name,
+      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key,
          (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
        FROM entry e JOIN team tm ON tm.id = e.team_id
        WHERE e.tournament_id = ? ORDER BY e.seed`
@@ -156,6 +160,7 @@ app.get("/:id", async (c) => {
         group_id: number | null;
         points_deducted: number;
         team_name: string;
+        logo_key: string | null;
         player_count: number;
       }>(),
   ]);
@@ -169,6 +174,7 @@ app.get("/:id", async (c) => {
       status: t.status,
       createdAt: t.created_at,
       entryCount: t.entry_count,
+      coverUrl: mediaUrl(t.cover_key),
     } satisfies TournamentDTO,
     stages: stages.results.map((s) => ({
       id: s.id,
@@ -191,6 +197,7 @@ app.get("/:id", async (c) => {
         groupId: e.group_id,
         playerCount: e.player_count,
         pointsDeducted: e.points_deducted,
+        teamLogoUrl: mediaUrl(e.logo_key),
       })
     ),
   };
@@ -577,6 +584,38 @@ app.get(
       .first<{ id: number }>();
     if (!t) return c.json({ message: "赛事不存在" }, 404);
     return c.json(await buildStats(c.env.DB, id));
+  }
+);
+
+// 上传赛事封面：png/jpg/webp ≤1MB；key 版本化，旧对象删除
+app.put(
+  "/:id/cover",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const t = await c.env.DB.prepare("SELECT cover_key FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ cover_key: string | null }>();
+    if (!t) return c.json({ message: "赛事不存在" }, 404);
+    const res = await saveImage(c, "tournament", id);
+    if (!res.ok) return c.json({ message: res.message }, res.status);
+    await c.env.DB.prepare("UPDATE tournament SET cover_key = ? WHERE id = ?").bind(res.key, id).run();
+    await deleteImage(c, t.cover_key);
+    return c.json({ coverUrl: mediaUrl(res.key) });
+  }
+);
+
+// 删除封面
+app.delete(
+  "/:id/cover",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const t = await c.env.DB.prepare("SELECT cover_key FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ cover_key: string | null }>();
+    if (!t) return c.json({ message: "赛事不存在" }, 404);
+    await c.env.DB.prepare("UPDATE tournament SET cover_key = NULL WHERE id = ?").bind(id).run();
+    await deleteImage(c, t.cover_key);
+    return c.json({ ok: true });
   }
 );
 

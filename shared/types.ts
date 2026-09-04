@@ -188,6 +188,7 @@ export interface TeamDTO {
   name: string;
   playerCount: number;
   entryCount: number;
+  logoUrl: string | null;
 }
 
 export interface PlayerDTO {
@@ -204,6 +205,7 @@ export interface TournamentDTO {
   status: TournamentStatus;
   createdAt: string;
   entryCount: number;
+  coverUrl: string | null;
 }
 
 export interface EntryDTO {
@@ -214,6 +216,7 @@ export interface EntryDTO {
   groupId: number | null;
   playerCount: number;
   pointsDeducted: number;
+  teamLogoUrl: string | null;
 }
 
 export interface StageDTO {
@@ -264,6 +267,8 @@ export interface MatchDTO {
   note: string | null;
   events?: PublicMatchEventDTO[];
   stageKind?: "elim" | "round_robin" | "group";
+  homeLogoUrl?: string | null;
+  awayLogoUrl?: string | null;
 }
 
 export type MatchEventType =
@@ -339,6 +344,7 @@ export interface MatchEventDTO {
 export interface StandingRowDTO {
   entryId: number;
   teamName: string;
+  teamLogoUrl: string | null;
   seed: number;
   played: number;
   won: number;

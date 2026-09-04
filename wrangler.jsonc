@@ -25,6 +25,13 @@
       "id": "87e2d78308bc47e9b36dc6de53be0458"
     }
   ],
+  // 队徽/封面图存储；本地 dev 自动模拟，部署前需在 CF dash 创建同名桶 whl-media
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "whl-media"
+    }
+  ],
   "observability": {
     "enabled": true
   }

@@ -4,6 +4,7 @@ export type Bindings = {
   DB: D1Database;
   KV: KVNamespace;
   ASSETS: Fetcher;
+  MEDIA: R2Bucket;
 };
 
 export type SessionUser = { id: number; name: string; role: Role; locked: boolean; mustChangePassword: boolean };

@@ -1,22 +1,24 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import type { PlayerDTO, TeamDTO } from "../../../shared/types";
+import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
 
 const app = new Hono<AppEnv>();
 
 // 球队库列表（含名单数、报名数）
 app.get("/", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT t.id, t.name,
+    `SELECT t.id, t.name, t.logo_key,
        (SELECT COUNT(*) FROM player p WHERE p.team_id = t.id) AS player_count,
        (SELECT COUNT(*) FROM entry e WHERE e.team_id = t.id) AS entry_count
      FROM team t WHERE t.org_id = 1 ORDER BY t.name`
-  ).all<{ id: number; name: string; player_count: number; entry_count: number }>();
+  ).all<{ id: number; name: string; logo_key: string | null; player_count: number; entry_count: number }>();
   const teams: TeamDTO[] = rows.results.map((r) => ({
     id: r.id,
     name: r.name,
     playerCount: r.player_count,
     entryCount: r.entry_count,
+    logoUrl: mediaUrl(r.logo_key),
   }));
   return c.json({ teams });
 });
@@ -73,12 +75,13 @@ app.post("/bulk", async (c) => {
 // 球队详情 + 名单
 app.get("/:id", async (c) => {
   const id = Number(c.req.param("id"));
-  const team = await c.env.DB.prepare(
-    "SELECT id, name FROM team WHERE id = ? AND org_id = 1"
+  const teamRow = await c.env.DB.prepare(
+    "SELECT id, name, logo_key FROM team WHERE id = ? AND org_id = 1"
   )
     .bind(id)
-    .first<{ id: number; name: string }>();
-  if (!team) return c.json({ message: "球队不存在" }, 404);
+    .first<{ id: number; name: string; logo_key: string | null }>();
+  if (!teamRow) return c.json({ message: "球队不存在" }, 404);
+  const team = { id: teamRow.id, name: teamRow.name, logoUrl: mediaUrl(teamRow.logo_key) };
   const rows = await c.env.DB.prepare(
     "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY id"
   )
@@ -290,6 +293,32 @@ app.patch("/:id/players/:pid", async (c) => {
 app.delete("/:id/players/:pid", async (c) => {
   const pid = Number(c.req.param("pid"));
   await c.env.DB.prepare("DELETE FROM player WHERE id = ?").bind(pid).run();
+  return c.json({ ok: true });
+});
+
+// 上传队徽：png/jpg/webp ≤1MB；key 版本化，旧对象删除
+app.put("/:id/logo", async (c) => {
+  const id = Number(c.req.param("id"));
+  const team = await c.env.DB.prepare("SELECT logo_key FROM team WHERE id = ? AND org_id = 1")
+    .bind(id)
+    .first<{ logo_key: string | null }>();
+  if (!team) return c.json({ message: "球队不存在" }, 404);
+  const res = await saveImage(c, "team", id);
+  if (!res.ok) return c.json({ message: res.message }, res.status);
+  await c.env.DB.prepare("UPDATE team SET logo_key = ? WHERE id = ?").bind(res.key, id).run();
+  await deleteImage(c, team.logo_key);
+  return c.json({ logoUrl: mediaUrl(res.key) });
+});
+
+// 删除队徽：恢复默认（首字+色块）
+app.delete("/:id/logo", async (c) => {
+  const id = Number(c.req.param("id"));
+  const team = await c.env.DB.prepare("SELECT logo_key FROM team WHERE id = ? AND org_id = 1")
+    .bind(id)
+    .first<{ logo_key: string | null }>();
+  if (!team) return c.json({ message: "球队不存在" }, 404);
+  await c.env.DB.prepare("UPDATE team SET logo_key = NULL WHERE id = ?").bind(id).run();
+  await deleteImage(c, team.logo_key);
   return c.json({ ok: true });
 });
 

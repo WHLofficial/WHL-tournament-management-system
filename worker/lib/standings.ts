@@ -1,4 +1,5 @@
 import type { StageStandingDTO, StandingGroupDTO } from "../../shared/types";
+import { mediaUrl } from "./media";
 // 积分重算 + 淘汰晋级器（TECH_DESIGN §6：全量重算而非增量累加，
 // 报分/改分/改判走同一条路径，永远收敛到正确结果）
 // 两个构建器都只读 + 返回 D1PreparedStatement[]，由调用方与报分写入合并进
@@ -320,6 +321,7 @@ export async function buildAdvanceStmts(
 export type StandRow = {
   entryId: number;
   teamName: string;
+  teamLogoUrl: string | null;
   groupId: number | null;
   seed: number;
   played: number;
@@ -341,7 +343,7 @@ export async function readStandings(
 ): Promise<StandRow[]> {
   const res = await db
     .prepare(
-      `SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name,
+      `SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,
               s.played, s.won, s.drawn, s.lost,
               s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted
        FROM standing s
@@ -355,6 +357,7 @@ export async function readStandings(
       seed: number;
       group_id: number | null;
       team_name: string;
+      logo_key: string | null;
       played: number;
       won: number;
       drawn: number;
@@ -369,6 +372,7 @@ export async function readStandings(
   const rows: StandRow[] = (res.results ?? []).map((r) => ({
     entryId: r.entry_id,
     teamName: r.team_name,
+    teamLogoUrl: mediaUrl(r.logo_key),
     groupId: r.group_id,
     seed: r.seed,
     played: r.played,
