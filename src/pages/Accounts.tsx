@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { Page } from "../components/ui";
+import { useAuth } from "../auth";
 
 type Role = "coach" | "admin" | "superadmin";
+
+// 这里不用 auth.tsx 的 ROLE_LABEL（它把 admin 写成「管理员」，PRD 术语是「录入员」）
+const ROLE_TEXT: Record<Role, string> = {
+  superadmin: "超管",
+  admin: "录入员",
+  coach: "教练",
+};
 
 interface Account {
   id: number;
@@ -16,18 +24,14 @@ interface Account {
 }
 
 export function Accounts() {
+  const { user } = useAuth();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
-  const [meId, setMeId] = useState<number | null>(null);
   const [resetPw, setResetPw] = useState<{ name: string; password: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    const [d, me] = await Promise.all([
-      api<{ accounts: Account[] }>("/api/admin/accounts"),
-      api<{ id: number }>("/api/auth/me"),
-    ]);
+    const d = await api<{ accounts: Account[] }>("/api/admin/accounts");
     setAccounts(d.accounts);
-    setMeId(me.id);
   }
 
   useEffect(() => {
@@ -97,18 +101,14 @@ export function Accounts() {
             </thead>
             <tbody>
               {accounts.map((a) => {
-                const locked = a.role === "superadmin" || a.id === meId;
+                const locked = a.role === "superadmin" || a.id === user?.id;
                 return (
                   <tr key={a.id}>
                     <td>{a.name}</td>
                     <td className="muted">{a.email ?? "—"}</td>
                     <td>
                       {locked ? (
-                        a.role === "superadmin" ? (
-                          "超管"
-                        ) : (
-                          "录入员"
-                        )
+                        ROLE_TEXT[a.role]
                       ) : (
                         <select
                           value={a.role}
