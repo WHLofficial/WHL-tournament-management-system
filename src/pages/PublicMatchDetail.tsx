@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
 import { MatchScore } from "../components/MatchScore";
-import { EventTimeline, eventMeta } from "../components/EventTimeline";
+import { EventTimeline, eventMeta, timelineSide } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawMatchCard, matchToShare } from "../lib/share";
@@ -89,7 +89,7 @@ export default function PublicMatchDetail() {
                         if (!meta) return [];
                         return [
                           {
-                            side: e.side,
+                            side: timelineSide(e),
                             icon: meta.icon,
                             tag: meta.tag ?? null,
                             minute: e.minute,

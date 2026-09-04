@@ -27,6 +27,11 @@ export function eventMeta(type: EType): { icon: string; tag?: string } | null {
   return SHOW[type] ?? EXTRA[type] ?? null;
 }
 
+// 乌龙显示在受益方（球算进对方球门那侧），与赛程页事件摘要口径一致
+export function timelineSide(e: PublicMatchEventDTO): "home" | "away" {
+  return e.type === "own_goal" ? (e.side === "home" ? "away" : "home") : e.side;
+}
+
 // 中央链条-节点式时间线：中轴贯穿、轴上是素色链环节点；
 // 事件图标+分钟+球员信息作为信息块贴在轴旁——主队向左展开、客队向右展开
 export function EventTimeline({
@@ -58,13 +63,14 @@ export function EventTimeline({
             </span>
           </span>
         );
+        const side = timelineSide(e);
         return (
-          <div key={e.id} className={`evt-row ${e.side === "home" ? "evt-home" : "evt-away"}`}>
-            {e.side === "home" && info}
+          <div key={e.id} className={`evt-row ${side === "home" ? "evt-home" : "evt-away"}`}>
+            {side === "home" && info}
             <span className="evt-mid">
               <span className="evt-chain" />
             </span>
-            {e.side === "away" && info}
+            {side === "away" && info}
           </div>
         );
       })}
