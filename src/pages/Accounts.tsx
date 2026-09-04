@@ -2,16 +2,11 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { Page } from "../components/ui";
-import { useAuth } from "../auth";
+import { ROLE_LABEL, useAuth } from "../auth";
 
 type Role = "coach" | "admin" | "superadmin";
 
-// 这里不用 auth.tsx 的 ROLE_LABEL（它把 admin 写成「管理员」，PRD 术语是「录入员」）
-const ROLE_TEXT: Record<Role, string> = {
-  superadmin: "超管",
-  admin: "录入员",
-  coach: "教练",
-};
+const ROLE_TEXT = ROLE_LABEL;
 
 interface Account {
   id: number;
@@ -129,7 +124,7 @@ export function Accounts() {
                           onChange={(e) => void changeRole(a, e.target.value as Role)}
                         >
                           <option value="coach">教练</option>
-                          <option value="admin">录入员</option>
+                          <option value="admin">管理员</option>
                         </select>
                       )}
                     </td>
