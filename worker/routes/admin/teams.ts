@@ -148,6 +148,111 @@ app.post("/:id/players", async (c) => {
   return c.json({ player: { id: r.meta.last_row_id, name, number } }, 201);
 });
 
+// 批量导入球员：名字相同→更新号码；号码被他人占用→拒绝该行；否则新增。D1 batch 全成或全不动
+app.post("/:id/players/bulk", async (c) => {
+  const teamId = Number(c.req.param("id"));
+  const body = await c.req
+    .json<{ rows?: { line?: number; name?: string; number?: string | null }[] }>()
+    .catch(() => null);
+  const rows = body?.rows ?? [];
+  if (rows.length === 0) return c.json({ message: "没有可导入的球员" }, 400);
+  if (rows.length > 100) return c.json({ message: "一次最多导入 100 名球员" }, 400);
+
+  const team = await c.env.DB.prepare("SELECT id FROM team WHERE id = ?")
+    .bind(teamId)
+    .first();
+  if (!team) return c.json({ message: "球队不存在" }, 404);
+
+  const existing = await c.env.DB.prepare(
+    "SELECT id, name, number FROM player WHERE team_id = ?"
+  )
+    .bind(teamId)
+    .all<{ id: number; name: string; number: string | null }>();
+
+  // 按粘贴顺序逐行处理；isNew 的行最后统一生成 INSERT，
+  // 这样粘贴内同名改号天然收敛成一条最终 INSERT
+  interface Slot {
+    id: number;
+    number: string | null;
+    isNew: boolean;
+  }
+  const roster = new Map<string, Slot>();
+  const owner = new Map<string, string>(); // 号码 -> 占用球员名
+  for (const p of existing.results) {
+    roster.set(p.name, { id: p.id, number: p.number, isNew: false });
+    if (p.number !== null) owner.set(p.number, p.name);
+  }
+
+  const updateStmts: D1PreparedStatement[] = [];
+  const skipped: { line: number; reason: string }[] = [];
+  let inserted = 0;
+  let updated = 0;
+  let nextFake = -1;
+
+  for (const row of rows) {
+    const line = row.line ?? 0;
+    const name = row.name?.trim() ?? "";
+    const number = row.number?.trim() || null;
+    if (!name || name.length > 32) {
+      skipped.push({ line, reason: "球员名为空或超过 32 字" });
+      continue;
+    }
+    if (number !== null && number.length > 8) {
+      skipped.push({ line, reason: "号码过长（最多 8 字符）" });
+      continue;
+    }
+    const slot = roster.get(name);
+    if (slot) {
+      if (number === null || number === slot.number) {
+        skipped.push({
+          line,
+          reason: number === null ? "已存在，且未提供号码" : "已存在，号码未变",
+        });
+        continue;
+      }
+      const holder = owner.get(number);
+      if (holder !== undefined && holder !== name) {
+        skipped.push({ line, reason: `${number} 号已被 ${holder} 占用` });
+        continue;
+      }
+      if (slot.number !== null) owner.delete(slot.number);
+      owner.set(number, name);
+      slot.number = number;
+      if (!slot.isNew) {
+        updateStmts.push(
+          c.env.DB.prepare("UPDATE player SET number = ? WHERE id = ?").bind(
+            number,
+            slot.id
+          )
+        );
+        updated += 1;
+      }
+      continue;
+    }
+    if (number !== null && owner.has(number)) {
+      skipped.push({ line, reason: `${number} 号已被 ${owner.get(number)} 占用` });
+      continue;
+    }
+    roster.set(name, { id: nextFake--, number, isNew: true });
+    if (number !== null) owner.set(number, name);
+    inserted += 1;
+  }
+
+  const stmts: D1PreparedStatement[] = [...updateStmts];
+  for (const [name, slot] of roster) {
+    if (slot.isNew) {
+      stmts.push(
+        c.env.DB.prepare(
+          "INSERT INTO player (team_id, name, number) VALUES (?, ?, ?)"
+        ).bind(teamId, name, slot.number)
+      );
+    }
+  }
+  if (stmts.length > 0) await c.env.DB.batch(stmts);
+
+  return c.json({ inserted, updated, skipped }, 200);
+});
+
 // 修改球员
 app.patch("/:id/players/:pid", async (c) => {
   const pid = Number(c.req.param("pid"));
