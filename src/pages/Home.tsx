@@ -86,11 +86,11 @@ export function Home() {
                   {v.tournamentName} · {v.stageKind === "elim" ? "淘汰赛" : v.stageKind === "group" ? "小组赛" : "循环赛"} 第{v.round}轮
                 </span>
                 <span className="up-teams">
-                  {v.homeTeamName}{" "}
+                  <span className="up-side up-home">{v.homeTeamName}</span>
                   <span className="up-score up-score-live">
                     {v.scoreHome}:{v.scoreAway}
-                  </span>{" "}
-                  {v.awayTeamName}
+                  </span>
+                  <span className="up-side up-away">{v.awayTeamName}</span>
                 </span>
                 <EventTimeline events={v.events} />
               </Link>
@@ -112,7 +112,9 @@ export function Home() {
                   {u.tournamentName} · {u.stageKind === "elim" ? "淘汰赛" : u.stageKind === "group" ? "小组赛" : "循环赛"} 第{u.round}轮
                 </span>
                 <span className="up-teams">
-                  {u.homeTeamName} vs {u.awayTeamName}
+                  <span className="up-side up-home">{u.homeTeamName}</span>
+                  <span className="up-vs">vs</span>
+                  <span className="up-side up-away">{u.awayTeamName}</span>
                 </span>
               </Link>
             ))}
@@ -133,11 +135,11 @@ export function Home() {
                   {r.tournamentName} · {r.stageKind === "elim" ? "淘汰赛" : r.stageKind === "group" ? "小组赛" : "循环赛"} 第{r.round}轮
                 </span>
                 <span className="up-teams">
-                  {r.homeTeamName}{" "}
+                  <span className="up-side up-home">{r.homeTeamName}</span>
                   <span className="up-score">
                     {r.scoreHome}:{r.scoreAway}
-                  </span>{" "}
-                  {r.awayTeamName}
+                  </span>
+                  <span className="up-side up-away">{r.awayTeamName}</span>
                 </span>
                 <EventTimeline events={r.events} />
               </Link>

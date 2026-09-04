@@ -848,11 +848,22 @@ button.add-stage {
   font-weight: 700;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  text-align: center;
 }
-/* 主页卡片与下方链条时间线对齐：对阵行居中、比分等宽 */
+/* 主客队名贴两侧、比分/vs 居中（同赛程页 mr-line 布局） */
+.up-teams .up-side.up-home {
+  flex: 1;
+  text-align: right;
+}
+.up-teams .up-side.up-away {
+  flex: 1;
+  text-align: left;
+}
+.up-teams .up-vs {
+  color: var(--muted);
+  font-weight: 600;
+}
+/* 主页卡片与下方链条时间线对齐：比分等宽 */
 .up-teams .up-score {
   font-family: var(--mono);
 }
