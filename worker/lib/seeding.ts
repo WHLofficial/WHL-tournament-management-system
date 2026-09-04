@@ -217,22 +217,23 @@ export function checkHomeStreaks(matches: RrMatch[], teamCount: number): string[
 }
 
 // 首末一主一客：每队第一场与最后一场侧别不同（轮空队按实际出场的首末场计）。
+// 赛季首末约束：每队前两场必须一主一客、后两场必须一主一客（两主或两客起收即违例）。
+// 注：n 奇单循环或双循环下均有解；n=4 单循环（每队 3 场）数学上无解，退火会停在最接近状态并返回 balanced=false。
 export function checkEdgeHomeAway(matches: RrMatch[], teamCount: number): string[] {
-  const byTeam = new Map<number, { first?: 0 | 1; last?: 0 | 1 }>();
-  for (let t = 0; t < teamCount; t++) byTeam.set(t, {});
+  const seq = new Map<number, (0 | 1)[]>();
+  for (let t = 0; t < teamCount; t++) seq.set(t, []);
   const sorted = [...matches].sort((x, y) => x.round - y.round);
   for (const m of sorted) {
-    const h = byTeam.get(m.home)!;
-    if (h.first === undefined) h.first = 1;
-    h.last = 1;
-    const a = byTeam.get(m.away)!;
-    if (a.first === undefined) a.first = 0;
-    a.last = 0;
+    seq.get(m.home)!.push(1);
+    seq.get(m.away)!.push(0);
   }
   const bad: string[] = [];
-  for (const [t, e] of byTeam) {
-    if (e.first !== undefined && e.first === e.last) {
-      bad.push(`team ${t} 首末同${e.first === 1 ? "主" : "客"}`);
+  for (const [t, s] of seq) {
+    if (s.length >= 2 && s[0] === s[1]) {
+      bad.push(`team ${t} 两${s[0] === 1 ? "主" : "客"}开始`);
+    }
+    if (s.length >= 2 && s[s.length - 1] === s[s.length - 2]) {
+      bad.push(`team ${t} 两${s[s.length - 1] === 1 ? "主" : "客"}结束`);
     }
   }
   return bad;
@@ -252,32 +253,99 @@ function lcg(seed: number): () => number {
 
 // 模拟退火：贪心卡在局部极小（如奇数队单循环首末违例）时的逃逸。
 // 只翻方向不改变配对；接受标准逐步降温，最终按总违例收敛为 0 或返回 null。
+// 多起点：贪心终点 + 若干随机扰动起点，避免单个轨迹困死。
 function annealFix(matches: RrMatch[], teamCount: number): RrMatch[] | null {
-  let cur = matches.map((m) => ({ ...m }));
-  let bad = totalViolations(cur, teamCount);
-  if (bad === 0) return cur;
-  const rng = lcg(teamCount * 31 + 7);
-  let T = 2.0;
-  for (let s = 0; s < 6000; s++) {
+  const baseSeed = (i: number) => (teamCount * 31 + 7 + i * 101) >>> 0;
+  const attempts: RrMatch[][] = [matches.map((m) => ({ ...m }))];
+  // 随机扰动起点：翻 8~15 场随机场 + 2 轮整轮
+  for (let i = 1; i <= 3; i++) {
+    const rng = lcg(baseSeed(i) + 999);
+    let cur = matches.map((m) => ({ ...m }));
+    const flips = 8 + Math.floor(rng() * 8);
+    const maxRound = Math.max(...cur.map((m) => m.round));
+    for (let f = 0; f < flips; f++) {
+      if (rng() < 0.7) {
+        const j = Math.floor(rng() * cur.length);
+        cur = cur.map((m, k) => (k === j ? { ...m, home: m.away, away: m.home } : { ...m }));
+      } else {
+        const rnd = 1 + Math.floor(rng() * maxRound);
+        cur = cur.map((m) => (m.round === rnd ? { ...m, home: m.away, away: m.home } : { ...m }));
+      }
+    }
+    attempts.push(cur);
+  }
+  for (const start of attempts) {
+    let cur = start;
+    let bad = totalViolations(cur, teamCount);
     if (bad === 0) return cur;
-    const mode = rng() < 0.7 ? "single" : "round";
-    const cand =
-      mode === "single"
-        ? cur.map((m, i) =>
-            i === Math.floor(rng() * cur.length) ? { ...m, home: m.away, away: m.home } : { ...m }
-          )
-        : (() => {
-            const rnd = 1 + Math.floor(rng() * teamCount);
-            return cur.map((m) => (m.round === rnd ? { ...m, home: m.away, away: m.home } : { ...m }));
-          })();
-    const nb = totalViolations(cand, teamCount);
+    const rng = lcg(baseSeed(attempts.indexOf(start)));
+    let T = 2.0;
+    for (let s = 0; s < 20000; s++) {
+      if (bad === 0) return cur;
+      const mode = rng() < 0.7 ? "single" : "round";
+      const cand =
+        mode === "single"
+          ? cur.map((m, i) =>
+              i === Math.floor(rng() * cur.length) ? { ...m, home: m.away, away: m.home } : { ...m }
+            )
+          : (() => {
+              const rnd = 1 + Math.floor(rng() * teamCount);
+              return cur.map((m) => (m.round === rnd ? { ...m, home: m.away, away: m.home } : { ...m }));
+            })();
+      const nb = totalViolations(cand, teamCount);
+      if (nb < bad || rng() < Math.exp((bad - nb) / T)) {
+        cur = cand;
+        bad = nb;
+      }
+      T = Math.max(0.05, T * 0.999);
+    }
+    if (bad === 0) return cur;
+  }
+  return null;
+}
+
+// 双循环整体退火：只翻第一循环的场，第二循环镜像（对调+反向）联动，天然保持每对主客互换。
+function annealDouble(
+  first: RrMatch[],
+  k: number,
+  teamCount: number
+): { matches: RrMatch[]; balanced: boolean } | null {
+  const mergedOf = (f: RrMatch[]): RrMatch[] => {
+    const second = f.map((m) => ({
+      round: k + (k - m.round) + 1,
+      home: m.away,
+      away: m.home,
+    }));
+    return [...f, ...second];
+  };
+  const rng = lcg((teamCount * 77 + k * 13) >>> 0);
+  let cur = first.map((m) => ({ ...m }));
+  let curMerged = mergedOf(cur);
+  let bad = totalViolations(curMerged, teamCount);
+  if (bad === 0) return { matches: curMerged, balanced: true };
+  let T = 2.0;
+  let bestMerged = curMerged;
+  let bestBad = bad;
+  for (let s = 0; s < 30000; s++) {
+    if (bad === 0) return { matches: curMerged, balanced: true };
+    const j = Math.floor(rng() * cur.length);
+    const cand = cur.map((m, i) => (i === j ? { ...m, home: m.away, away: m.home } : { ...m }));
+    const candMerged = mergedOf(cand);
+    const nb = totalViolations(candMerged, teamCount);
     if (nb < bad || rng() < Math.exp((bad - nb) / T)) {
       cur = cand;
+      curMerged = candMerged;
       bad = nb;
+      if (nb < bestBad) {
+        bestBad = nb;
+        bestMerged = candMerged;
+      }
     }
     T = Math.max(0.05, T * 0.999);
   }
-  return totalViolations(cur, teamCount) === 0 ? cur : null;
+  return bestBad === 0
+    ? { matches: bestMerged, balanced: true }
+    : { matches: bestMerged, balanced: false };
 }
 
 // 修复手段：单场翻转 + 整轮翻转，贪心接受违例数下降的一步，最多 60 轮。
@@ -409,11 +477,14 @@ export function roundRobinSchedule(
     });
   });
   if (loops === 1) return balanceHomeAway(first, teamCount);
-  // 双循环：第一循环修到健康后，第二循环主客对调 + 轮序反向拼接。
-  // 每对必然主客互换；拼接可证无三连、每队首末一主一客（对调反向后首末与第一循环首轮互异）。
-  // 不能在拼接后再跑修复——整轮/单场翻转会破坏"每对主客互换"。
+  // 双循环：第一循环先修到近健康作为好起点，再用整体退火微调——第二循环主客对调 + 轮序反向拼接，
+  // 每对必然主客互换；拼接可证无三连且首末一主一客，但 n=4 等小规模第一循环无法独立满足
+  // "前两场/后两场异侧"，需以拼接后整体为目标调整（只翻第一循环场，镜像联动）。
   const { matches: balancedFirst } = balanceHomeAway(first, teamCount);
   const k = base.length;
+  const hol = annealDouble(balancedFirst, k, teamCount);
+  if (hol) return hol;
+  // 退火兜底失败：退回固定镜像拼接，balanced 按实际检查计算
   const second = balancedFirst.map((m) => ({
     round: k + (k - m.round) + 1, // 轮序反向：第 1 轮的对调场排到最后
     home: m.away,

@@ -73,10 +73,17 @@ export default function ScheduleTab({
 
   const generate = (stage: StageDTO) =>
     act(
-      () =>
-        api(`/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/generate`, {
-          method: "POST",
-        }),
+      async () => {
+        const res = await api<{ balanced?: boolean }>(
+          `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/generate`,
+          { method: "POST" }
+        );
+        if (res && res.balanced === false) {
+          setMessage(
+            "赛程已生成，但当前队数下无法做到每队前两场一主一客、后两场一主一客（如 4 队单循环），已尽量均衡。"
+          );
+        }
+      },
       "将清空该阶段全部未开打的场次并重新生成，确认？"
     );
 
