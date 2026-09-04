@@ -129,13 +129,19 @@ app.get("/tournaments/:id", async (c) => {
 });
 
 // 赛程对阵（含 live 比分的事件覆盖），与 admin 端同构
-// 公共事件视图：不暴露内部 id，side 标主/客，射手/助攻带名字
+// 公共事件视图：不暴露内部 id，side 标主/客，射手/助攻带名字。
+// side 按「场+entry」判——同一 entry 在不同场次主客不同，不能用全局 entryId 映射
 async function fetchPublicEvents(
   db: D1Database,
   tid: number,
-  sideByEntry: Map<number, "home" | "away">,
-  matchIds: Set<number>,
+  matchRows: { id: number; home_entry_id: number | null; away_entry_id: number | null }[],
 ): Promise<Map<number, PublicMatchEventDTO[]>> {
+  const matchIds = new Set(matchRows.map((r) => r.id));
+  const sideByEvent = new Map<string, "home" | "away">();
+  for (const r of matchRows) {
+    if (r.home_entry_id !== null) sideByEvent.set(`${r.id}:${r.home_entry_id}`, "home");
+    if (r.away_entry_id !== null) sideByEvent.set(`${r.id}:${r.away_entry_id}`, "away");
+  }
   const rows = await db
     .prepare(
       `SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,
@@ -157,7 +163,7 @@ async function fetchPublicEvents(
   const byMatch = new Map<number, PublicMatchEventDTO[]>();
   for (const r of rows.results ?? []) {
     if (!matchIds.has(r.match_id)) continue;
-    const side = r.entry_id !== null ? sideByEntry.get(r.entry_id) : undefined;
+    const side = r.entry_id !== null ? sideByEvent.get(`${r.match_id}:${r.entry_id}`) : undefined;
     if (!side) continue;
     const list = byMatch.get(r.match_id) ?? [];
     list.push({
@@ -173,7 +179,7 @@ async function fetchPublicEvents(
   return byMatch;
 }
 
-// live 实时比分与管理端 liveScore 同口径：goal/pen_goal 计本方，own_goal 计对方。
+// live 实时比分与管理端 liveScore 同口径：goal/pen_goal 计事件方，own_goal 记到对方。
 // sideByEvent：`matchId:entryId` -> home|away，由调用方从当次查询结果构建（禁止模块级可变态，并发会串）
 async function fetchLiveScores(
   db: D1Database,
@@ -197,9 +203,16 @@ async function fetchLiveScores(
     const isHome = sideByEvent.get(`${r.match_id}:${r.entry_id}`) === "home";
     if (isHome === undefined) continue;
     const sc = scores.get(r.match_id) ?? { home: 0, away: 0 };
-    const delta = (r.type === "goal" || r.type === "pen_goal" ? r.n : 0) + (r.type === "own_goal" ? r.n : 0);
-    if (isHome) sc.home += delta;
-    else sc.away += delta;
+    const goalsFor = r.type === "goal" || r.type === "pen_goal" ? r.n : 0;
+    const ownGoals = r.type === "own_goal" ? r.n : 0;
+    // own_goal 是事件所属方球员踢进自家门，记对方得分
+    if (isHome) {
+      sc.home += goalsFor;
+      sc.away += ownGoals;
+    } else {
+      sc.away += goalsFor;
+      sc.home += ownGoals;
+    }
     scores.set(r.match_id, sc);
   }
   return scores;
@@ -241,11 +254,6 @@ app.get("/tournaments/:id/matches", async (c) => {
     .all<MatchRow>();
   const list = rows.results ?? [];
 
-  const sideByEntry = new Map<number, "home" | "away">();
-  for (const r of list) {
-    if (r.home_entry_id !== null) sideByEntry.set(r.home_entry_id, "home");
-    if (r.away_entry_id !== null) sideByEntry.set(r.away_entry_id, "away");
-  }
   const sideByEvent = new Map<string, "home" | "away">();
   for (const r of list) {
     if (r.home_entry_id !== null) sideByEvent.set(`${r.id}:${r.home_entry_id}`, "home");
@@ -255,12 +263,7 @@ app.get("/tournaments/:id/matches", async (c) => {
     list.some((r) => r.status === "live")
       ? await fetchLiveScores(c.env.DB, tid, sideByEvent)
       : new Map<number, { home: number; away: number }>();
-  const eventsByMatch = await fetchPublicEvents(
-    c.env.DB,
-    tid,
-    sideByEntry,
-    new Set(list.map((r) => r.id)),
-  );
+  const eventsByMatch = await fetchPublicEvents(c.env.DB, tid, list);
 
   const matches: MatchDTO[] = list.map((r) => {
     const live = liveScores.get(r.id);
@@ -323,9 +326,6 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
     }>();
   if (!row) return c.json({ message: "比赛不存在" }, 404);
 
-  const sideByEntry = new Map<number, "home" | "away">();
-  if (row.home_entry_id !== null) sideByEntry.set(row.home_entry_id, "home");
-  if (row.away_entry_id !== null) sideByEntry.set(row.away_entry_id, "away");
   const sideByEvent = new Map<string, "home" | "away">();
   if (row.home_entry_id !== null) sideByEvent.set(`${row.id}:${row.home_entry_id}`, "home");
   if (row.away_entry_id !== null) sideByEvent.set(`${row.id}:${row.away_entry_id}`, "away");
@@ -334,12 +334,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
     row.status === "live"
       ? await fetchLiveScores(c.env.DB, tid, sideByEvent)
       : new Map<number, { home: number; away: number }>();
-  const eventsByMatch = await fetchPublicEvents(
-    c.env.DB,
-    tid,
-    sideByEntry,
-    new Set([row.id]),
-  );
+  const eventsByMatch = await fetchPublicEvents(c.env.DB, tid, [row]);
   const live = liveScores.get(row.id);
   const match: MatchDTO = {
     id: row.id,
