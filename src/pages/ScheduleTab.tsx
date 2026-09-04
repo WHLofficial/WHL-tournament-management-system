@@ -657,10 +657,12 @@ function AddStageForm({
   onAdded: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState<"elim" | "round_robin">("elim");
+  const [kind, setKind] = useState<"elim" | "round_robin" | "group">("elim");
   const [legs, setLegs] = useState("1");
   const [thirdPlace, setThirdPlace] = useState(false);
   const [loops, setLoops] = useState("1");
+  const [groupCount, setGroupCount] = useState("4");
+  const [groupSize, setGroupSize] = useState("4");
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [fromStage, setFromStage] = useState(""); // 空 = 上一阶段；否则为 stage id
@@ -707,6 +709,10 @@ function AddStageForm({
     if (kind === "elim") {
       body.legs = Number(legs) === 2 ? 2 : 1;
       body.thirdPlace = thirdPlace;
+    } else if (kind === "group") {
+      body.groupCount = Math.min(16, Math.max(2, Math.round(Number(groupCount) || 4)));
+      body.groupSize = Math.min(16, Math.max(2, Math.round(Number(groupSize) || 4)));
+      body.loops = Number(loops) === 2 ? 2 : 1;
     } else {
       body.loops = Number(loops) === 2 ? 2 : 1;
     }
@@ -743,6 +749,8 @@ function AddStageForm({
       setRangeTo("");
       setFromStage("");
       setCross("");
+      setGroupCount("4");
+      setGroupSize("4");
       onAdded();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "添加阶段失败");
@@ -769,10 +777,13 @@ function AddStageForm({
           赛制
           <select
             value={kind}
-            onChange={(e) => setKind(e.target.value as "elim" | "round_robin")}
+            onChange={(e) =>
+              setKind(e.target.value as "elim" | "round_robin" | "group")
+            }
           >
             <option value="elim">淘汰赛</option>
             <option value="round_robin">循环赛</option>
+            {isFirst && <option value="group">小组赛</option>}
           </select>
         </label>
         {kind === "elim" ? (
@@ -783,6 +794,38 @@ function AddStageForm({
               <option value="2">两回合</option>
             </select>
           </label>
+        ) : kind === "group" ? (
+          <>
+            <label>
+              组数
+              <input
+                type="number"
+                min={2}
+                max={16}
+                value={groupCount}
+                onChange={(e) => setGroupCount(e.target.value)}
+                style={{ width: 64 }}
+              />
+            </label>
+            <label>
+              每组队数
+              <input
+                type="number"
+                min={2}
+                max={16}
+                value={groupSize}
+                onChange={(e) => setGroupSize(e.target.value)}
+                style={{ width: 64 }}
+              />
+            </label>
+            <label>
+              循环
+              <select value={loops} onChange={(e) => setLoops(e.target.value)}>
+                <option value="1">单循环</option>
+                <option value="2">双循环</option>
+              </select>
+            </label>
+          </>
         ) : (
           <label>
             循环
@@ -882,13 +925,19 @@ function AddStageForm({
         </div>
       )}
       <p className="muted add-stage-hint">
-        新阶段排在最后；生成赛程时
-        {sourceMode === "range"
-          ? `取「${fromStageLabel}」积分榜第 ${rangeFrom || "?"} 到第 ${rangeTo || "?"} 名`
-          : cross
-            ? "按模板对阵"
-            : "使用全部报名队"}
-        。开赛后就不能再增删阶段了。
+        {kind === "group" ? (
+          `共 ${groupCount || "?"} 组、每组 ${groupSize || "?"} 队；报名队数超出容量时无法抽签。开赛后就不能再增删阶段了。`
+        ) : (
+          <>
+            新阶段排在最后；生成赛程时
+            {sourceMode === "range"
+              ? `取「${fromStageLabel}」积分榜第 ${rangeFrom || "?"} 到第 ${rangeTo || "?"} 名`
+              : cross
+                ? "按模板对阵"
+                : "使用全部报名队"}
+            。开赛后就不能再增删阶段了。
+          </>
+        )}
       </p>
       {err && <p className="error">{err}</p>}
       <div className="add-stage-row">

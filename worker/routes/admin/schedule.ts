@@ -86,6 +86,7 @@ type AddStageBody = {
   thirdPlace?: boolean;
   loops?: number;
   groupCount?: number;
+  groupSize?: number;
   qualifyPerGroup?: number;
   source?: { take?: number; from?: number; to?: number; fromStage?: number; cross?: string[] };
 };
@@ -176,12 +177,15 @@ app.post("/:id/stages", async (c) => {
     config = { loops: body.loops === 2 ? 2 : 1, ...(source ? { source } : {}) };
   } else {
     const groupCount = Math.min(Math.max(Math.floor(Number(body.groupCount) || 4), 2), 8);
+    // 每组队数：容量参考（抽签不能超过 组数 × 每组队数），不强制每组满员
+    const groupSize = Math.min(Math.max(Math.floor(Number(body.groupSize) || 4), 2), 16);
     const q = Math.min(
       Math.max(Math.floor(Number(body.qualifyPerGroup) || 2), 1),
       8
     );
     config = {
       group_count: groupCount,
+      group_size: groupSize,
       loops: body.loops === 2 ? 2 : 1,
       qualify_per_group: q,
       cross: defaultCrossTemplate(groupCount, q),
