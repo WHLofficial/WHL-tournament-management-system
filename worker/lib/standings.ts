@@ -1,4 +1,8 @@
-import type { StageStandingDTO, StandingGroupDTO } from "../../shared/types";
+import type {
+  StageStandingDTO,
+  StandingGroupDTO,
+  TiebreakerKey,
+} from "../../shared/types";
 import { mediaUrl } from "./media";
 // 积分重算 + 淘汰晋级器（TECH_DESIGN §6：全量重算而非增量累加，
 // 报分/改分/改判走同一条路径，永远收敛到正确结果）
@@ -339,7 +343,8 @@ export type StandRow = {
 
 export async function readStandings(
   db: D1Database,
-  stageId: number
+  stageId: number,
+  chain?: TiebreakerKey[]
 ): Promise<StandRow[]> {
   const res = await db
     .prepare(
@@ -389,7 +394,7 @@ export async function readStandings(
   }));
   if (rows.length === 0) return [];
 
-  // 相互战绩：该 stage 全部完赛场次的每队小循环积分/净胜
+  // 相互战绩数据：该 stage 全部完赛场次（块内小循环重排时用）
   const finished = await db
     .prepare(
       `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away
@@ -399,40 +404,8 @@ export async function readStandings(
     .bind(stageId)
     .all<FinishedMatchRow>();
   const finishedRows = finished.results ?? [];
-  const h2h = new Map<number, { pts: number; gd: number }>();
-  const bump = (id: number, pts: number, gd: number) => {
-    const cur = h2h.get(id) ?? { pts: 0, gd: 0 };
-    cur.pts += pts;
-    cur.gd += gd;
-    h2h.set(id, cur);
-  };
-  const addPair = (m: FinishedMatchRow, ids: Set<number>) => {
-    if (m.home_entry_id == null || m.away_entry_id == null) return;
-    if (!ids.has(m.home_entry_id) || !ids.has(m.away_entry_id)) return;
-    const hs = m.score_home ?? 0;
-    const as = m.score_away ?? 0;
-    if (hs > as) {
-      bump(m.home_entry_id, 3, hs - as);
-      bump(m.away_entry_id, 0, as - hs);
-    } else if (hs < as) {
-      bump(m.home_entry_id, 0, hs - as);
-      bump(m.away_entry_id, 3, as - hs);
-    } else if (m.pen_home != null && m.pen_away != null && m.pen_home !== m.pen_away) {
-      // 点球决胜：小循环按点胜 2 / 点负 1 计
-      if (m.pen_home > m.pen_away) {
-        bump(m.home_entry_id, 2, 0);
-        bump(m.away_entry_id, 1, 0);
-      } else {
-        bump(m.home_entry_id, 1, 0);
-        bump(m.away_entry_id, 2, 0);
-      }
-    } else {
-      bump(m.home_entry_id, 1, 0);
-      bump(m.away_entry_id, 1, 0);
-    }
-  };
 
-  // 分组内排序；组内再按"前三项完全相同"切块，块内用相互战绩微调
+  // 分组内按同分链排序
   const byGroup = new Map<number | null, StandRow[]>();
   for (const r of rows) {
     const key = r.groupId ?? 0;
@@ -441,37 +414,117 @@ export async function readStandings(
   }
   const out: StandRow[] = [];
   for (const list of byGroup.values()) {
-    list.sort(
-      (a, b) =>
-        b.pts - a.pts ||
-        b.goalsFor - b.goalsAgainst - (a.goalsFor - a.goalsAgainst) ||
-        b.goalsFor - a.goalsFor ||
-        a.seed - b.seed
-    );
-    // 并列块（pts/gd/gf 全同）内做 h2h 重排
+    sortStandRows(list, chain ?? DEFAULT_TIEBREAKERS, finishedRows);
+    out.push(...list);
+  }
+  return out;
+}
+
+// ---------- 同分规则（可配置决胜链）----------
+// 积分永远第一；之后按链顺序比较（gd=净胜球、gf=进球数、h2h=相互战绩）；
+// 链上各项全相同时按报名种子位（seed 升序）兜底。
+// h2h 只在"其余项全同"的并列块内做小循环重排（积分/净胜，点球决胜按点胜 2 / 点负 1）。
+export const DEFAULT_TIEBREAKERS: TiebreakerKey[] = ["gd", "gf", "h2h"];
+
+export function normalizeTiebreakers(v: unknown): TiebreakerKey[] {
+  if (!Array.isArray(v)) return DEFAULT_TIEBREAKERS;
+  const out: TiebreakerKey[] = [];
+  for (const x of v) {
+    if ((x === "gd" || x === "gf" || x === "h2h") && !out.includes(x)) out.push(x);
+  }
+  return out.slice(0, 3);
+}
+
+// 读赛事的同分规则配置；缺省回退默认链
+export async function getTiebreakers(
+  db: D1Database,
+  tid: number
+): Promise<TiebreakerKey[]> {
+  const t = await db
+    .prepare("SELECT config_json FROM tournament WHERE id = ?")
+    .bind(tid)
+    .first<{ config_json: string | null }>();
+  if (!t) return DEFAULT_TIEBREAKERS;
+  let cfg: { tiebreakers?: unknown } = {};
+  try {
+    cfg = (JSON.parse(t.config_json || "{}") ?? {}) as { tiebreakers?: unknown };
+  } catch {
+    return DEFAULT_TIEBREAKERS;
+  }
+  return normalizeTiebreakers(cfg.tiebreakers);
+}
+
+export function sortStandRows(
+  rows: StandRow[],
+  chain: TiebreakerKey[],
+  finishedRows: FinishedMatchRow[]
+): void {
+  const nonH2h = chain.filter((t) => t !== "h2h");
+  const val = (r: StandRow, t: "gd" | "gf") =>
+    t === "gd" ? r.goalsFor - r.goalsAgainst : r.goalsFor;
+  const blockKey = (r: StandRow) =>
+    `${r.pts}|${nonH2h.map((t) => val(r, t)).join("|")}`;
+
+  rows.sort((a, b) => {
+    if (a.pts !== b.pts) return b.pts - a.pts;
+    for (const t of nonH2h) {
+      const va = val(a, t);
+      const vb = val(b, t);
+      if (va !== vb) return vb - va;
+    }
+    return a.seed - b.seed;
+  });
+
+  if (chain.includes("h2h")) {
     let i = 0;
-    while (i < list.length) {
+    while (i < rows.length) {
       let j = i + 1;
-      const key = (r: StandRow) => `${r.pts}|${r.goalsFor - r.goalsAgainst}|${r.goalsFor}`;
-      while (j < list.length && key(list[j]) === key(list[i])) j++;
+      while (j < rows.length && blockKey(rows[j]) === blockKey(rows[i])) j++;
       if (j - i > 1) {
-        const ids = new Set(list.slice(i, j).map((r) => r.entryId));
-        h2h.clear();
-        for (const m of finishedRows) addPair(m, ids);
-        const block = list.slice(i, j).sort(
+        const ids = new Set(rows.slice(i, j).map((r) => r.entryId));
+        const h2h = new Map<number, { pts: number; gd: number }>();
+        const bump = (id: number, p: number, g: number) => {
+          const cur = h2h.get(id) ?? { pts: 0, gd: 0 };
+          cur.pts += p;
+          cur.gd += g;
+          h2h.set(id, cur);
+        };
+        for (const m of finishedRows) {
+          if (m.home_entry_id == null || m.away_entry_id == null) continue;
+          if (!ids.has(m.home_entry_id) || !ids.has(m.away_entry_id)) continue;
+          const hs = m.score_home ?? 0;
+          const as = m.score_away ?? 0;
+          if (hs > as) {
+            bump(m.home_entry_id, 3, hs - as);
+            bump(m.away_entry_id, 0, as - hs);
+          } else if (hs < as) {
+            bump(m.home_entry_id, 0, hs - as);
+            bump(m.away_entry_id, 3, as - hs);
+          } else if (m.pen_home != null && m.pen_away != null && m.pen_home !== m.pen_away) {
+            if (m.pen_home > m.pen_away) {
+              bump(m.home_entry_id, 2, 0);
+              bump(m.away_entry_id, 1, 0);
+            } else {
+              bump(m.home_entry_id, 1, 0);
+              bump(m.away_entry_id, 2, 0);
+            }
+          } else {
+            bump(m.home_entry_id, 1, 0);
+            bump(m.away_entry_id, 1, 0);
+          }
+        }
+        const block = rows.slice(i, j).sort(
           (a, b) =>
             (h2h.get(b.entryId)?.pts ?? 0) - (h2h.get(a.entryId)?.pts ?? 0) ||
             (h2h.get(b.entryId)?.gd ?? 0) - (h2h.get(a.entryId)?.gd ?? 0) ||
             a.seed - b.seed
         );
-        for (let k = 0; k < block.length; k++) list[i + k] = block[k];
+        for (let k = 0; k < block.length; k++) rows[i + k] = block[k];
       }
       i = j;
     }
-    list.forEach((r, idx) => (r.rank = idx + 1));
-    out.push(...list);
   }
-  return out;
+  rows.forEach((r, idx) => (r.rank = idx + 1));
 }
 
 // ---------- 积分榜读取（admin 与公开页共用）----------
@@ -489,8 +542,9 @@ export async function readStageStandings(
     .all<{ id: number; kind: "group" | "round_robin"; sort_order: number }>();
 
   const standings: StageStandingDTO[] = [];
+  const chain = await getTiebreakers(db, tournamentId);
   for (const st of stages.results ?? []) {
-    const rows = await readStandings(db, st.id);
+    const rows = await readStandings(db, st.id, chain);
     if (rows.length === 0) continue;
     let groups: StandingGroupDTO[];
     if (st.kind === "group") {

@@ -366,6 +366,13 @@ button.btn-ghost:hover:not(:disabled) {
   border-top: 1px solid var(--border);
   margin: 20px 0;
 }
+.tb-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.tb-row .field { min-width: 140px; }
 
 /* ---------- 编排 ---------- */
 .schedule-tab .stage-block { margin-bottom: 16px; }

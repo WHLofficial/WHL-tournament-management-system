@@ -16,6 +16,14 @@ import type {
   TournamentStatus,
 } from "../../shared/types";
 
+// 同分规则下拉的选项；value 对应后端 TiebreakerKey，none 表示这一级不启用
+const TB_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "gd", label: "净胜球" },
+  { value: "gf", label: "进球数" },
+  { value: "h2h", label: "相互战绩" },
+  { value: "none", label: "不启用" },
+];
+
 type Tab = "entries" | "schedule" | "matches" | "standings" | "toplists" | "stats" | "settings";
 
 export function TournamentManage() {
@@ -291,6 +299,14 @@ function SettingsTab({
   const [description, setDescription] = useState(t.description ?? "");
   const { busy, error, setError, run } = useSubmit();
 
+  // 同分规则：三个优先级下拉，"none" = 这一级不启用
+  const tbForm = useSubmit();
+  const [tbError, setTbError] = useState<string | null>(null);
+  const [tb, setTb] = useState<[string, string, string]>(() => {
+    const c = detail.tiebreakers ?? ["gd", "gf", "h2h"];
+    return [c[0] ?? "none", c[1] ?? "none", c[2] ?? "none"];
+  });
+
   function save(e: React.FormEvent) {
     e.preventDefault();
     void run(async () => {
@@ -299,6 +315,34 @@ function SettingsTab({
         body: { name, description },
       });
       setError(null);
+      await reload();
+    });
+  }
+
+  function saveTiebreakers() {
+    const chain: string[] = [];
+    let stopped = false;
+    for (const p of tb) {
+      if (p === "none") {
+        stopped = true;
+        continue;
+      }
+      if (stopped) {
+        setTbError("某一级选了「不启用」，后面的优先级也必须选「不启用」");
+        return;
+      }
+      if (chain.includes(p)) {
+        setTbError("同一规则不能重复启用");
+        return;
+      }
+      chain.push(p);
+    }
+    setTbError(null);
+    void tbForm.run(async () => {
+      await api(`/api/admin/tournaments/${t.id}`, {
+        method: "PATCH",
+        body: { tiebreakers: chain },
+      });
       await reload();
     });
   }
@@ -354,6 +398,46 @@ function SettingsTab({
         {error && <p className="error-msg">{error}</p>}
         <SubmitButton busy={busy}>保存</SubmitButton>
       </form>
+      <hr className="divider" />
+      <h3>同分规则</h3>
+      <p className="muted">
+        两队积分相同时，按下面的顺序比较排名；积分始终排第一，全都比不出来就按报名种子位。
+        开赛后也可以改，立刻影响积分榜名次与阶段晋级。
+      </p>
+      <div className="tb-row">
+        {(["第 1 优先级", "第 2 优先级", "第 3 优先级"] as const).map((label, i) => (
+          <label className="field" key={label}>
+            {label}
+            <select
+              value={tb[i]}
+              onChange={(e) =>
+                setTb((prev) => {
+                  const next = [...prev] as [string, string, string];
+                  next[i] = e.target.value;
+                  return next;
+                })
+              }
+            >
+              {TB_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      {(tbForm.error ?? tbError) && (
+        <p className="error-msg">{tbForm.error ?? tbError}</p>
+      )}
+      <button
+        type="button"
+        className="btn"
+        disabled={tbForm.busy}
+        onClick={saveTiebreakers}
+      >
+        保存同分规则
+      </button>
       <hr className="divider" />
       <h3>封面图</h3>
       <div className="logo-row">

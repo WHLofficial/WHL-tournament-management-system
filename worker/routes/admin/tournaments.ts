@@ -6,7 +6,12 @@ import {
   type TournamentDTO,
 } from "../../../shared/types";
 import { defaultCrossTemplate } from "../../lib/seeding";
-import { readStageStandings, buildStandingsStmts } from "../../lib/standings";
+import {
+  getTiebreakers,
+  normalizeTiebreakers,
+  readStageStandings,
+  buildStandingsStmts,
+} from "../../lib/standings";
 import { buildStats, buildToplists } from "../../lib/topstats";
 import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
 import { putDefaultCover } from "../../lib/defaultCover";
@@ -208,6 +213,7 @@ app.get("/:id", async (c) => {
         teamLogoUrl: mediaUrl(e.logo_key),
       })
     ),
+    tiebreakers: await getTiebreakers(c.env.DB, id),
   };
   return c.json(detail);
 });
@@ -222,7 +228,12 @@ app.get("/:id/standings", async (c) => {
 app.patch("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const body = await c.req
-    .json<{ name?: string; description?: string; config_json?: Record<string, unknown> }>()
+    .json<{
+      name?: string;
+      description?: string;
+      config_json?: Record<string, unknown>;
+      tiebreakers?: unknown;
+    }>()
     .catch(() => null);
   if (body?.name !== undefined) {
     const name = body.name.trim();
@@ -243,6 +254,27 @@ app.patch("/:id", async (c) => {
   if (body?.config_json !== undefined) {
     const sync = await syncStageConfigs(c.env, id, body.config_json);
     if (sync !== true) return c.json({ message: sync }, 400);
+  }
+  // 同分规则：只动 tournament.config_json.tiebreakers，不经 syncStageConfigs——
+  // 它影响排名口径而非赛制，开赛后也允许改
+  if (body?.tiebreakers !== undefined) {
+    const chain = normalizeTiebreakers(body.tiebreakers);
+    const row = await c.env.DB.prepare(
+      "SELECT config_json FROM tournament WHERE id = ?"
+    )
+      .bind(id)
+      .first<{ config_json: string | null }>();
+    if (!row) return c.json({ message: "赛事不存在" }, 404);
+    let cfg: Record<string, unknown> = {};
+    try {
+      cfg = (JSON.parse(row.config_json || "{}") ?? {}) as Record<string, unknown>;
+    } catch {
+      cfg = {};
+    }
+    cfg.tiebreakers = chain;
+    await c.env.DB.prepare("UPDATE tournament SET config_json = ? WHERE id = ?")
+      .bind(JSON.stringify(cfg), id)
+      .run();
   }
   return c.json({ ok: true });
 });

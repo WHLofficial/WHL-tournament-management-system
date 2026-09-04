@@ -12,7 +12,7 @@ import {
   shuffle,
   type PlanMatch,
 } from "../../lib/seeding";
-import { readStandings } from "../../lib/standings";
+import { getTiebreakers, readStandings } from "../../lib/standings";
 
 const app = new Hono<AppEnv>();
 app.use("*", requireAdmin);
@@ -719,42 +719,21 @@ export async function buildCrossStagePlan(
     .all<{ id: number; name: string }>();
   const groupName = new Map((groups.results ?? []).map((g) => [g.id, g.name]));
 
-  // 组内名次：pts > gd > gf > seed（GROUP BY e.id，pts 等聚合基于 finished 场次）
-  const standings = await env.DB.prepare(
-    `SELECT e.id, e.group_id,
-      SUM(CASE
-        WHEN m.home_entry_id = e.id AND m.score_home > m.score_away THEN 3
-        WHEN m.away_entry_id = e.id AND m.score_away > m.score_home THEN 3
-        WHEN (m.home_entry_id = e.id OR m.away_entry_id = e.id)
-          AND m.score_home = m.score_away THEN 1
-        ELSE 0 END) AS pts,
-      SUM(CASE WHEN m.home_entry_id = e.id THEN m.score_home - m.score_away
-               WHEN m.away_entry_id = e.id THEN m.score_away - m.score_home
-               ELSE 0 END) AS gd,
-      SUM(CASE WHEN m.home_entry_id = e.id THEN m.score_home
-               WHEN m.away_entry_id = e.id THEN m.score_away
-               ELSE 0 END) AS gf
-    FROM entry e
-    LEFT JOIN match m ON m.stage_id = ? AND m.status = 'finished'
-      AND (m.home_entry_id = e.id OR m.away_entry_id = e.id)
-    WHERE e.tournament_id = ? AND e.group_id IS NOT NULL
-    GROUP BY e.id
-    ORDER BY e.group_id, pts DESC, gd DESC, gf DESC, e.seed`
-  )
-    .bind(groupStage.id, tid)
-    .all<{ id: number; group_id: number }>();
+  // 组内名次：走权威积分榜（同分链可配置，与积分榜页同序）
+  const chain = await getTiebreakers(env.DB, tid);
+  const ranked = await readStandings(env.DB, groupStage.id, chain);
 
-  // rank: 组名 -> 名次 -> entry id
+  // rank: 组名 -> 名次 -> entry id（每组只取前 qualify 名）
   const rank = new Map<string, Map<number, number>>();
   const seen = new Map<number, number>();
-  for (const row of standings.results ?? []) {
-    const taken = seen.get(row.group_id) ?? 0;
-    seen.set(row.group_id, taken + 1);
+  for (const row of ranked) {
+    const taken = seen.get(row.groupId ?? 0) ?? 0;
+    seen.set(row.groupId ?? 0, taken + 1);
     if (taken + 1 > qualify) continue;
-    const name = groupName.get(row.group_id);
+    const name = row.groupId != null ? groupName.get(row.groupId) : undefined;
     if (!name) continue;
     if (!rank.has(name)) rank.set(name, new Map());
-    rank.get(name)!.set(taken + 1, row.id);
+    rank.get(name)!.set(taken + 1, row.entryId);
   }
 
   const resolve = (token: string): number => {
@@ -830,7 +809,8 @@ export async function takeRangePool(
 
   const from = src.from ?? 1;
   const to = src.to ?? src.take ?? from;
-  const ranked = await readStandings(env.DB, srcStage.id);
+  const chain = await getTiebreakers(env.DB, tid);
+  const ranked = await readStandings(env.DB, srcStage.id, chain);
   if (ranked.length === 0) {
     throw new HttpError(400, "来源阶段还没有积分榜数据，先生成并完赛它的赛程");
   }

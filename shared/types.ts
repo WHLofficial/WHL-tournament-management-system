@@ -117,6 +117,9 @@ export interface MatchEventRow {
   created_at: string;
 }
 
+// 同分决胜链的可用比较项（积分永远第一，种子位永远兜底）
+export type TiebreakerKey = "gd" | "gf" | "h2h";
+
 // ---------- 配置（存 config_json 的形状） ----------
 
 // 非首阶段声明"从上一阶段拿谁"
@@ -241,6 +244,7 @@ export interface TournamentDetailDTO {
   stages: StageDTO[];
   groups: GroupDTO[];
   entries: EntryDTO[];
+  tiebreakers?: TiebreakerKey[];
 }
 
 export interface SignupCodeResp {
