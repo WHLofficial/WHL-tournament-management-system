@@ -554,22 +554,6 @@ app.patch("/:id/stages/:stageId/entries/:entryId/group", async (c) => {
       .bind(groupId, stageId)
       .first<{ id: number; name: string }>();
     if (!group) return fail(c, 400, "小组不存在或不属于该阶段");
-
-    // 容量与抽签的容量校验对齐
-    const gcfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { group_size?: number };
-    if (gcfg.group_size) {
-      const n =
-        (
-          await c.env.DB.prepare(
-            "SELECT COUNT(*) AS n FROM entry WHERE group_id = ?"
-          )
-            .bind(groupId)
-            .first<{ n: number }>()
-        )?.n ?? 0;
-      if (n >= gcfg.group_size) {
-        return fail(c, 400, `${group.name} 组已满（每组最多 ${gcfg.group_size} 队）`);
-      }
-    }
     groupName = group.name;
   }
 
@@ -587,13 +571,31 @@ app.patch("/:id/stages/:stageId/entries/:entryId/group", async (c) => {
     }
   }
 
+  // 容量条件写进 UPDATE 的 WHERE 原子判定：并发请求同时挤同一组时只有一个能写入
+  const gcfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { group_size?: number };
+  const groupSize = gcfg.group_size ?? null;
+  const upd = await c.env.DB.prepare(
+    "UPDATE entry SET group_id = ?1 WHERE id = ?2 AND (?3 IS NULL OR ?4 IS NULL OR (SELECT COUNT(*) FROM entry WHERE group_id = ?1) < ?4)"
+  )
+    .bind(groupId, entryId, groupId, groupSize)
+    .run();
+  if (!upd.meta.changes) {
+    const name = groupName || "目标";
+    return fail(
+      c,
+      400,
+      groupSize
+        ? `${name} 组已满（每组最多 ${groupSize} 队）`
+        : `${name} 组不存在或球队状态已变化`
+    );
+  }
+
   // 挪组后原组内对阵不再成立：清掉该队在本阶段的未开打场次（与重新抽签语义一致）
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "DELETE FROM match WHERE stage_id = ? AND status = 'pending' AND (home_entry_id = ? OR away_entry_id = ?)"
-    ).bind(stageId, entryId, entryId),
-    c.env.DB.prepare("UPDATE entry SET group_id = ? WHERE id = ?").bind(groupId, entryId),
-  ]);
+  await c.env.DB.prepare(
+    "DELETE FROM match WHERE stage_id = ? AND status = 'pending' AND (home_entry_id = ? OR away_entry_id = ?)"
+  )
+    .bind(stageId, entryId, entryId)
+    .run();
   return c.json({ ok: true, groupId, groupName });
 });
 
