@@ -628,6 +628,68 @@ function StageConfigEditor({
       </span>
     );
   }
+  if (stage.kind === "group") {
+    const gcfg = stage.config as {
+      group_count?: number;
+      group_size?: number;
+      loops?: number;
+    };
+    return (
+      <span className="cfg-editor">
+        {err && <span className="error">{err}</span>}
+        <label>
+          组数
+          <input
+            key={gcfg.group_count ?? 4}
+            type="number"
+            min={2}
+            max={16}
+            defaultValue={gcfg.group_count ?? 4}
+            style={{ width: 64 }}
+            onBlur={(e) => {
+              const v = Math.min(16, Math.max(2, Math.round(Number(e.target.value) || 4)));
+              if (v === (gcfg.group_count ?? 4)) return;
+              if (
+                !window.confirm(
+                  `改动组数将清空分组（未开打的场次一并清除）并需要重新抽签，确认改成 ${v} 组？`
+                )
+              ) {
+                e.target.value = String(gcfg.group_count ?? 4);
+                return;
+              }
+              patch({ group_count: v });
+            }}
+          />
+        </label>
+        <label>
+          每组队数
+          <input
+            key={gcfg.group_size ?? 4}
+            type="number"
+            min={2}
+            max={16}
+            defaultValue={gcfg.group_size ?? 4}
+            style={{ width: 64 }}
+            onBlur={(e) => {
+              const v = Math.min(16, Math.max(2, Math.round(Number(e.target.value) || 4)));
+              if (v === (gcfg.group_size ?? 4)) return;
+              patch({ group_size: v });
+            }}
+          />
+        </label>
+        <label>
+          循环
+          <select
+            value={gcfg.loops === 2 ? "2" : "1"}
+            onChange={(e) => patch({ loops: Number(e.target.value) })}
+          >
+            <option value="1">单循环</option>
+            <option value="2">双循环</option>
+          </select>
+        </label>
+      </span>
+    );
+  }
   return (
     <span className="cfg-editor">
       {err && <span className="error">{err}</span>}

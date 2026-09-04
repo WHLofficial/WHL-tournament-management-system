@@ -312,37 +312,80 @@ async function syncStageConfigs(
     ),
   ];
 
-  if (t.format === "single_elim" || t.format === "round_robin") {
+  // 按阶段类型定向应用可改字段（不再按赛事 format 全量覆盖——
+  // 多阶段混搭时改循环赛参数不会污染小组赛配置）
+  const KEY_BY_KIND: Record<string, string[]> = {
+    elim: ["legs", "final_legs", "third_place"],
+    round_robin: ["loops"],
+    group: ["group_count", "group_size", "loops", "qualify_per_group"],
+  };
+  const merge = (existing: string | null, keys: string[]): Record<string, unknown> => {
+    const cur = (JSON.parse(existing || "{}") ?? {}) as Record<string, unknown>;
+    for (const k of keys) if (k in patch) cur[k] = patch[k];
+    return cur;
+  };
+
+  const stages = await env.DB.prepare(
+    "SELECT id, kind, config_json FROM stage WHERE tournament_id = ?"
+  )
+    .bind(tid)
+    .all<{
+      id: number;
+      kind: "elim" | "round_robin" | "group";
+      config_json: string | null;
+    }>();
+  let hasGroup = false;
+  for (const st of stages.results ?? []) {
+    const keys = KEY_BY_KIND[st.kind];
+    if (!keys) continue;
+    const merged = merge(st.config_json, keys);
+    if (st.kind === "group") {
+      hasGroup = true;
+      // 组数/出线数变化时重算跨组模板（组行重建在下面处理）
+      if ("group_count" in patch || "qualify_per_group" in patch) {
+        merged.cross = defaultCrossTemplate(
+          Number(merged.group_count ?? 4),
+          Number(merged.qualify_per_group ?? 2)
+        );
+      }
+    }
     stmts.push(
-      env.DB.prepare(
-        "UPDATE stage SET config_json = ? WHERE tournament_id = ?"
-      ).bind(JSON.stringify(cfg), tid)
+      env.DB.prepare("UPDATE stage SET config_json = ? WHERE id = ?").bind(
+        JSON.stringify(merged),
+        st.id
+      )
     );
-  } else {
-    const groupCount = Number(cfg.group_count ?? 4);
-    const qualify = Number(cfg.qualify_per_group ?? 2);
-    const cross = defaultCrossTemplate(groupCount, qualify);
-    stmts.push(
-      env.DB.prepare(
-        "UPDATE stage SET config_json = ? WHERE tournament_id = ? AND kind = 'group'"
-      ).bind(JSON.stringify({ ...cfg, cross }), tid)
-    );
-    // 淘汰阶段：只更新 source.cross，用户改过的 legs/final_legs/third_place 保留
+  }
+  // 淘汰阶段：赛事有小组赛时其跨组对阵跟随模板（纯 single_elim 没有来源，不动）
+  if (hasGroup && "group_count" in patch) {
     const elimStage = await env.DB.prepare(
       "SELECT config_json FROM stage WHERE tournament_id = ? AND kind = 'elim'"
     )
       .bind(tid)
-      .first<{ config_json: string }>();
+      .first<{ config_json: string | null }>();
     const elimCfg = (JSON.parse(elimStage?.config_json || "{}") ?? {}) as Record<string, unknown>;
+    const src = (elimCfg.source ?? {}) as Record<string, unknown>;
     stmts.push(
       env.DB.prepare(
         "UPDATE stage SET config_json = ? WHERE tournament_id = ? AND kind = 'elim'"
       ).bind(
-        JSON.stringify({ ...elimCfg, source: { cross } }),
+        JSON.stringify({
+          ...elimCfg,
+          source: {
+            ...src,
+            cross: defaultCrossTemplate(
+              Number(patch.group_count),
+              Number(patch.qualify_per_group ?? 2)
+            ),
+          },
+        }),
         tid
       )
     );
-    // 组数变化时重建小组行（分组关系一并清空，需重新抽签）
+  }
+  // 组数变化时重建小组行（分组关系一并清空，需重新抽签；该组未开赛场次级联清除）
+  if ("group_count" in patch) {
+    const groupCount = Number(patch.group_count);
     const oldCount = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM "group" g JOIN stage s ON s.id = g.stage_id
        WHERE s.tournament_id = ? AND s.kind = 'group'`
