@@ -132,13 +132,15 @@ app.get("/tournaments/:id", async (c) => {
 
 // 赛程对阵（含 live 比分的事件覆盖），与 admin 端同构
 // 公共事件视图：不暴露内部 id，side 标主/客，射手/助攻带名字。
-// side 按「场+entry」判——同一 entry 在不同场次主客不同，不能用全局 entryId 映射
+// side 按「场+entry」判——同一 entry 在不同场次主客不同，不能用全局 entryId 映射。
+// 跨赛事复用（/live、/recent）：按 match id 过滤，与赛事无关
 async function fetchPublicEvents(
   db: D1Database,
-  tid: number,
   matchRows: { id: number; home_entry_id: number | null; away_entry_id: number | null }[],
 ): Promise<Map<number, PublicMatchEventDTO[]>> {
-  const matchIds = new Set(matchRows.map((r) => r.id));
+  const ids = [...new Set(matchRows.map((r) => r.id))];
+  const byMatch = new Map<number, PublicMatchEventDTO[]>();
+  if (ids.length === 0) return byMatch;
   const sideByEvent = new Map<string, "home" | "away">();
   for (const r of matchRows) {
     if (r.home_entry_id !== null) sideByEvent.set(`${r.id}:${r.home_entry_id}`, "home");
@@ -149,22 +151,18 @@ async function fetchPublicEvents(
       `SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,
          p.name AS player_name, ap.name AS assist_player_name
        FROM match_event me
-       JOIN match m ON m.id = me.match_id
-       JOIN stage s ON s.id = m.stage_id
        LEFT JOIN player p ON p.id = me.player_id
        LEFT JOIN player ap ON ap.id = me.assist_player_id
-       WHERE s.tournament_id = ?
+       WHERE me.match_id IN (${ids.map(() => "?").join(",")})
        ORDER BY me.match_id, COALESCE(me.minute, -1), me.id`
     )
-    .bind(tid)
+    .bind(...ids)
     .all<{
       id: number; match_id: number; type: PublicMatchEventDTO["type"];
       minute: number | null; entry_id: number | null;
       player_name: string | null; assist_player_name: string | null;
     }>();
-  const byMatch = new Map<number, PublicMatchEventDTO[]>();
   for (const r of rows.results ?? []) {
-    if (!matchIds.has(r.match_id)) continue;
     const side = r.entry_id !== null ? sideByEvent.get(`${r.match_id}:${r.entry_id}`) : undefined;
     if (!side) continue;
     const list = byMatch.get(r.match_id) ?? [];
@@ -267,7 +265,7 @@ app.get("/tournaments/:id/matches", async (c) => {
     list.some((r) => r.status === "live")
       ? await fetchLiveScores(c.env.DB, tid, sideByEvent)
       : new Map<number, { home: number; away: number }>();
-  const eventsByMatch = await fetchPublicEvents(c.env.DB, tid, list);
+  const eventsByMatch = await fetchPublicEvents(c.env.DB, list);
 
   const matches: MatchDTO[] = list.map((r) => {
     const live = liveScores.get(r.id);
@@ -340,7 +338,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
     row.status === "live"
       ? await fetchLiveScores(c.env.DB, tid, sideByEvent)
       : new Map<number, { home: number; away: number }>();
-  const eventsByMatch = await fetchPublicEvents(c.env.DB, tid, [row]);
+  const eventsByMatch = await fetchPublicEvents(c.env.DB, [row]);
   const live = liveScores.get(row.id);
   const match: MatchDTO = {
     id: row.id,
@@ -462,6 +460,10 @@ app.get("/live", async (c) => {
     }
   }
 
+  const eventsByMatch = await fetchPublicEvents(
+    c.env.DB,
+    list.map((r) => ({ id: r.match_id, home_entry_id: r.home_entry_id, away_entry_id: r.away_entry_id })),
+  );
   const live: LiveDTO[] = list.map((r) => {
     const sc = scores.get(r.match_id) ?? { home: 0, away: 0 };
     return {
@@ -474,6 +476,7 @@ app.get("/live", async (c) => {
       awayTeamName: r.away_team_name,
       scoreHome: sc.home,
       scoreAway: sc.away,
+      events: eventsByMatch.get(r.match_id) ?? [],
     };
   });
   return c.json({ live });
@@ -484,6 +487,7 @@ app.get("/recent", async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name,
        m.id AS match_id, s.kind AS stage_kind, m.round,
+       m.home_entry_id, m.away_entry_id,
        ht.name AS home_team_name, at.name AS away_team_name,
        m.score_home, m.score_away, m.finished_at
      FROM match m
@@ -500,10 +504,16 @@ app.get("/recent", async (c) => {
   ).all<{
     tournament_id: number; tournament_name: string;
     match_id: number; stage_kind: "elim" | "round_robin" | "group"; round: number;
+    home_entry_id: number | null; away_entry_id: number | null;
     home_team_name: string; away_team_name: string;
     score_home: number; score_away: number; finished_at: string | null;
   }>();
-  const recent: RecentDTO[] = (rows.results ?? []).map((r) => ({
+  const list = rows.results ?? [];
+  const eventsByMatch = await fetchPublicEvents(
+    c.env.DB,
+    list.map((r) => ({ id: r.match_id, home_entry_id: r.home_entry_id, away_entry_id: r.away_entry_id })),
+  );
+  const recent: RecentDTO[] = list.map((r) => ({
     tournamentId: r.tournament_id,
     tournamentName: r.tournament_name,
     matchId: r.match_id,
@@ -514,6 +524,7 @@ app.get("/recent", async (c) => {
     scoreHome: r.score_home,
     scoreAway: r.score_away,
     finishedAt: r.finished_at,
+    events: eventsByMatch.get(r.match_id) ?? [],
   }));
   return c.json({ recent });
 });

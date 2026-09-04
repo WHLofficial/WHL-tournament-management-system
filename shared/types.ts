@@ -308,6 +308,7 @@ export interface RecentDTO {
   scoreHome: number;
   scoreAway: number;
   finishedAt: string | null;
+  events: PublicMatchEventDTO[];
 }
 
 export interface LiveDTO {
@@ -320,6 +321,7 @@ export interface LiveDTO {
   awayTeamName: string;
   scoreHome: number;
   scoreAway: number;
+  events: PublicMatchEventDTO[];
 }
 
 export interface MatchEventDTO {

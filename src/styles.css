@@ -390,7 +390,9 @@ button.btn-ghost:hover:not(:disabled) {
 .round-head { margin: 10px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .match-row { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; background: #fff; }
 .match-row.mr-live { border-color: var(--live); box-shadow: inset 3px 0 0 var(--live); }
-.mr-line { display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; }
+.mr-line { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; }
+/* 赛程行徽标骑在行框右上，不挤占主客/比分 */
+.mr-line .m-badge { position: absolute; top: -9px; right: 8px; }
 .mr-team { flex: 1; min-width: 90px; text-align: right; }
 .mr-team.mr-away { text-align: left; }
 .mr-win { font-weight: 700; }
@@ -850,10 +852,17 @@ button.add-stage {
   padding: 20px 16px;
 }
 .md-line {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+/* 「进行中」徽标绝对定位挂右上，不挤占主客/比分的居中布局 */
+.md-line .m-badge {
+  position: absolute;
+  top: -10px;
+  right: 0;
 }
 .md-team {
   flex: 1;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
+import { EventTimeline } from "../components/EventTimeline";
 import type {
   LiveDTO,
   RecentDTO,
@@ -88,6 +89,7 @@ export function Home() {
                   </span>{" "}
                   {v.awayTeamName}
                 </span>
+                <EventTimeline events={v.events} />
               </Link>
             ))}
           </div>
@@ -134,6 +136,7 @@ export function Home() {
                   </span>{" "}
                   {r.awayTeamName}
                 </span>
+                <EventTimeline events={r.events} />
               </Link>
             ))}
           </div>
