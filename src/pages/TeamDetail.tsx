@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
+import { TeamLogo } from "../components/TeamLogo";
 import type { PlayerDTO } from "../../shared/types";
 
 interface TeamDetail {
-  team: { id: number; name: string };
+  team: { id: number; name: string; logoUrl: string | null };
   players: PlayerDTO[];
 }
 
@@ -101,6 +102,28 @@ export function TeamDetailPage() {
       window.alert(err instanceof Error ? err.message : "解绑失败");
     }
   }
+
+  async function uploadLogo(file: File) {
+    try {
+      await api(`/api/admin/teams/${teamId}/logo`, {
+        method: "PUT",
+        body: file,
+        contentType: file.type || "application/octet-stream",
+      });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "上传失败");
+    }
+  }
+
+  async function removeLogo() {
+    try {
+      await api(`/api/admin/teams/${teamId}/logo`, { method: "DELETE" });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "删除失败");
+    }
+  }
   useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -189,6 +212,32 @@ export function TeamDetailPage() {
             <Link to="/admin/teams">← 球队库</Link>
           </p>
           <h2>{data.team.name}</h2>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>队徽</h3>
+        <div className="logo-row">
+          <TeamLogo name={data.team.name} url={data.team.logoUrl} size={56} />
+          <label className="btn btn-ghost logo-upload-btn">
+            {data.team.logoUrl ? "更换队徽" : "上传队徽"}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void uploadLogo(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {data.team.logoUrl && (
+            <button type="button" className="btn btn-ghost" onClick={() => void removeLogo()}>
+              删除
+            </button>
+          )}
+          <span className="muted">png / jpg / webp，不超过 1MB；没传就显示首字色块</span>
         </div>
       </div>
 

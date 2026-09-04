@@ -313,6 +313,28 @@ function SettingsTab({
     }
   }
 
+  async function uploadCover(file: File) {
+    try {
+      await api(`/api/admin/tournaments/${t.id}/cover`, {
+        method: "PUT",
+        body: file,
+        contentType: file.type || "application/octet-stream",
+      });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "上传失败");
+    }
+  }
+
+  async function removeCover() {
+    try {
+      await api(`/api/admin/tournaments/${t.id}/cover`, { method: "DELETE" });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "删除失败");
+    }
+  }
+
   return (
     <div className="card">
       <h3>基本信息</h3>
@@ -332,6 +354,34 @@ function SettingsTab({
         {error && <p className="error-msg">{error}</p>}
         <SubmitButton busy={busy}>保存</SubmitButton>
       </form>
+      <hr className="divider" />
+      <h3>封面图</h3>
+      <div className="logo-row">
+        {t.coverUrl ? (
+          <img className="cover-thumb" src={t.coverUrl} alt={`${t.name} 封面`} />
+        ) : (
+          <span className="cover-thumb cover-empty">暂无封面</span>
+        )}
+        <label className="btn btn-ghost logo-upload-btn">
+          {t.coverUrl ? "更换封面" : "上传封面"}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void uploadCover(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        {t.coverUrl && (
+          <button type="button" className="btn btn-ghost" onClick={() => void removeCover()}>
+            删除
+          </button>
+        )}
+        <span className="muted">显示在赛事列表与公开页头部；png / jpg / webp，不超过 1MB</span>
+      </div>
       <hr className="divider" />
       <h3>危险操作</h3>
       <p className="muted">只能删除草稿或报名中的赛事；进行中/已归档的赛事会永久保留。</p>

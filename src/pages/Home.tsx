@@ -56,6 +56,9 @@ export function Home() {
       <div className="home-list">
         {list?.map((t) => (
           <Link to={`/t/${t.id}`} key={t.id} className="home-card">
+            {t.coverUrl && (
+              <img className="home-card-cover" src={t.coverUrl} alt={`${t.name} 封面`} />
+            )}
             <div className="home-card-head">
               <strong>{t.name}</strong>
               <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>

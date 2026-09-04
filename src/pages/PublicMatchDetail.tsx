@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { api } from "../api";
 import { MatchScore } from "../components/MatchScore";
 import { EventTimeline } from "../components/EventTimeline";
+import { TeamLogo } from "../components/TeamLogo";
 import type { MatchDTO } from "../../shared/types";
 
 const STAGE_TITLE: Record<string, string> = {
@@ -60,11 +61,25 @@ export default function PublicMatchDetail() {
           <div className={`card md-card md-${m.status}`}>
             <div className="md-line">
               <span className={`md-team${m.winnerEntryId === m.homeEntryId ? " md-win" : ""}`}>
-                {m.homeTeamName ?? "待定"}
+                {m.homeTeamName ? (
+                  <>
+                    <TeamLogo name={m.homeTeamName} url={m.homeLogoUrl} size={22} />
+                    {m.homeTeamName}
+                  </>
+                ) : (
+                  "待定"
+                )}
               </span>
               <MatchScore m={m} agg={null} />
               <span className={`md-team md-away${m.winnerEntryId === m.awayEntryId ? " md-win" : ""}`}>
-                {m.awayTeamName ?? "待定"}
+                {m.awayTeamName ? (
+                  <>
+                    {m.awayTeamName}
+                    <TeamLogo name={m.awayTeamName} url={m.awayLogoUrl} size={22} />
+                  </>
+                ) : (
+                  "待定"
+                )}
               </span>
               {m.status === "live" && <span className="m-badge ms-live">进行中</span>}
             </div>

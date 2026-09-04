@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { TeamLogo } from "../components/TeamLogo";
 import type { StageStandingDTO } from "../../shared/types";
 
 // 积分榜：小组/循环阶段各一张表，行序已由后端排好（积分→净胜→进球→相互战绩）。
@@ -53,7 +54,12 @@ export function StandingsTables({ standings }: { standings: StageStandingDTO[] }
                   {g.rows.map((r) => (
                     <tr key={r.entryId}>
                       <td className="num">{r.rank}</td>
-                      <td className="team-col">{r.teamName}</td>
+                      <td className="team-col">
+                        <span className="cell-with-logo">
+                          <TeamLogo name={r.teamName} url={r.teamLogoUrl} size={20} />
+                          {r.teamName}
+                        </span>
+                      </td>
                       <td className="num">{r.played}</td>
                       <td className="num">{r.won}</td>
                       <td className="num">{r.drawn}</td>

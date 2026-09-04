@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
+import { TeamLogo } from "../components/TeamLogo";
 import type { TeamDTO } from "../../shared/types";
 
 export function AdminTeams() {
@@ -114,7 +115,10 @@ export function AdminTeams() {
             {teams.map((t) => (
               <tr key={t.id}>
                 <td>
-                  <Link to={`/admin/teams/${t.id}`}>{t.name}</Link>
+                  <span className="cell-with-logo">
+                    <TeamLogo name={t.name} url={t.logoUrl} size={24} />
+                    <Link to={`/admin/teams/${t.id}`}>{t.name}</Link>
+                  </span>
                 </td>
                 <td>{t.playerCount}</td>
                 <td>{t.entryCount}</td>

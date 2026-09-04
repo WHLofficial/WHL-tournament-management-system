@@ -6,6 +6,7 @@ import { StandingsTables } from "./StandingsTab";
 import { elimRoundName, stageTitle } from "./MatchesTab";
 import { MatchScore, computeAgg } from "../components/MatchScore";
 import { EventTimeline } from "../components/EventTimeline";
+import { TeamLogo } from "../components/TeamLogo";
 import { Toplists } from "../components/Toplists";
 import { StatsDashboard } from "../components/StatsDashboard";
 import type {
@@ -95,6 +96,11 @@ export default function PublicTournament() {
       <p className="crumb">
         <Link to="/">← 赛事列表</Link>
       </p>
+      {t.coverUrl && (
+        <div className="cover-banner">
+          <img src={t.coverUrl} alt={`${t.name} 封面`} />
+        </div>
+      )}
       <header className="pub-head">
         <h1>{t.name}</h1>
         <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
@@ -204,7 +210,10 @@ export default function PublicTournament() {
                     {entriesByGroup.get(k)!.map((e) => (
                       <li key={e.id}>
                         <span className="team-seed">#{e.seed}</span>
-                        {e.teamName}
+                        <span className="cell-with-logo">
+                          <TeamLogo name={e.teamName} url={e.teamLogoUrl} size={22} />
+                          {e.teamName}
+                        </span>
                         <span className="muted">（{e.playerCount} 名球员）</span>
                       </li>
                     ))}
@@ -234,11 +243,25 @@ function PublicMatchRow({
       <Link to={`/t/${tid}/match/${m.id}`} className="mr-link">
         <div className="mr-line">
           <span className={`mr-team${m.winnerEntryId === m.homeEntryId ? " mr-win" : ""}`}>
-            {m.homeTeamName ?? "待定"}
+            {m.homeTeamName ? (
+              <>
+                <TeamLogo name={m.homeTeamName} url={m.homeLogoUrl} size={18} />
+                {m.homeTeamName}
+              </>
+            ) : (
+              "待定"
+            )}
           </span>
           <MatchScore m={m} agg={agg} />
           <span className={`mr-team mr-away${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
-            {m.awayTeamName ?? "待定"}
+            {m.awayTeamName ? (
+              <>
+                {m.awayTeamName}
+                <TeamLogo name={m.awayTeamName} url={m.awayLogoUrl} size={18} />
+              </>
+            ) : (
+              "待定"
+            )}
           </span>
           {m.status === "live" && <span className="m-badge ms-live">进行中</span>}
         </div>

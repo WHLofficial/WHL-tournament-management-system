@@ -11,12 +11,17 @@ export class ApiError extends Error {
 
 export async function api<T>(
   path: string,
-  opts?: { method?: string; body?: unknown },
+  opts?: { method?: string; body?: unknown; contentType?: string },
 ): Promise<T> {
+  const raw = opts?.body instanceof Blob;
   const res = await fetch(path, {
     method: opts?.method ?? "GET",
-    headers: opts?.body !== undefined ? { "Content-Type": "application/json" } : undefined,
-    body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    headers:
+      opts?.body !== undefined
+        ? { "Content-Type": opts.contentType ?? "application/json" }
+        : undefined,
+    body:
+      opts?.body === undefined ? undefined : raw ? (opts.body as Blob) : JSON.stringify(opts.body),
     credentials: "same-origin",
   });
   const data: unknown = await res.json().catch(() => null);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { MatchScore, computeAgg } from "../components/MatchScore";
+import { TeamLogo } from "../components/TeamLogo";
 import type {
   EntryDTO,
   MatchDTO,
@@ -191,11 +192,25 @@ function MatchRow({
     <div className={`match-row mr-${m.status}`}>
       <div className="mr-line">
         <span className={`mr-team${m.winnerEntryId === m.homeEntryId ? " mr-win" : ""}`}>
-          {m.homeTeamName ?? "待定"}
+          {m.homeTeamName ? (
+            <>
+              <TeamLogo name={m.homeTeamName} url={m.homeLogoUrl} size={18} />
+              {m.homeTeamName}
+            </>
+          ) : (
+            "待定"
+          )}
         </span>
         <MatchScore m={m} agg={agg} />
         <span className={`mr-team mr-away${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
-          {m.awayTeamName ?? "待定"}
+          {m.awayTeamName ? (
+            <>
+              {m.awayTeamName}
+              <TeamLogo name={m.awayTeamName} url={m.awayLogoUrl} size={18} />
+            </>
+          ) : (
+            "待定"
+          )}
         </span>
         <span className={`m-badge ms-${m.status}`}>{MATCH_STATUS[m.status]}</span>
         <span className="mr-actions">
