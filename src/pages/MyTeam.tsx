@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Page } from "../components/ui";
+import { useAuth } from "../auth";
 import type { PlayerDTO } from "../../shared/types";
 
 // 我的球队：教练视角只读页；未绑定时给出认证码绑定入口。
@@ -26,6 +27,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default function MyTeam() {
+  const { user } = useAuth();
   const [team, setTeam] = useState<MyTeam | null | undefined>(undefined);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -62,7 +64,16 @@ export default function MyTeam() {
 
       {team === undefined && <p className="muted">加载中…</p>}
 
-      {team === null && (
+      {team === null && user?.locked && (
+        <div className="card">
+          <h3>观众账号</h3>
+          <p className="muted">
+            你的账号是观众号，暂时不能绑定球队。请联系管理员解锁，解锁后凭球队认证码绑队。
+          </p>
+        </div>
+      )}
+
+      {team === null && !user?.locked && (
         <div className="card">
           <h3>绑定球队</h3>
           <p className="muted">
