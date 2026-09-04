@@ -84,8 +84,19 @@ interface FinishedRow {
   home_team_name: string;
   away_team_id: number;
   away_team_name: string;
-  stage_name: string;
+  stage_kind: string;
   stage_order: number;
+}
+
+const KIND_LABEL: Record<string, string> = {
+  elim: "淘汰赛",
+  round_robin: "循环赛",
+  group: "小组赛",
+};
+
+// 阶段显示名：淘汰赛 / 循环赛，多阶段时加（第N阶段）后缀
+function stageLabel(kind: string, order: number): string {
+  return KIND_LABEL[kind] ?? `第${order}阶段`;
 }
 
 interface SideAgg {
@@ -145,7 +156,7 @@ async function fetchFinished(db: D1Database, tid: number) {
       `SELECT m.id, m.round, m.score_home, m.score_away,
          he.team_id AS home_team_id, ht.name AS home_team_name,
          ae.team_id AS away_team_id, at.name AS away_team_name,
-         s.name AS stage_name, s.sort_order AS stage_order
+         s.kind AS stage_kind, s.sort_order AS stage_order
        ${FINISHED_SQL}`
     )
     .bind(tid)
@@ -299,7 +310,7 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
     awayName: r.away_team_name,
     scoreHome: r.score_home,
     scoreAway: r.score_away,
-    stageName: r.stage_name,
+    stageName: stageLabel(r.stage_kind, r.stage_order),
     round: r.round,
     stageOrder: r.stage_order,
   }));
