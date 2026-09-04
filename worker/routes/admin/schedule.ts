@@ -12,6 +12,7 @@ import {
   shuffle,
   type PlanMatch,
 } from "../../lib/seeding";
+import { readStandings } from "../../lib/standings";
 
 const app = new Hono<AppEnv>();
 app.use("*", requireAdmin);
@@ -86,7 +87,7 @@ type AddStageBody = {
   loops?: number;
   groupCount?: number;
   qualifyPerGroup?: number;
-  source?: { take?: number; cross?: string[] };
+  source?: { take?: number; from?: number; to?: number; fromStage?: number; cross?: string[] };
 };
 
 app.post("/:id/stages", async (c) => {
@@ -114,8 +115,13 @@ app.post("/:id/stages", async (c) => {
     return fail(c, 400, "分组赛只能作为第一阶段");
   }
   const take = typeof body.source?.take === "number" ? Math.floor(body.source.take) : null;
+  const rangeFrom =
+    typeof body.source?.from === "number" ? Math.floor(body.source.from) : null;
+  const rangeTo = typeof body.source?.to === "number" ? Math.floor(body.source.to) : null;
+  const fromStage =
+    typeof body.source?.fromStage === "number" ? Math.floor(body.source.fromStage) : null;
   const cross = body.source?.cross?.map((s) => String(s).trim()).filter(Boolean) ?? [];
-  if ((take !== null || cross.length > 0) && isFirst) {
+  if ((take !== null || rangeFrom !== null || cross.length > 0) && isFirst) {
     return fail(c, 400, "第一阶段直接使用全部报名队，不需要取人规则");
   }
   if (body.kind !== "elim" && cross.length > 0) {
@@ -124,8 +130,39 @@ app.post("/:id/stages", async (c) => {
   if (take !== null && (take < 2 || take > 64)) {
     return fail(c, 400, "取人名额需在 2 到 64 之间");
   }
+  // 名次区间取人：from/to 至少给一对，区间至少覆盖 2 个名次
+  if ((rangeFrom !== null || rangeTo !== null) && (rangeFrom === null || rangeTo === null)) {
+    return fail(c, 400, "名次区间需要同时填起点和终点");
+  }
+  if (rangeFrom !== null && rangeTo !== null) {
+    if (rangeFrom < 1) return fail(c, 400, "名次区间起点从第 1 名开始");
+    if (rangeTo - rangeFrom + 1 < 2) {
+      return fail(c, 400, "名次区间至少要覆盖 2 个名次，否则凑不出一场比赛");
+    }
+    if (rangeTo > 128) return fail(c, 400, "名次区间终点不能超过 128");
+  }
+  if (fromStage !== null) {
+    const src = await c.env.DB.prepare(
+      "SELECT id, kind, sort_order FROM stage WHERE id = ? AND tournament_id = ?"
+    )
+      .bind(fromStage, tid)
+      .first<{ id: number; kind: string; sort_order: number }>();
+    if (!src) return fail(c, 400, "取人来源阶段不存在");
+    if (isFirst || src.sort_order >= sortOrder) {
+      return fail(c, 400, "取人来源阶段必须排在当前阶段之前");
+    }
+    if (src.kind === "elim") {
+      return fail(c, 400, "取人来源不能是淘汰赛阶段（淘汰赛没有名次）");
+    }
+  }
 
-  const source = cross.length > 0 ? { cross } : take !== null ? { take } : undefined;
+  const source = cross.length > 0
+    ? { cross }
+    : take !== null
+      ? { take }
+      : rangeFrom !== null && rangeTo !== null
+        ? { from: rangeFrom, to: rangeTo, ...(fromStage !== null ? { fromStage } : {}) }
+        : undefined;
 
   let config: Record<string, unknown>;
   if (body.kind === "elim") {
@@ -230,7 +267,7 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       legs?: number;
       final_legs?: number;
       third_place?: boolean;
-      source?: { cross?: string | string[]; take?: number };
+      source?: { cross?: string | string[]; take?: number; from?: number; to?: number; fromStage?: number };
     };
     const rawCross = cfg.source?.cross;
     // cross 兼容 string[]（正常存储形态）与逗号分隔 string
@@ -252,11 +289,11 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
         if (e instanceof HttpError) return fail(c, e.status, e.message);
         throw e;
       }
-    } else if (cfg.source?.take) {
-      // topN：从上一阶段积分榜取前 N 名按名次设种子
+    } else if (cfg.source?.take || cfg.source?.from != null) {
+      // 名次取人：从来源阶段积分榜取前 N 名（take）或第 from..to 名，按名次设种子
       let pool: EntryRow[];
       try {
-        pool = await topNPool(env, tid, stageId, cfg.source.take);
+        pool = await takeRangePool(env, tid, stageId, cfg.source);
       } catch (e) {
         if (e instanceof HttpError) return fail(c, e.status, e.message);
         throw e;
@@ -313,12 +350,12 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
   } else if (stage.kind === "round_robin") {
     const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as {
       loops?: number;
-      source?: { take?: number };
+      source?: { take?: number; from?: number; to?: number; fromStage?: number };
     };
     let poolList = list;
-    if (cfg.source?.take) {
+    if (cfg.source?.take || cfg.source?.from != null) {
       try {
-        poolList = await topNPool(env, tid, stageId, cfg.source.take);
+        poolList = await takeRangePool(env, tid, stageId, cfg.source);
       } catch (e) {
         if (e instanceof HttpError) return fail(c, e.status, e.message);
         throw e;
@@ -743,76 +780,82 @@ export async function buildCrossStagePlan(
   return buildCrossPlan(pairs, opts);
 }
 
-// ---------- topN 取人 ----------
+// ---------- 名次取人 ----------
 
-// 某 stage 完赛名次前 N 名（pts→gd→gf→seed，与积分榜同序；live 聚合不过 standing 表）
-async function topNEntries(
-  env: { DB: D1Database },
-  stageId: number,
-  tid: number,
-  n: number
-): Promise<EntryRow[]> {
-  const rows = await env.DB.prepare(
-    `SELECT e.id FROM entry e
-     LEFT JOIN match m ON m.stage_id = ? AND m.status = 'finished'
-       AND (m.home_entry_id = e.id OR m.away_entry_id = e.id)
-     WHERE e.tournament_id = ?
-     GROUP BY e.id
-     ORDER BY
-       SUM(CASE
-         WHEN m.home_entry_id = e.id AND m.score_home > m.score_away THEN 3
-         WHEN m.away_entry_id = e.id AND m.score_away > m.score_home THEN 3
-         WHEN (m.home_entry_id = e.id OR m.away_entry_id = e.id)
-           AND m.score_home = m.score_away THEN 1
-         ELSE 0 END) DESC,
-       SUM(CASE WHEN m.home_entry_id = e.id THEN m.score_home - m.score_away
-                WHEN m.away_entry_id = e.id THEN m.score_away - m.score_home
-                ELSE 0 END) DESC,
-       SUM(CASE WHEN m.home_entry_id = e.id THEN m.score_home
-                WHEN m.away_entry_id = e.id THEN m.score_away
-                ELSE 0 END) DESC,
-       e.seed
-     LIMIT ?`
-  )
-    .bind(stageId, tid, n)
-    .all<{ id: number }>();
-  return (rows.results ?? []).map((r) => ({ id: r.id, seed: null, group_id: null }));
-}
-
-// topN 前置校验：上一阶段必须存在、非淘汰赛、且已全部完赛
-async function topNPool(
+// 名次区间取人：从来源阶段（source.fromStage 指定，缺省 = 上一阶段）的积分榜取
+// 第 from..to 名（含端点）。排名读权威 standing 表（含扣分与相互战绩），与积分榜页同序。
+// 返回按名次排列的 EntryRow[]，pool 内 seed = 名次（区间内第 1 名 → seed 1）。
+export async function takeRangePool(
   env: { DB: D1Database },
   tid: number,
   stageId: number,
-  take: number
+  src: { take?: number; from?: number; to?: number; fromStage?: number }
 ): Promise<EntryRow[]> {
-  const prev = await env.DB.prepare(
-    `SELECT id, kind FROM stage
-     WHERE tournament_id = ?
-       AND sort_order < (SELECT sort_order FROM stage WHERE id = ?)
-     ORDER BY sort_order DESC LIMIT 1`
-  )
-    .bind(tid, stageId)
-    .first<{ id: number; kind: string }>();
-  if (!prev) throw new HttpError(400, "该阶段是第一阶段，不能配置取人规则");
-  if (prev.kind === "elim") {
-    throw new HttpError(400, "取人规则需要上一阶段是循环赛或小组赛（淘汰赛没有名次）");
+  const cur = await env.DB.prepare("SELECT sort_order FROM stage WHERE id = ?")
+    .bind(stageId)
+    .first<{ sort_order: number }>();
+  if (!cur) throw new HttpError(404, "阶段不存在");
+
+  let srcStage: { id: number; kind: string } | null;
+  if (src.fromStage) {
+    srcStage = await env.DB.prepare(
+      "SELECT id, kind FROM stage WHERE id = ? AND tournament_id = ? AND sort_order < ?"
+    )
+      .bind(src.fromStage, tid, cur.sort_order)
+      .first<{ id: number; kind: string }>();
+    if (!srcStage) throw new HttpError(400, "取人来源阶段不存在");
+  } else {
+    srcStage = await env.DB.prepare(
+      `SELECT id, kind FROM stage
+       WHERE tournament_id = ?
+         AND sort_order < (SELECT sort_order FROM stage WHERE id = ?)
+       ORDER BY sort_order DESC LIMIT 1`
+    )
+      .bind(tid, stageId)
+      .first<{ id: number; kind: string }>();
+    if (!srcStage) throw new HttpError(400, "该阶段是第一阶段，不能配置取人规则");
+  }
+  if (srcStage.kind === "elim") {
+    throw new HttpError(400, "取人来源不能是淘汰赛阶段（淘汰赛没有名次）");
   }
   const st = await env.DB.prepare(
     "SELECT status, COUNT(*) AS n FROM match WHERE stage_id = ? GROUP BY status"
   )
-    .bind(prev.id)
+    .bind(srcStage.id)
     .all<{ status: string; n: number }>();
   const byStatus = new Map((st.results ?? []).map((r) => [r.status, r.n]));
   if ((byStatus.get("pending") ?? 0) + (byStatus.get("live") ?? 0) > 0 || !byStatus.get("finished")) {
-    throw new HttpError(400, "上一阶段尚未全部完赛，还不能按名次取人生成");
+    throw new HttpError(400, "取人来源阶段尚未全部完赛，还不能按名次取人生成");
   }
-  return topNEntries(env, prev.id, tid, take);
+
+  const from = src.from ?? 1;
+  const to = src.to ?? src.take ?? from;
+  const ranked = await readStandings(env.DB, srcStage.id);
+  if (ranked.length === 0) {
+    throw new HttpError(400, "来源阶段还没有积分榜数据，先生成并完赛它的赛程");
+  }
+  if (from < 1 || to < from) {
+    throw new HttpError(400, "名次区间不合法");
+  }
+  if (to > ranked.length) {
+    throw new HttpError(
+      400,
+      `来源阶段共 ${ranked.length} 支队，取不到第 ${from} 到第 ${to} 名`
+    );
+  }
+  return ranked.slice(from - 1, to).map((r, i) => ({
+    id: r.entryId,
+    seed: i + 1,
+    group_id: r.groupId,
+  }));
 }
 
 // ---------- 收官自动晋级 ----------
-// 上阶段全部完赛时，按下一阶段的取人规则（cross 模板 / topN）自动生成其首轮赛程。
-// 返回待执行的 INSERT 语句（调用方与积分重算合并为一个 batch）；无事发生则返回空数组。
+// 某阶段全部完赛时，扫描其后所有尚未生成场次的阶段：凡"生效取人来源"正是刚完赛
+// 这一阶段的（fromStage 指定，或默认取紧邻上一阶段），就按其规则自动生成赛程。
+// 这样并列阶段（如第 1-4 名进 B、第 5-8 名进 C，都取自 A）会在 A 收官时同时生成。
+// cross 模板沿用旧语义：只由紧邻上一阶段收官触发（来源组在 buildCrossStagePlan 内解析）。
+// 返回待执行的 INSERT 语句（调用方与积分重算合并为一个 batch）；无事发生返回空数组。
 export async function buildAutoFillStmts(
   env: { DB: D1Database },
   tid: number,
@@ -832,94 +875,131 @@ export async function buildAutoFillStmts(
     .first<{ id: number; kind: string; sort_order: number }>();
   if (!prev) return [];
 
-  const next = await env.DB.prepare(
-    "SELECT id, kind, config_json FROM stage WHERE tournament_id = ? AND sort_order > ? ORDER BY sort_order LIMIT 1"
-  )
-    .bind(tid, prev.sort_order)
-    .first<{ id: number; kind: string; config_json: string | null }>();
-  if (!next) return [];
-  const hasAny = await env.DB.prepare("SELECT COUNT(*) AS n FROM match WHERE stage_id = ?")
-    .bind(next.id)
-    .first<{ n: number }>();
-  if ((hasAny?.n ?? 0) > 0) return [];
+  const stages = (
+    await env.DB.prepare(
+      "SELECT id, kind, sort_order, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order"
+    )
+      .bind(tid)
+      .all<StageRow>()
+  ).results ?? [];
 
-  const cfg = (JSON.parse(next.config_json || "{}") ?? {}) as {
-    loops?: number;
-    legs?: number;
-    final_legs?: number;
-    third_place?: boolean;
-    source?: { take?: number; cross?: string[] | string };
-  };
-  const raw = cfg.source?.cross;
-  const tokens = Array.isArray(raw)
-    ? raw.map((s) => String(s).trim()).filter(Boolean)
-    : typeof raw === "string"
-      ? raw.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
-      : [];
-  const take = cfg.source?.take;
-  const planOpts = {
-    legs: (cfg.legs === 2 ? 2 : 1) as 1 | 2,
-    finalLegs: (cfg.final_legs === 2 ? 2 : cfg.final_legs === 1 ? 1 : undefined) as 1 | 2 | undefined,
-    thirdPlace: !!cfg.third_place,
-  };
+  const immediatePrevOf = (sortOrder: number) =>
+    [...stages]
+      .filter((s) => s.sort_order < sortOrder)
+      .sort((a, b) => b.sort_order - a.sort_order)[0] ?? null;
 
   const stmts: D1PreparedStatement[] = [];
-  const slotOf = new Map<number, number>(); // RR 计划无 slot，按轮内自增；elim 计划自带
-  const pushPlan = (
-    matches: Array<{
-      round: number;
-      slot?: number;
-      leg?: number | null;
-      home: number | null;
-      away: number | null;
-      note?: string | null;
-    }>,
-    direct: boolean,
-    pool: EntryRow[]
-  ) => {
-    for (const pm of matches) {
-      const slot = pm.slot ?? (slotOf.get(pm.round) ?? 0) + 1;
-      slotOf.set(pm.round, slot);
-      const home = direct
-        ? pm.home
-        : pm.home !== null && pm.home <= pool.length
-          ? pool[pm.home - 1].id
-          : null;
-      const away = direct
-        ? pm.away
-        : pm.away !== null && pm.away <= pool.length
-          ? pool[pm.away - 1].id
-          : null;
-      stmts.push(
-        env.DB.prepare(
-          `INSERT INTO match (stage_id, round, slot, leg, home_entry_id, away_entry_id, winner_entry_id, note)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(
-          next.id,
-          pm.round,
-          slot,
-          pm.leg ?? null,
-          home,
-          away,
-          home != null && away == null ? home : null,
-          pm.note ?? null
-        )
-      );
-    }
-  };
 
-  if (tokens.length > 0 && next.kind === "elim") {
-    const plan = await buildCrossStagePlan(env, tid, next.id, tokens, planOpts);
-    pushPlan(plan.matches, true, []);
-    return stmts;
-  }
-  if (take && take >= 2) {
-    if (prev.kind === "elim") return []; // 淘汰赛无名次可取；手动生成按钮会给明确报错
-    const pool = await topNEntries(env, prev.id, tid, take);
-    if (pool.length < 2) return [];
+  for (const next of stages) {
+    if (next.sort_order <= prev.sort_order) continue;
+    const hasAny = await env.DB.prepare("SELECT COUNT(*) AS n FROM match WHERE stage_id = ?")
+      .bind(next.id)
+      .first<{ n: number }>();
+    if ((hasAny?.n ?? 0) > 0) continue;
+
+    const cfg = (JSON.parse(next.config_json || "{}") ?? {}) as {
+      loops?: number;
+      legs?: number;
+      final_legs?: number;
+      third_place?: boolean;
+      source?: { take?: number; from?: number; to?: number; fromStage?: number; cross?: string[] | string };
+    };
+    const planOpts = {
+      legs: (cfg.legs === 2 ? 2 : 1) as 1 | 2,
+      finalLegs: (cfg.final_legs === 2 ? 2 : cfg.final_legs === 1 ? 1 : undefined) as 1 | 2 | undefined,
+      thirdPlace: !!cfg.third_place,
+    };
+    const slotOf = new Map<number, number>(); // RR 计划无 slot，按轮内自增；elim 计划自带
+    const pushPlan = (
+      matches: Array<{
+        round: number;
+        slot?: number;
+        leg?: number | null;
+        home: number | null;
+        away: number | null;
+        note?: string | null;
+      }>,
+      direct: boolean,
+      pool: EntryRow[]
+    ) => {
+      for (const pm of matches) {
+        const slot = pm.slot ?? (slotOf.get(pm.round) ?? 0) + 1;
+        slotOf.set(pm.round, slot);
+        const home = direct
+          ? pm.home
+          : pm.home !== null && pm.home <= pool.length
+            ? pool[pm.home - 1].id
+            : null;
+        const away = direct
+          ? pm.away
+          : pm.away !== null && pm.away <= pool.length
+            ? pool[pm.away - 1].id
+            : null;
+        stmts.push(
+          env.DB.prepare(
+            `INSERT INTO match (stage_id, round, slot, leg, home_entry_id, away_entry_id, winner_entry_id, note)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            next.id,
+            pm.round,
+            slot,
+            pm.leg ?? null,
+            home,
+            away,
+            home != null && away == null ? home : null,
+            pm.note ?? null
+          )
+        );
+      }
+    };
+
+    const raw = cfg.source?.cross;
+    const tokens = Array.isArray(raw)
+      ? raw.map((s) => String(s).trim()).filter(Boolean)
+      : typeof raw === "string"
+        ? raw.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+        : [];
+
+    if (tokens.length > 0 && next.kind === "elim") {
+      if (immediatePrevOf(next.sort_order)?.id !== prev.id) continue;
+      try {
+        const plan = await buildCrossStagePlan(env, tid, next.id, tokens, planOpts);
+        pushPlan(plan.matches, true, []);
+      } catch {
+        // 来源组未就绪等守卫拦截：静默跳过，手动生成会给明确报错
+      }
+      continue;
+    }
+
+    const take = cfg.source?.take;
+    const hasRange = cfg.source?.from != null;
+    if (!take && !hasRange) continue;
+    // 来源阶段：fromStage 指定，或默认紧邻上一阶段；必须是刚完赛的 prev 才由本次触发
+    const srcStage = cfg.source?.fromStage
+      ? stages.find(
+          (s) => s.id === cfg.source!.fromStage && s.sort_order < next.sort_order
+        ) ?? null
+      : immediatePrevOf(next.sort_order);
+    if (!srcStage || srcStage.id !== prev.id) continue;
+    if (srcStage.kind === "elim") continue; // 淘汰赛无名次可取；手动生成按钮会给明确报错
+    // 来源阶段必须全部完赛（fromStage 指向更早阶段时额外校验）
+    const unfinished = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND status != 'finished'"
+    )
+      .bind(srcStage.id)
+      .first<{ n: number }>();
+    if ((unfinished?.n ?? 0) !== 0) continue;
+
+    let pool: EntryRow[];
+    try {
+      pool = await takeRangePool(env, tid, next.id, cfg.source!);
+    } catch {
+      continue; // 区间越界等守卫未过：静默跳过
+    }
+    if (pool.length < 2) continue;
     if (next.kind === "elim") {
       pushPlan(buildElimPlan(pool.length, planOpts).matches, false, pool);
-    } else {
+    } else if (next.kind === "round_robin") {
       const sched = roundRobinSchedule(pool.length, cfg.loops === 2 ? 2 : 1);
       // 淘汰赛分支要用原序做种子位映射，洗牌只用于循环赛分支的映射数组
       const mixed = shuffle(pool);
@@ -930,9 +1010,8 @@ export async function buildAutoFillStmts(
         mixed
       );
     }
-    return stmts;
   }
-  return [];
+  return stmts;
 }
 
 app.delete("/:id/stages/:stageId/matches", async (c) => {

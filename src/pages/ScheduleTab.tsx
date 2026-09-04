@@ -661,13 +661,31 @@ function AddStageForm({
   const [legs, setLegs] = useState("1");
   const [thirdPlace, setThirdPlace] = useState(false);
   const [loops, setLoops] = useState("1");
-  const [take, setTake] = useState("");
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
+  const [fromStage, setFromStage] = useState(""); // 空 = 上一阶段；否则为 stage id
   const [cross, setCross] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const isFirst = detail.stages.length === 0;
   const lastKind = detail.stages[detail.stages.length - 1]?.kind;
-  const sourceMode = cross ? "cross" : take ? "take" : "";
+  const sourceMode = cross ? "cross" : rangeFrom || rangeTo ? "range" : "";
+
+  // 可作取人来源的更早阶段（淘汰赛没有名次，排除）
+  const sourceStageOptions = detail.stages
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => s.kind !== "elim")
+    .map(({ s, idx }) => {
+      const cfg = s.config as { loops?: number; group_count?: number };
+      const suffix =
+        s.kind === "round_robin"
+          ? cfg.loops === 2
+            ? "（双循环）"
+            : "（单循环）"
+          : `（${cfg.group_count ?? 4} 组）`;
+      return { id: String(s.id), label: `第 ${idx + 1} 阶段 · ${stageTitle[s.kind]}${suffix}` };
+    });
+  const fromStageLabel = sourceStageOptions.find((o) => o.id === fromStage)?.label ?? "上一阶段";
 
   // 上一阶段是小组赛时，跨组模板给个默认值（组两两交叉：A1-B2、B1-A2…）
   const defaultCross = () => {
@@ -698,13 +716,22 @@ function AddStageForm({
       .filter(Boolean);
     if (crossList.length > 0) {
       body.source = { cross: crossList };
-    } else if (take) {
-      const n = Number(take);
-      if (!Number.isInteger(n) || n < 2 || n > 64) {
-        setErr("取人名额需是 2 到 64 的整数");
+    } else if (rangeFrom || rangeTo) {
+      const f = Number(rangeFrom);
+      const t = Number(rangeTo);
+      if (!Number.isInteger(f) || !Number.isInteger(t) || f < 1 || t < f) {
+        setErr("名次区间要填整数，且终点不小于起点");
         return;
       }
-      body.source = { take: n };
+      if (t - f + 1 < 2) {
+        setErr("名次区间至少要覆盖 2 个名次，否则凑不出一场比赛");
+        return;
+      }
+      body.source = {
+        from: f,
+        to: t,
+        ...(fromStage ? { fromStage: Number(fromStage) } : {}),
+      };
     }
     try {
       await api(`/api/admin/tournaments/${detail.tournament.id}/stages`, {
@@ -712,7 +739,9 @@ function AddStageForm({
         body,
       });
       setOpen(false);
-      setTake("");
+      setRangeFrom("");
+      setRangeTo("");
+      setFromStage("");
       setCross("");
       onAdded();
     } catch (e) {
@@ -782,35 +811,64 @@ function AddStageForm({
               value={sourceMode}
               onChange={(e) => {
                 const v = e.target.value;
-                if (v === "take") {
-                  setTake(take || "4");
+                if (v === "range") {
+                  setRangeFrom(rangeFrom || "1");
+                  setRangeTo(rangeTo || "4");
                   setCross("");
                 } else if (v === "cross") {
                   setCross(cross || defaultCross());
-                  setTake("");
+                  setRangeFrom("");
+                  setRangeTo("");
                 } else {
-                  setTake("");
+                  setRangeFrom("");
+                  setRangeTo("");
                   setCross("");
                 }
               }}
             >
               <option value="">全部报名队</option>
-              <option value="take">上一阶段前 N 名</option>
+              <option value="range">按名次区间取人</option>
               {lastKind === "group" && <option value="cross">跨组对阵模板</option>}
             </select>
           </label>
-          {take && (
-            <label>
-              名额 N
-              <input
-                type="number"
-                min={2}
-                max={64}
-                value={take}
-                onChange={(e) => setTake(e.target.value)}
-                style={{ width: 80 }}
-              />
-            </label>
+          {sourceMode === "range" && (
+            <>
+              <label>
+                名次
+                <span className="range-inputs">
+                  第{" "}
+                  <input
+                    type="number"
+                    min={1}
+                    value={rangeFrom}
+                    onChange={(e) => setRangeFrom(e.target.value)}
+                    style={{ width: 64 }}
+                  />{" "}
+                  名 ~ 第{" "}
+                  <input
+                    type="number"
+                    min={1}
+                    value={rangeTo}
+                    onChange={(e) => setRangeTo(e.target.value)}
+                    style={{ width: 64 }}
+                  />{" "}
+                  名
+                </span>
+              </label>
+              {sourceStageOptions.length > 0 && (
+                <label>
+                  取自
+                  <select value={fromStage} onChange={(e) => setFromStage(e.target.value)}>
+                    <option value="">上一阶段</option>
+                    {sourceStageOptions.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </>
           )}
           {cross && (
             <input
@@ -825,8 +883,8 @@ function AddStageForm({
       )}
       <p className="muted add-stage-hint">
         新阶段排在最后；生成赛程时
-        {take
-          ? `取上一阶段积分榜前 ${take} 名`
+        {sourceMode === "range"
+          ? `取「${fromStageLabel}」积分榜第 ${rangeFrom || "?"} 到第 ${rangeTo || "?"} 名`
           : cross
             ? "按模板对阵"
             : "使用全部报名队"}

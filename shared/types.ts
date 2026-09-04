@@ -123,7 +123,10 @@ export interface MatchEventRow {
 export interface StageSource {
   // entries：直接指定 entry id（手动编排用）；take：按上一阶段排名取人；
   // cross：小组交叉映射模板，如 ["A1-B2", "C1-D2", "B1-A2", "D1-C1"]
-  take?: number; // 取上一阶段前 N 名
+  take?: number; // 取上一阶段前 N 名（等价 from:1, to:take，保留兼容）
+  from?: number; // 名次区间起点（含），如 5
+  to?: number; // 名次区间终点（含），如 8；与 from 搭配取第 from..to 名
+  fromStage?: number; // 取自哪个阶段（stage id）；缺省 = 上一阶段
   cross?: string[];
   entries?: number[];
 }
