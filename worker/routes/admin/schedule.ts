@@ -516,6 +516,64 @@ app.post("/:id/stages/:stageId/draw", async (c) => {
 });
 
 // ---------- 手动落场（仅循环/小组阶段；淘汰赛由晋级器填充） ----------
+// 守卫单场与批量共用：null = 通过；extraPairIds = 同批已检查过的其它场队伍
+// （批量场景库里还没插入，批次内互斥由调用方先查，这里只防与已有场次冲突）
+async function guardMatch(
+  db: D1Database,
+  tid: number,
+  stage: StageRow,
+  round: number,
+  homeEntryId: number,
+  awayEntryId: number,
+  extraPairIds: number[] = []
+): Promise<string | null> {
+  if (stage.kind === "elim") {
+    return "淘汰赛对阵由晋级器按结果填充，不支持手动落场";
+  }
+  const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { loops?: number };
+  const loops = cfg.loops === 2 ? 2 : 1;
+
+  const e1 = await db
+    .prepare("SELECT id, group_id FROM entry WHERE id = ? AND tournament_id = ?")
+    .bind(homeEntryId, tid)
+    .first<{ id: number; group_id: number | null }>();
+  const e2 = await db
+    .prepare("SELECT id, group_id FROM entry WHERE id = ? AND tournament_id = ?")
+    .bind(awayEntryId, tid)
+    .first<{ id: number; group_id: number | null }>();
+  if (!e1 || !e2) return "参赛队伍不存在";
+
+  if (stage.kind === "group") {
+    if (e1.group_id == null || e1.group_id !== e2.group_id) {
+      return "小组赛只能在同组球队之间落场";
+    }
+  }
+
+  // 一轮一支队只踢一场（含同批已检查的队，防与库里已有场次冲突）
+  const allIds = [homeEntryId, awayEntryId, ...extraPairIds];
+  const ph = allIds.map(() => "?").join(",");
+  const dup = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM match
+       WHERE stage_id = ? AND round = ?
+         AND (home_entry_id IN (${ph}) OR away_entry_id IN (${ph}))`
+    )
+    .bind(stage.id, round, ...allIds, ...allIds)
+    .first<{ n: number }>();
+  if ((dup?.n ?? 0) > 0) return "本轮已有其中一支球队的比赛";
+  const played = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM match
+       WHERE stage_id = ?
+         AND ((home_entry_id = ? AND away_entry_id = ?) OR (home_entry_id = ? AND away_entry_id = ?))`
+    )
+    .bind(stage.id, homeEntryId, awayEntryId, awayEntryId, homeEntryId)
+    .first<{ n: number }>();
+  if ((played?.n ?? 0) >= loops) {
+    return loops === 1 ? "两队在本阶段已交手过" : "两队交手次数已达上限（双循环）";
+  }
+  return null;
+}
 
 app.post("/:id/stages/:stageId/matches", async (c) => {
   const tid = Number(c.req.param("id"));
@@ -541,51 +599,10 @@ app.post("/:id/stages/:stageId/matches", async (c) => {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
     throw e;
   }
-  if (stage.kind === "elim") {
-    return fail(c, 400, "淘汰赛对阵由晋级器按结果填充，不支持手动落场");
-  }
-
-  const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { loops?: number };
-  const loops = cfg.loops === 2 ? 2 : 1;
-
-  const e1 = await c.env.DB.prepare(
-    "SELECT id, group_id FROM entry WHERE id = ? AND tournament_id = ?"
-  )
-    .bind(homeEntryId, tid)
-    .first<{ id: number; group_id: number | null }>();
-  const e2 = await c.env.DB.prepare(
-    "SELECT id, group_id FROM entry WHERE id = ? AND tournament_id = ?"
-  )
-    .bind(awayEntryId, tid)
-    .first<{ id: number; group_id: number | null }>();
-  if (!e1 || !e2) return fail(c, 400, "参赛队伍不存在");
-
-  if (stage.kind === "group") {
-    if (e1.group_id == null || e1.group_id !== e2.group_id) {
-      return fail(c, 400, "小组赛只能在同组球队之间落场");
-    }
-  }
-
-  // 即点即校验：一队本轮只踢一场；两队交手次数不超过 loops
-  const dup = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM match
-     WHERE stage_id = ? AND round = ?
-       AND (home_entry_id IN (?, ?) OR away_entry_id IN (?, ?))`
-  )
-    .bind(stageId, round, homeEntryId, awayEntryId, homeEntryId, awayEntryId)
-    .first<{ n: number }>();
-  if ((dup?.n ?? 0) > 0) {
-    return fail(c, 409, "本轮已有其中一支球队的比赛");
-  }
-  const played = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM match
-     WHERE stage_id = ?
-       AND ((home_entry_id = ? AND away_entry_id = ?) OR (home_entry_id = ? AND away_entry_id = ?))`
-  )
-    .bind(stageId, homeEntryId, awayEntryId, awayEntryId, homeEntryId)
-    .first<{ n: number }>();
-  if ((played?.n ?? 0) >= loops) {
-    return fail(c, 409, loops === 1 ? "两队在本阶段已交手过" : "两队交手次数已达上限（双循环）");
+  const why = await guardMatch(c.env.DB, tid, stage, round, homeEntryId, awayEntryId);
+  if (why) {
+    const conflict = why.includes("本轮") || why.includes("交手");
+    return fail(c, conflict ? 409 : 400, why);
   }
 
   const r = await c.env.DB.prepare(
@@ -595,6 +612,80 @@ app.post("/:id/stages/:stageId/matches", async (c) => {
     .bind(stageId, round, stageId, round, homeEntryId, awayEntryId)
     .run();
   return c.json({ id: r.meta.last_row_id }, 201);
+});
+
+// 批量落场：一次提交多场（前端手动排赛攒批），逐场守卫 + 批次内互查，
+// 全部通过才落库；任何一场不过整批拒绝并报出场次
+app.post("/:id/stages/:stageId/matches/bulk", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  const body = await c.req
+    .json<{ round?: unknown; pairs?: Array<{ homeEntryId?: unknown; awayEntryId?: unknown }> }>()
+    .catch(() => null);
+  const round = Number(body?.round);
+  const pairs = body?.pairs;
+  if (!Number.isInteger(round) || round < 1) {
+    return fail(c, 400, "轮次必须是正整数");
+  }
+  if (!Array.isArray(pairs) || pairs.length < 2 || pairs.length > 24) {
+    return fail(c, 400, "一次提交 2 到 24 场比赛");
+  }
+
+  let stage: StageRow;
+  try {
+    ({ stage } = await loadStage(c.env.DB, tid, stageId));
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    throw e;
+  }
+
+  // 先做基本校验 + 批次内互斥（一队在本批只能出现一场）
+  const clean: Array<{ home: number; away: number }> = [];
+  const seen = new Map<number, number>();
+  for (let i = 0; i < pairs.length; i++) {
+    const p = pairs[i] ?? {};
+    const home = Number(p.homeEntryId);
+    const away = Number(p.awayEntryId);
+    if (!Number.isInteger(home) || !Number.isInteger(away)) {
+      return fail(c, 400, `第 ${i + 1} 场：请选择主队和客队`);
+    }
+    if (home === away) {
+      return fail(c, 400, `第 ${i + 1} 场：主客队不能是同一支队伍`);
+    }
+    for (const id of [home, away]) {
+      const prev = seen.get(id);
+      if (prev !== undefined) {
+        return fail(c, 400, `第 ${i + 1} 场：该队已在本批第 ${prev} 场出场`);
+      }
+    }
+    clean.push({ home, away });
+    seen.set(home, i + 1);
+    seen.set(away, i + 1);
+  }
+
+  // 逐场守卫（带上同批先前的队做互查）；任一不过整批拒
+  const extra: number[] = [];
+  for (let i = 0; i < clean.length; i++) {
+    const { home, away } = clean[i];
+    const why = await guardMatch(c.env.DB, tid, stage, round, home, away, extra);
+    if (why) return fail(c, 400, `第 ${i + 1} 场：${why}`);
+    extra.push(home, away);
+  }
+
+  const mx = await c.env.DB.prepare(
+    "SELECT COALESCE(MAX(slot), 0) AS m FROM match WHERE stage_id = ? AND round = ?"
+  )
+    .bind(stageId, round)
+    .first<{ m: number }>();
+  let slot = (mx?.m ?? 0) + 1;
+  const stmts = clean.map((p) =>
+    c.env.DB.prepare(
+      `INSERT INTO match (stage_id, round, slot, home_entry_id, away_entry_id, status)
+       VALUES (?, ?, ?, ?, ?, 'pending')`
+    ).bind(stageId, round, slot++, p.home, p.away)
+  );
+  await c.env.DB.batch(stmts);
+  return c.json({ ok: true, created: clean.length, round });
 });
 
 // ---------- 场次查询（全赛事，前端按阶段过滤）与删除 ----------

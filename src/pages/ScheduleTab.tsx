@@ -418,7 +418,7 @@ function GroupOverview({
   );
 }
 
-// 点选式手动排赛：先点主队，再点客队，点击即建成场次（无需确认按钮）
+// 点选式手动排赛：点主队 → 点客队入批量，攒够 2 场一次性提交（轮次留空 = 当前轮，不跳变）
 function ManualForm({
   detail,
   stage,
@@ -435,14 +435,14 @@ function ManualForm({
   const cfg = stage.config as { loops?: number };
   const loops = cfg.loops === 2 ? 2 : 1;
   const maxRound = matches.reduce((mx, m) => Math.max(mx, m.round), 0);
-  // 空 = 跟随"下一轮"；固定初始值会在赛程未加载时错误地停在第 1 轮
+  // 空 = 当前轮（maxRound 或 1）；显式填轮次后固定，排完一场不会自动跳轮
   const [round, setRound] = useState("");
   const [picked, setPicked] = useState<number | null>(null);
+  const [batch, setBatch] = useState<{ home: EntryDTO; away: EntryDTO }[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const nextRound = maxRound + 1;
-  const roundValue = Number(round) || nextRound;
+  const roundValue = Number(round) || (maxRound || 1);
 
   // 本轮已上场的队（作客队时置灰）
   const roundBusy = useMemo(() => {
@@ -454,6 +454,16 @@ function ManualForm({
     }
     return set;
   }, [matches, roundValue]);
+
+  // 本批已选中的队（同一队在一批里只能出现一次）
+  const batchUsed = useMemo(() => {
+    const set = new Set<number>();
+    for (const p of batch) {
+      set.add(p.home.id);
+      set.add(p.away.id);
+    }
+    return set;
+  }, [batch]);
 
   const playedCount = (a: number, b: number) =>
     matches.filter(
@@ -469,6 +479,7 @@ function ManualForm({
   const blockReason = (e: EntryDTO): string | null => {
     if (picked == null || !pickedEntry) return null;
     if (e.id === picked) return null; // 自己：再点取消
+    if (batchUsed.has(e.id)) return "本批已选";
     if (stage.kind === "group" && (e.groupId == null || e.groupId !== pickedEntry.groupId)) {
       return "不同组";
     }
@@ -480,7 +491,7 @@ function ManualForm({
   const groupName = (gid: number) =>
     detail.groups.find((g) => g.id === gid)?.name ?? "";
 
-  const click = async (e: EntryDTO) => {
+  const click = (e: EntryDTO) => {
     if (busy || submitting) return;
     if (picked == null) {
       setPicked(e.id);
@@ -496,18 +507,33 @@ function ManualForm({
       setErr(`${e.teamName} 不能作客队：${why}`);
       return;
     }
+    setBatch((b) => [...b, { home: pickedEntry!, away: e }]);
+    setPicked(null);
+    setErr(null);
+  };
+
+  const submitBatch = async () => {
+    if (batch.length < 2) {
+      setErr("一次至少提交 2 场（还能继续加）");
+      return;
+    }
     setSubmitting(true);
     setErr(null);
     try {
       await api(
-        `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/matches`,
-        { method: "POST", body: { round: roundValue, homeEntryId: picked, awayEntryId: e.id } }
+        `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/matches/bulk`,
+        {
+          method: "POST",
+          body: {
+            round: roundValue,
+            pairs: batch.map((p) => ({ homeEntryId: p.home.id, awayEntryId: p.away.id })),
+          },
+        }
       );
-      setPicked(null);
+      setBatch([]);
       onRefresh();
     } catch (err2) {
-      setErr(err2 instanceof Error ? err2.message : "落场失败");
-      setPicked(null);
+      setErr(err2 instanceof Error ? err2.message : "提交失败");
     } finally {
       setSubmitting(false);
     }
@@ -522,16 +548,21 @@ function ManualForm({
             type="number"
             min={1}
             value={round}
-            onChange={(e2) => setRound(e2.target.value)}
-            placeholder={String(nextRound)}
-            title={`留空 = 第 ${nextRound} 轮`}
+            onChange={(e2) => {
+              setRound(e2.target.value);
+              if (batch.length > 0) setBatch([]);
+            }}
+            placeholder={String(roundValue)}
+            title={`留空 = 第 ${roundValue} 轮；改轮次会清空已选场次`}
             style={{ width: 72 }}
           />
         </label>
         <span className="muted">
           {picked == null
-            ? "点一支队作主队"
-            : `主队 ${pickedEntry?.teamName}：点客队成场，再点一下主队取消`}
+            ? batch.length > 0
+              ? `已选 ${batch.length} 场：继续点主队加场，或直接提交`
+              : "点一支队作主队，再点客队入批量"
+            : `主队 ${pickedEntry?.teamName}：点客队入批量，再点一下主队取消`}
         </span>
       </div>
       {err && <p className="error">{err}</p>}
@@ -556,6 +587,36 @@ function ManualForm({
           );
         })}
       </div>
+      {batch.length > 0 && (
+        <div className="manual-batch">
+          <ul>
+            {batch.map((p, i) => (
+              <li key={i}>
+                <span>
+                  {p.home.teamName} <b>vs</b> {p.away.teamName}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm"
+                  onClick={() => setBatch((b) => b.filter((_, j) => j !== i))}
+                >
+                  移除
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="manual-batch-foot">
+            <button
+              className="btn"
+              onClick={submitBatch}
+              disabled={submitting || batch.length < 2 || batch.length > 24}
+            >
+              提交 {batch.length} 场
+            </button>
+            <span className="muted">到第 {roundValue} 轮，一次 2~24 场</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
