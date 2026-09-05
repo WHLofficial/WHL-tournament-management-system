@@ -124,6 +124,25 @@ export default function PublicTournament() {
     };
   }, [meta, sel, roundCache, tid]);
 
+  // 预加载其余轮次：进入页面后错开间隔逐轮拉取，之后切任何轮都是秒开，不用现等
+  useEffect(() => {
+    if (!meta) return;
+    const next = flatRounds(meta).find((c) => !roundCache.has(roundKey(c)));
+    if (!next) return;
+    const timer = window.setTimeout(() => {
+      void api<{ matches: MatchDTO[] }>(
+        `/api/public/tournaments/${tid}/matches?stageId=${next.stageId}&round=${next.round}`,
+      )
+        .then((b) =>
+          setRoundCache((prev) =>
+            prev.has(roundKey(next)) ? prev : new Map(prev).set(roundKey(next), b.matches),
+          ),
+        )
+        .catch(() => undefined);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [meta, roundCache, tid]);
+
   const hasLive = !!meta?.some((st) => st.rounds.some((r) => r.live > 0));
 
   // 30s 轮询：只有存在进行中比赛时才启动；页面不可见时暂停，回来立刻刷一次
