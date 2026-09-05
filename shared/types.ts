@@ -229,6 +229,8 @@ export interface StageDTO {
   id: number;
   kind: StageKind;
   sortOrder: number;
+  /** 阶段显示名，空时前端用赛制名兜底 */
+  name: string | null;
   config: StageConfig;
 }
 
@@ -274,8 +276,31 @@ export interface MatchDTO {
   note: string | null;
   events?: PublicMatchEventDTO[];
   stageKind?: "elim" | "round_robin" | "group";
+  /** 所属阶段显示名，单轮查询时前端直接用作阶段头 */
+  stageName?: string | null;
   homeLogoUrl?: string | null;
   awayLogoUrl?: string | null;
+}
+
+export interface RoundMetaDTO {
+  round: number;
+  count: number;
+  live: number;
+  finished: number;
+  pending: number;
+}
+
+export interface StageRoundsDTO {
+  stageId: number;
+  name: string | null;
+  kind: "elim" | "round_robin" | "group";
+  sortOrder: number;
+  rounds: RoundMetaDTO[];
+}
+
+export interface MatchSummaryDTO {
+  recent: MatchDTO[];
+  upcoming: MatchDTO[];
 }
 
 export type MatchEventType =

@@ -14,16 +14,28 @@ import { drawTournamentCard, drawRoundCard, matchToShare } from "../lib/share";
 import type {
   EntryDTO,
   MatchDTO,
+  MatchSummaryDTO,
+  RoundMetaDTO,
+  StageRoundsDTO,
   StageStandingDTO,
   TournamentDetailDTO,
 } from "../../shared/types";
 
-// 公开赛事页：赛程对阵 / 积分榜 / 参赛球队，无登录墙，30 秒轮询。
+// 公开赛事页：赛程对阵 / 积分榜 / 参赛球队，无登录墙。
+// 赛程按轮分页：一轮只在切换时加载一次，live 时每 30 秒刷新；无进行中比赛则完全不轮询。
+const roundKey = (s: { stageId: number; round: number }) => `${s.stageId}:${s.round}`;
+type RoundChip = RoundMetaDTO & { stageId: number; stage: StageRoundsDTO };
+const flatRounds = (stages: StageRoundsDTO[]): RoundChip[] =>
+  stages.flatMap((st) => st.rounds.map((r) => ({ ...r, stageId: st.stageId, stage: st })));
+
 export default function PublicTournament() {
   const { id } = useParams();
   const tid = Number(id);
   const [detail, setDetail] = useState<TournamentDetailDTO | null>(null);
-  const [matches, setMatches] = useState<MatchDTO[] | null>(null);
+  const [meta, setMeta] = useState<StageRoundsDTO[] | null>(null);
+  const [summary, setSummary] = useState<MatchSummaryDTO | null>(null);
+  const [roundCache, setRoundCache] = useState<Map<string, MatchDTO[]>>(new Map());
+  const [sel, setSel] = useState<{ stageId: number; round: number } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   type PubTab = "schedule" | "standings" | "teams" | "toplists" | "stats";
   const TAB_KEYS: PubTab[] = ["schedule", "standings", "teams", "toplists", "stats"];
@@ -37,14 +49,16 @@ export default function PublicTournament() {
   };
   const [err, setErr] = useState<string | null>(null);
 
-  const refetch = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
-      const [d, m] = await Promise.all([
+      const [d, m, s] = await Promise.all([
         api<TournamentDetailDTO>(`/api/public/tournaments/${tid}`),
-        api<{ matches: MatchDTO[] }>(`/api/public/tournaments/${tid}/matches`),
+        api<{ stages: StageRoundsDTO[] }>(`/api/public/tournaments/${tid}/matches/rounds`),
+        api<MatchSummaryDTO>(`/api/public/tournaments/${tid}/matches/summary`),
       ]);
       setDetail(d);
-      setMatches(m.matches);
+      setMeta(m.stages);
+      setSummary(s);
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "加载失败");
@@ -52,23 +66,84 @@ export default function PublicTournament() {
   }, [tid]);
 
   useEffect(() => {
-    refetch();
-  }, [refetch]);
+    void refresh();
+  }, [refresh]);
 
-  // 30s 轮询：页面不可见时暂停，回来立刻刷一次
+  // meta 到位后定默认轮：live 轮 > 最早含未完赛的轮 > 全完赛时最大轮（只定一次，之后尊重用户选择）
   useEffect(() => {
-    const iv = setInterval(() => {
-      if (document.visibilityState === "visible") void refetch();
-    }, 30_000);
+    if (!meta || sel) return;
+    const chips = flatRounds(meta);
+    const liveChip = chips.find((c) => c.live > 0);
+    const pendingChip = chips.find((c) => c.pending > 0);
+    const target = liveChip ?? pendingChip ?? chips[chips.length - 1];
+    if (target) setSel({ stageId: target.stageId, round: target.round });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meta]);
+
+  // 按需拉取：当前选中的轮 + 有 live 的轮，进缓存
+  useEffect(() => {
+    if (!meta) return;
+    const need: { stageId: number; round: number }[] = [];
+    if (sel && !roundCache.has(roundKey(sel))) need.push(sel);
+    for (const c of flatRounds(meta))
+      if (c.live > 0 && !roundCache.has(roundKey(c)))
+        need.push({ stageId: c.stageId, round: c.round });
+    if (need.length === 0) return;
+    let alive = true;
+    void (async () => {
+      const fetched = await Promise.all(
+        need.map(async ({ stageId, round }) => {
+          const b = await api<{ matches: MatchDTO[] }>(
+            `/api/public/tournaments/${tid}/matches?stageId=${stageId}&round=${round}`,
+          );
+          return [roundKey({ stageId, round }), b.matches] as const;
+        }),
+      );
+      if (!alive) return;
+      setRoundCache((prev) => {
+        const next = new Map(prev);
+        for (const [k, ms] of fetched) next.set(k, ms);
+        return next;
+      });
+    })().catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [meta, sel, roundCache, tid]);
+
+  const hasLive = !!meta?.some((st) => st.rounds.some((r) => r.live > 0));
+
+  // 30s 轮询：只有存在进行中比赛时才启动；页面不可见时暂停，回来立刻刷一次
+  useEffect(() => {
+    if (!hasLive) return;
+    const tick = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        await refresh();
+        const targets = new Set<string>();
+        if (sel) targets.add(roundKey(sel));
+        for (const c of flatRounds(meta ?? [])) if (c.live > 0) targets.add(roundKey(c));
+        for (const t of targets) {
+          const [sid, rd] = t.split(":").map(Number);
+          const b = await api<{ matches: MatchDTO[] }>(
+            `/api/public/tournaments/${tid}/matches?stageId=${sid}&round=${rd}`,
+          );
+          setRoundCache((prev) => new Map(prev).set(t, b.matches));
+        }
+      } catch {
+        // 单次轮询失败静默，下一轮再试
+      }
+    };
+    const iv = setInterval(() => void tick(), 30_000);
     const onVisible = () => {
-      if (document.visibilityState === "visible") void refetch();
+      if (document.visibilityState === "visible") void tick();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [refetch]);
+  }, [hasLive, refresh, sel, meta, tid]);
 
   if (err)
     return (
@@ -79,7 +154,7 @@ export default function PublicTournament() {
         </main>
       </>
     );
-  if (!detail || matches === null)
+  if (!detail || meta === null || summary === null)
     return (
       <>
         <main className="container">
@@ -89,9 +164,12 @@ export default function PublicTournament() {
     );
 
   const t = detail.tournament;
-  const stagesWithMatches = detail.stages.filter((s) =>
-    matches.some((m) => m.stageId === s.id),
-  );
+  const chips = flatRounds(meta);
+  const stageDisplayName = (st: StageRoundsDTO) => st.name || stageTitle[st.kind];
+  const roundLabel = (c: RoundChip) =>
+    c.stage.kind === "elim"
+      ? elimRoundName(c.round, Math.max(...c.stage.rounds.map((r) => r.round)))
+      : `第 ${c.round} 轮`;
   const entriesByGroup = new Map<number, EntryDTO[]>();
   for (const e of detail.entries) {
     const k = e.groupId ?? -1;
@@ -103,16 +181,17 @@ export default function PublicTournament() {
   );
 
   const origin = window.location.origin;
-  // 分享卡对阵区：有完赛展示最近赛果，否则展示对阵预告
-  const finishedMatches = matches.filter((m) => m.status === "finished" && m.homeTeamName);
+  // 分享卡对阵区：有完赛展示最近赛果，否则展示对阵预告（summary 端点数据）
   const shareMatchList = (
-    finishedMatches.length > 0
-      ? [...finishedMatches].sort((a, b) => b.id - a.id).slice(0, 4)
-      : matches
-          .filter((m) => m.status === "pending" && m.homeTeamName && m.awayTeamName)
-          .slice(0, 4)
+    summary.recent.length > 0 ? summary.recent : summary.upcoming
   ).map(matchToShare);
-  const shareResultLabel = finishedMatches.length > 0 ? "最近赛果" : "对阵预告";
+  const shareResultLabel = summary.recent.length > 0 ? "最近赛果" : "对阵预告";
+
+  const selChip = sel ? chips.find((c) => roundKey(c) === roundKey(sel)) : undefined;
+  const selRows = sel ? (roundCache.get(roundKey(sel)) ?? []) : [];
+  const liveElsewhere = chips.filter(
+    (c) => c.live > 0 && (!sel || roundKey(c) !== roundKey(sel)),
+  );
 
   return (
     <>
@@ -172,78 +251,66 @@ export default function PublicTournament() {
 
       {tab === "schedule" && (
         <div className="matches-tab">
-          {stagesWithMatches.length === 0 && (
+          {chips.length === 0 && (
             <p className="muted card">赛程还没排出来，排好后会显示在这里。</p>
           )}
-          {matches.some((m) => m.status === "live") && (
+          {chips.length > 0 && (
+            <div className="round-tabs">
+              {chips.map((c) => (
+                <button
+                  key={roundKey(c)}
+                  className={`rt-chip${sel && roundKey(sel) === roundKey(c) ? " rt-active" : ""}${c.live > 0 ? " rt-live" : ""}`}
+                  onClick={() => setSel({ stageId: c.stageId, round: c.round })}
+                >
+                  {c.live > 0 && <span className="rt-dot" aria-hidden />}
+                  {stageDisplayName(c.stage)} · {roundLabel(c)}
+                </button>
+              ))}
+            </div>
+          )}
+          {liveElsewhere.length > 0 && (
             <section className="stage-block">
               <h3 className="stage-head stage-head-live">
                 进行中 <span className="live-dot" aria-hidden />
               </h3>
-              {matches
-                .filter((m) => m.status === "live")
-                .map((m) => (
+              {liveElsewhere.map((c) =>
+                (roundCache.get(roundKey(c)) ?? [])
+                  .filter((m) => m.status === "live")
+                  .map((m) => (
+                    <PublicMatchRow key={m.id} tid={tid} match={m} agg={null} />
+                  )),
+              )}
+            </section>
+          )}
+          {selChip && (
+            <section className="stage-block">
+              <h3 className="stage-head">{stageDisplayName(selChip.stage)}</h3>
+              <div className="round-block">
+                <h4 className="round-head">
+                  <span>{roundLabel(selChip)}</span>
+                  <ShareButton
+                    title={`分享「${roundLabel(selChip)}」`}
+                    url={`${origin}/t/${tid}?tab=schedule`}
+                    draw={(c) =>
+                      drawRoundCard(c, {
+                        tournamentName: t.name,
+                        title: roundLabel(selChip),
+                        coverUrl: t.coverUrl ?? null,
+                        matches: selRows.map(matchToShare),
+                        url: `${origin}/t/${tid}?tab=schedule`,
+                      })
+                    }
+                  />
+                </h4>
+                {selRows.map((m) => (
                   <PublicMatchRow
                     key={m.id}
                     tid={tid}
                     match={m}
-                    agg={null}
+                    agg={computeAgg(m, selRows)}
                   />
                 ))}
-            </section>
-          )}
-          {stagesWithMatches.map((stage) => {
-            const list = matches.filter((m) => m.stageId === stage.id && m.status !== "live");
-            const rounds = [...new Set(list.map((m) => m.round))].sort((a, b) => a - b);
-            return (
-              <section key={stage.id} className="stage-block">
-                <h3 className="stage-head">{stageTitle[stage.kind]}</h3>
-                {rounds.map((round) => {
-                  const roundList = list.filter((m) => m.round === round);
-                  const label =
-                    stage.kind === "elim"
-                      ? elimRoundName(round, Math.max(...list.map((m) => m.round)))
-                      : `第 ${round} 轮`;
-                  return (
-                    <div key={round} className="round-block">
-                      <h4 className="round-head">
-                        <span>{label}</span>
-                        <ShareButton
-                          title={`分享「${label}」`}
-                          url={`${origin}/t/${tid}?tab=schedule`}
-                          draw={(c) =>
-                            drawRoundCard(c, {
-                              tournamentName: t.name,
-                              title: label,
-                              coverUrl: t.coverUrl ?? null,
-                              matches: roundList.map(matchToShare),
-                              url: `${origin}/t/${tid}?tab=schedule`,
-                            })
-                          }
-                        />
-                      </h4>
-                      {roundList.map((m) => (
-                        <PublicMatchRow
-                          key={m.id}
-                          tid={tid}
-                          match={m}
-                          agg={computeAgg(m, roundList)}
-                        />
-                      ))}
-                    </div>
-                  );
-                })}
-              </section>
-            );
-          })}
-          {matches.filter((m) => !detail.stages.some((s) => s.id === m.stageId) && m.status !== "live").length > 0 && (
-            <section className="stage-block">
-              <h3 className="stage-head">其他比赛</h3>
-              {matches
-                .filter((m) => !detail.stages.some((s) => s.id === m.stageId) && m.status !== "live")
-                .map((m) => (
-                  <PublicMatchRow key={m.id} tid={tid} match={m} agg={null} />
-                ))}
+              </div>
             </section>
           )}
         </div>

@@ -201,6 +201,36 @@ function StageBlock({
     legs?: number;
     group_count?: number;
   };
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [nameErr, setNameErr] = useState<string | null>(null);
+  const displayName =
+    stage.name ||
+    (stageTitle[stage.kind] +
+      (stage.kind === "round_robin"
+        ? cfg.loops === 2
+          ? "（双循环）"
+          : "（单循环）"
+        : stage.kind === "elim" && cfg.legs === 2
+          ? "（两回合）"
+          : stage.kind === "group"
+            ? `（${cfg.group_count ?? 4} 组）`
+            : ""));
+  const commitName = async () => {
+    setRenaming(false);
+    const v = nameDraft.trim();
+    if (v === (stage.name ?? "")) return;
+    setNameErr(null);
+    try {
+      await api(
+        `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/name`,
+        { method: "PATCH", body: JSON.stringify({ name: v }) }
+      );
+      onRefresh();
+    } catch (e) {
+      setNameErr(e instanceof Error ? e.message : String(e));
+    }
+  };
   const rounds = matches.reduce((mx, m) => Math.max(mx, m.round), 0);
   const roundBuckets = useMemo(() => {
     // 季军赛与决赛同轮，单独成组显示标题
@@ -226,13 +256,38 @@ function StageBlock({
     <section className="card stage-block">
       <div className="stage-head">
         <h3>
-          {stageTitle[stage.kind]}
-          {stage.kind === "round_robin" &&
-            (cfg.loops === 2 ? "（双循环）" : "（单循环）")}
-          {stage.kind === "elim" && cfg.legs === 2 && "（两回合）"}
-          {stage.kind === "group" && `（${cfg.group_count ?? 4} 组）`}
+          {renaming ? (
+            <input
+              className="stage-rename-input"
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitName();
+                if (e.key === "Escape") {
+                  setRenaming(false);
+                  setNameDraft("");
+                }
+              }}
+            />
+          ) : (
+            displayName
+          )}
         </h3>
         <div className="stage-actions">
+          {nameErr && <span className="error">{nameErr}</span>}
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setNameDraft(stage.name ?? "");
+              setRenaming(true);
+            }}
+            disabled={renaming}
+            title="改阶段显示名（公开页轮次前缀），留空恢复默认"
+          >
+            改名
+          </button>
           <StageConfigEditor detail={detail} stage={stage} onSaved={onRefresh} />
           {stage.kind === "group" && (
             <button className="btn" onClick={onDraw} disabled={busy}>

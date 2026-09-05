@@ -148,10 +148,10 @@ app.get("/:id", async (c) => {
 
   const [stages, groups, entries] = await Promise.all([
     c.env.DB.prepare(
-      "SELECT id, kind, sort_order, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order"
+      "SELECT id, kind, sort_order, name, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order"
     )
       .bind(id)
-      .all<{ id: number; kind: "elim" | "round_robin" | "group"; sort_order: number; config_json: string }>(),
+      .all<{ id: number; kind: "elim" | "round_robin" | "group"; sort_order: number; name: string | null; config_json: string }>(),
     c.env.DB.prepare(
       `SELECT g.id, g.stage_id, g.name, g.sort_order FROM "group" g
        JOIN stage s ON s.id = g.stage_id WHERE s.tournament_id = ?
@@ -193,6 +193,7 @@ app.get("/:id", async (c) => {
       id: s.id,
       kind: s.kind,
       sortOrder: s.sort_order,
+      name: s.name,
       config: JSON.parse(s.config_json || "{}"),
     })),
     groups: groups.results.map((g) => ({

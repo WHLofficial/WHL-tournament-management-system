@@ -6,6 +6,7 @@ import type {
   LiveDTO,
   PublicMatchEventDTO,
   RecentDTO,
+  StageRoundsDTO,
   TournamentDTO,
   UpcomingDTO,
 } from "../../shared/types";
@@ -236,6 +237,63 @@ async function fetchLiveScores(
   return scores;
 }
 
+// 赛程行共享片段：matches / rounds meta / summary 三端点复用同一查询结构
+type PubMatchRow = {
+  id: number; stage_id: number; round: number; slot: number; leg: number | null;
+  home_entry_id: number | null; away_entry_id: number | null;
+  home_team_name: string | null; away_team_name: string | null;
+  home_logo_key: string | null; away_logo_key: string | null;
+  score_home: number | null; score_away: number | null;
+  pen_home: number | null; pen_away: number | null;
+  status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
+  stage_kind: MatchDTO["stageKind"];
+  stage_name: string | null; stage_order: number;
+};
+const MATCH_COLS = `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
+   m.home_entry_id, m.away_entry_id,
+   ht.name AS home_team_name, at.name AS away_team_name,
+   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
+   m.score_home, m.score_away, m.pen_home, m.pen_away,
+   m.status, m.winner_entry_id, m.note, s.kind AS stage_kind,
+   s.name AS stage_name, s.sort_order AS stage_order`;
+const MATCH_FROM = `FROM match m
+   JOIN stage s ON s.id = m.stage_id
+   LEFT JOIN entry he ON he.id = m.home_entry_id
+   LEFT JOIN team ht ON ht.id = he.team_id
+   LEFT JOIN entry ae ON ae.id = m.away_entry_id
+   LEFT JOIN team at ON at.id = ae.team_id`;
+
+const toPubMatch = (
+  r: PubMatchRow,
+  liveScores: Map<number, { home: number; away: number }>,
+  eventsByMatch: Map<number, PublicMatchEventDTO[]>
+): MatchDTO => {
+  const live = liveScores.get(r.id);
+  return {
+    id: r.id,
+    stageId: r.stage_id,
+    round: r.round,
+    slot: r.slot,
+    leg: r.leg,
+    homeEntryId: r.home_entry_id,
+    awayEntryId: r.away_entry_id,
+    homeTeamName: r.home_team_name,
+    awayTeamName: r.away_team_name,
+    scoreHome: r.status === "live" ? live?.home ?? 0 : r.score_home,
+    scoreAway: r.status === "live" ? live?.away ?? 0 : r.score_away,
+    penHome: r.pen_home,
+    penAway: r.pen_away,
+    status: r.status,
+    winnerEntryId: r.winner_entry_id,
+    note: r.note,
+    events: eventsByMatch.get(r.id) ?? [],
+    stageKind: r.stage_kind,
+    stageName: r.stage_name,
+    homeLogoUrl: mediaUrl(r.home_logo_key),
+    awayLogoUrl: mediaUrl(r.away_logo_key),
+  };
+};
+
 app.get("/tournaments/:id/matches", async (c) => {
   const tid = Number(c.req.param("id"));
   const pub = await c.env.DB.prepare(
@@ -245,33 +303,27 @@ app.get("/tournaments/:id/matches", async (c) => {
     .first<{ n: number }>();
   if (!pub?.n) return c.json({ message: "赛事不存在或未发布" }, 404);
 
-  type MatchRow = {
-    id: number; stage_id: number; round: number; slot: number; leg: number | null;
-    home_entry_id: number | null; away_entry_id: number | null;
-    home_team_name: string | null; away_team_name: string | null;
-    home_logo_key: string | null; away_logo_key: string | null;
-    score_home: number | null; score_away: number | null;
-    pen_home: number | null; pen_away: number | null;
-    status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
-    stage_kind: MatchDTO["stageKind"];
-  };
+  type MatchRow = PubMatchRow;
+  // 按需过滤：?stageId=X 单阶段，&round=N 单轮；无参 = 全量（兼容旧调用）
+  const qStage = Number(c.req.query("stageId")) || null;
+  const qRound = Number(c.req.query("round")) || null;
+  const where = ["s.tournament_id = ?"];
+  const binds: (number | string)[] = [tid];
+  if (qStage) {
+    where.push("m.stage_id = ?");
+    binds.push(qStage);
+  }
+  if (qRound) {
+    where.push("m.round = ?");
+    binds.push(qRound);
+  }
   const rows = await c.env.DB.prepare(
-    `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
-       m.home_entry_id, m.away_entry_id,
-       ht.name AS home_team_name, at.name AS away_team_name,
-       ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
-       m.score_home, m.score_away, m.pen_home, m.pen_away,
-       m.status, m.winner_entry_id, m.note, s.kind AS stage_kind
-     FROM match m
-     JOIN stage s ON s.id = m.stage_id
-     LEFT JOIN entry he ON he.id = m.home_entry_id
-     LEFT JOIN team ht ON ht.id = he.team_id
-     LEFT JOIN entry ae ON ae.id = m.away_entry_id
-     LEFT JOIN team at ON at.id = ae.team_id
-     WHERE s.tournament_id = ?
+    `${MATCH_COLS}
+     ${MATCH_FROM}
+     WHERE ${where.join(" AND ")}
      ORDER BY s.sort_order, m.round, m.slot, m.leg`
   )
-    .bind(tid)
+    .bind(...binds)
     .all<MatchRow>();
   const list = rows.results ?? [];
 
@@ -286,32 +338,108 @@ app.get("/tournaments/:id/matches", async (c) => {
       : new Map<number, { home: number; away: number }>();
   const eventsByMatch = await fetchPublicEvents(c.env.DB, list);
 
-  const matches: MatchDTO[] = list.map((r) => {
-    const live = liveScores.get(r.id);
-    return {
-      id: r.id,
-      stageId: r.stage_id,
-      round: r.round,
-      slot: r.slot,
-      leg: r.leg,
-      homeEntryId: r.home_entry_id,
-      awayEntryId: r.away_entry_id,
-      homeTeamName: r.home_team_name,
-      awayTeamName: r.away_team_name,
-      scoreHome: r.status === "live" ? live?.home ?? 0 : r.score_home,
-      scoreAway: r.status === "live" ? live?.away ?? 0 : r.score_away,
-      penHome: r.pen_home,
-      penAway: r.pen_away,
-      status: r.status,
-      winnerEntryId: r.winner_entry_id,
-      note: r.note,
-      events: eventsByMatch.get(r.id) ?? [],
-      stageKind: r.stage_kind,
-      homeLogoUrl: mediaUrl(r.home_logo_key),
-      awayLogoUrl: mediaUrl(r.away_logo_key),
-    };
-  });
+  const matches: MatchDTO[] = list.map((r) => toPubMatch(r, liveScores, eventsByMatch));
   return c.json({ matches });
+});
+
+// 轮次元信息：公开页跨阶段统一轮次条的分页依据（必须注册在 /matches/:mid 之前，否则被 :mid 吞掉）
+app.get("/tournaments/:id/matches/rounds", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const pub = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'"
+  )
+    .bind(tid)
+    .first<{ n: number }>();
+  if (!pub?.n) return c.json({ message: "赛事不存在或未发布" }, 404);
+
+  const rows = await c.env.DB.prepare(
+    `SELECT s.id AS stage_id, s.name AS stage_name, s.kind AS stage_kind, s.sort_order AS stage_order,
+       m.round AS round,
+       COUNT(*) AS count,
+       SUM(m.status = 'live') AS live,
+       SUM(m.status = 'finished') AS finished,
+       SUM(m.status = 'pending') AS pending
+     FROM match m
+     JOIN stage s ON s.id = m.stage_id
+     WHERE s.tournament_id = ?
+     GROUP BY s.id, m.round
+     ORDER BY s.sort_order, m.round`
+  )
+    .bind(tid)
+    .all<{
+      stage_id: number;
+      stage_name: string | null;
+      stage_kind: StageRoundsDTO["kind"];
+      stage_order: number;
+      round: number;
+      count: number;
+      live: number;
+      finished: number;
+      pending: number;
+    }>();
+  const stages: StageRoundsDTO[] = [];
+  for (const r of rows.results ?? []) {
+    let st = stages.find((s) => s.stageId === r.stage_id);
+    if (!st) {
+      st = {
+        stageId: r.stage_id,
+        name: r.stage_name,
+        kind: r.stage_kind,
+        sortOrder: r.stage_order,
+        rounds: [],
+      };
+      stages.push(st);
+    }
+    st.rounds.push({
+      round: r.round,
+      count: r.count,
+      live: r.live,
+      finished: r.finished,
+      pending: r.pending,
+    });
+  }
+  return c.json({ stages });
+});
+
+// 赛事摘要：分享卡数据源——最近完赛 4 场（带事件）+ 最早待打 4 场（排除轮空与队伍待定）
+app.get("/tournaments/:id/matches/summary", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const pub = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'"
+  )
+    .bind(tid)
+    .first<{ n: number }>();
+  if (!pub?.n) return c.json({ message: "赛事不存在或未发布" }, 404);
+
+  const [recentRows, upcomingRows] = await Promise.all([
+    c.env.DB.prepare(
+      `${MATCH_COLS}
+       ${MATCH_FROM}
+       WHERE s.tournament_id = ? AND m.status = 'finished'
+       ORDER BY m.finished_at DESC, m.id DESC
+       LIMIT 4`
+    )
+      .bind(tid)
+      .all<PubMatchRow>(),
+    c.env.DB.prepare(
+      `${MATCH_COLS}
+       ${MATCH_FROM}
+       WHERE s.tournament_id = ? AND m.status = 'pending'
+         AND he.id IS NOT NULL AND ae.id IS NOT NULL
+       ORDER BY s.sort_order, m.round, m.slot
+       LIMIT 4`
+    )
+      .bind(tid)
+      .all<PubMatchRow>(),
+  ]);
+  const recentList = recentRows.results ?? [];
+  const upcomingList = upcomingRows.results ?? [];
+  const eventsByMatch = await fetchPublicEvents(c.env.DB, recentList);
+  const emptyLive = new Map<number, { home: number; away: number }>();
+  return c.json({
+    recent: recentList.map((r) => toPubMatch(r, emptyLive, eventsByMatch)),
+    upcoming: upcomingList.map((r) => toPubMatch(r, emptyLive, eventsByMatch)),
+  });
 });
 
 // 单场详情：公开端比赛页用，结构同赛程接口的元素

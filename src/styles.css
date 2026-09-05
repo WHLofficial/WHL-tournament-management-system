@@ -407,6 +407,37 @@ button.btn-ghost:hover:not(:disabled) {
 
 /* ---------- 比赛 tab（报分/事件） ---------- */
 .matches-tab .stage-block { margin-bottom: 20px; }
+/* 跨阶段轮次条：横向滚动 chip，live 轮带橙点 */
+.round-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+  scrollbar-width: thin;
+}
+.rt-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rt-chip:hover { border-color: var(--pitch); color: var(--pitch); }
+.rt-chip.rt-active {
+  background: var(--pitch);
+  border-color: var(--pitch);
+  color: #fff;
+  font-weight: 600;
+}
+.rt-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--live); flex: 0 0 auto; }
+.stage-rename-input { font: inherit; font-weight: inherit; padding: 2px 6px; border: 1px solid var(--pitch); border-radius: 4px; width: min(220px, 50vw); }
 .round-head {
   margin: 10px 0 6px;
   font-size: 13px;

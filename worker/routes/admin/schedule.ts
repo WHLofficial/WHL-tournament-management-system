@@ -231,6 +231,25 @@ app.delete("/:id/stages/:stageId", async (c) => {
   return c.json({ ok: true });
 });
 
+// 阶段改名：纯显示用途，随时可改；空值 = 清除恢复默认赛制名
+app.patch("/:id/stages/:stageId/name", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  const stage = await c.env.DB.prepare(
+    "SELECT id FROM stage WHERE id = ? AND tournament_id = ?"
+  )
+    .bind(stageId, tid)
+    .first<{ id: number }>();
+  if (!stage) return fail(c, 404, "阶段不存在");
+  const body = (await c.req.json<{ name?: unknown }>().catch(() => ({}))) as { name?: unknown };
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (name.length > 30) return fail(c, 400, "阶段名最多 30 个字");
+  await c.env.DB.prepare("UPDATE stage SET name = ? WHERE id = ?")
+    .bind(name === "" ? null : name, stageId)
+    .run();
+  return c.json({ ok: true, name: name === "" ? null : name });
+});
+
 // ---------- 自动生成阶段赛程 ----------
 
 app.post("/:id/stages/:stageId/generate", async (c) => {
