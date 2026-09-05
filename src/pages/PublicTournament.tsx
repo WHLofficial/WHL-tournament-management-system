@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
@@ -48,6 +48,19 @@ export default function PublicTournament() {
     setSearchParams(t === "schedule" ? {} : { tab: t }, { replace: true });
   };
   const [err, setErr] = useState<string | null>(null);
+  // 切轮次时页面内容会先清空再填充（未缓存轮次要现拉），高度塌缩会把滚动位置挤到顶上；
+  // 记下点击时的滚动位置，等新轮数据渲染完成后恢复。
+  const lockScrollY = useRef<number | null>(null);
+  const pickRound = (c: RoundChip) => {
+    lockScrollY.current = window.scrollY;
+    setSel({ stageId: c.stageId, round: c.round });
+  };
+  useLayoutEffect(() => {
+    if (lockScrollY.current == null || !sel) return;
+    if (!roundCache.has(roundKey(sel))) return;
+    window.scrollTo({ top: lockScrollY.current });
+    lockScrollY.current = null;
+  }, [sel, roundCache]);
 
   const refresh = useCallback(async () => {
     try {
@@ -260,7 +273,7 @@ export default function PublicTournament() {
                 <button
                   key={roundKey(c)}
                   className={`rt-chip${sel && roundKey(sel) === roundKey(c) ? " rt-active" : ""}${c.live > 0 ? " rt-live" : ""}`}
-                  onClick={() => setSel({ stageId: c.stageId, round: c.round })}
+                  onClick={() => pickRound(c)}
                 >
                   {c.live > 0 && <span className="rt-dot" aria-hidden />}
                   {stageDisplayName(c.stage)} · {roundLabel(c)}
