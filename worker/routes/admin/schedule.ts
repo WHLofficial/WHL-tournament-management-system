@@ -1289,7 +1289,7 @@ app.post("/:id/stages/:stageId/complete-double", async (c) => {
       if (m.home_entry_id == null || m.away_entry_id == null) continue;
       const key = pairKey(m.home_entry_id, m.away_entry_id);
       if (seen.has(key)) {
-        return fail(c, 400, "第一循环存在重复交手，无法镜像生成第二循环");
+        return fail(c, 400, "第一循环存在重复交手，无法生成第二循环");
       }
       seen.add(key);
       first.push(m);
@@ -1317,7 +1317,7 @@ app.post("/:id/stages/:stageId/complete-double", async (c) => {
       stmts.push(
         c.env.DB.prepare(insertStmt).bind(
           stage.id,
-          2 * k + 1 - m.round,
+          m.round + k,
           m.slot,
           m.away_entry_id,
           m.home_entry_id
