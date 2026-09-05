@@ -13,6 +13,7 @@ import { AdminCodes } from "./pages/AdminCodes";
 import { TeamDetailPage } from "./pages/TeamDetail";
 import { TournamentManage } from "./pages/TournamentManage";
 import MyTeam from "./pages/MyTeam";
+import Tactics from "./pages/Tactics";
 import { Accounts } from "./pages/Accounts";
 import { ChangePassword } from "./pages/ChangePassword";
 
@@ -47,6 +48,7 @@ function AppShell() {
           }
         />
         <Route path="/t/:id" element={<PublicTournament />} />
+        <Route path="/tactics" element={<Tactics />} />
         <Route path="/t/:id/match/:mid" element={<PublicMatchDetail />} />
         <Route
           path="/my-team"

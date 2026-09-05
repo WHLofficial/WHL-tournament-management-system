@@ -48,6 +48,10 @@ export function Home() {
     <>
       <main className="container">
       <h1>WHL 赛事</h1>
+      <Link to="/tactics" className="tac-entry">
+        <strong>🧩 战术板</strong>
+        <span>FC26 战术码在线排阵 · 无需登录</span>
+      </Link>
       {err && <p className="error-msg">{err}</p>}
       {list === null && !err && <p className="muted">加载中…</p>}
       {list !== null && list.length === 0 && (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ROLE_LABEL, useAuth } from "../auth";
+import { CreditsButton } from "./Credits";
 
 export function TopBar() {
   const { user, loading, logout } = useAuth();
@@ -28,6 +29,7 @@ export function TopBar() {
         WHL 赛事系统
       </Link>
       <nav className="nav-links">
+        {!forced && <Link to="/tactics">战术板</Link>}
         {user && !forced && (user.role === "admin" || user.role === "superadmin") ? (
           <>
             <Link to="/admin">赛事管理</Link>
@@ -37,6 +39,7 @@ export function TopBar() {
           </>
         ) : null}
         {user && !forced ? <Link to="/my-team">我的球队</Link> : null}
+        {!forced && <CreditsButton />}
       </nav>
       {loading ? null : user ? (
         <span className="userbox">
