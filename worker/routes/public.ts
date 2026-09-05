@@ -153,23 +153,33 @@ async function fetchPublicEvents(
     if (r.home_entry_id !== null) sideByEvent.set(`${r.id}:${r.home_entry_id}`, "home");
     if (r.away_entry_id !== null) sideByEvent.set(`${r.id}:${r.away_entry_id}`, "away");
   }
-  const rows = await db
-    .prepare(
-      `SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,
-         p.name AS player_name, ap.name AS assist_player_name
-       FROM match_event me
-       LEFT JOIN player p ON p.id = me.player_id
-       LEFT JOIN player ap ON ap.id = me.assist_player_id
-       WHERE me.match_id IN (${ids.map(() => "?").join(",")})
-       ORDER BY me.match_id, COALESCE(me.minute, -1), me.id`
-    )
-    .bind(...ids)
-    .all<{
-      id: number; match_id: number; type: PublicMatchEventDTO["type"];
-      minute: number | null; entry_id: number | null;
-      player_name: string | null; assist_player_name: string | null;
-    }>();
-  for (const r of rows.results ?? []) {
+  // D1 单条查询 bind 参数上限 100，赛程可能超过 100 场（如 12 队双循环 132 场），按批拆分 IN 查询
+  const rows: {
+    id: number; match_id: number; type: PublicMatchEventDTO["type"];
+    minute: number | null; entry_id: number | null;
+    player_name: string | null; assist_player_name: string | null;
+  }[] = [];
+  for (let i = 0; i < ids.length; i += 90) {
+    const chunk = ids.slice(i, i + 90);
+    const res = await db
+      .prepare(
+        `SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,
+           p.name AS player_name, ap.name AS assist_player_name
+         FROM match_event me
+         LEFT JOIN player p ON p.id = me.player_id
+         LEFT JOIN player ap ON ap.id = me.assist_player_id
+         WHERE me.match_id IN (${chunk.map(() => "?").join(",")})
+         ORDER BY me.match_id, COALESCE(me.minute, -1), me.id`
+      )
+      .bind(...chunk)
+      .all<{
+        id: number; match_id: number; type: PublicMatchEventDTO["type"];
+        minute: number | null; entry_id: number | null;
+        player_name: string | null; assist_player_name: string | null;
+      }>();
+    rows.push(...(res.results ?? []));
+  }
+  for (const r of rows) {
     const side = r.entry_id !== null ? sideByEvent.get(`${r.match_id}:${r.entry_id}`) : undefined;
     if (!side) continue;
     const list = byMatch.get(r.match_id) ?? [];
