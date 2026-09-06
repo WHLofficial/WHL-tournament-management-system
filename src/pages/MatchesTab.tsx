@@ -369,45 +369,47 @@ function MatchPanel({
     <div className="match-panel">
       {m.status !== "live" && <ScoreForm match={m} busy={busy} act={act} onDone={togglePanel} />}
       {m.status === "live" && (
+        <div className="event-quick">
+          <button
+            className="btn btn-sm"
+            disabled={busy}
+            onClick={() =>
+              act(async () => {
+                const b = await api<{ scoreHome: number; scoreAway: number }>(
+                  `/api/admin/matches/${m.id}/events`,
+                  {
+                    method: "POST",
+                    body: { type: "goal", entryId: m.homeEntryId },
+                  },
+                );
+                return `进球！当前比分 ${b.scoreHome} : ${b.scoreAway}`;
+              })
+            }
+          >
+            {homeName} 进球
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={busy}
+            onClick={() =>
+              act(async () => {
+                const b = await api<{ scoreHome: number; scoreAway: number }>(
+                  `/api/admin/matches/${m.id}/events`,
+                  {
+                    method: "POST",
+                    body: { type: "goal", entryId: m.awayEntryId },
+                  },
+                );
+                return `进球！当前比分 ${b.scoreHome} : ${b.scoreAway}`;
+              })
+            }
+          >
+            {awayName} 进球
+          </button>
+        </div>
+      )}
+      {(m.status === "live" || m.status === "finished") && (
         <>
-          <div className="event-quick">
-            <button
-              className="btn btn-sm"
-              disabled={busy}
-              onClick={() =>
-                act(async () => {
-                  const b = await api<{ scoreHome: number; scoreAway: number }>(
-                    `/api/admin/matches/${m.id}/events`,
-                    {
-                      method: "POST",
-                      body: { type: "goal", entryId: m.homeEntryId },
-                    },
-                  );
-                  return `进球！当前比分 ${b.scoreHome} : ${b.scoreAway}`;
-                })
-              }
-            >
-              {homeName} 进球
-            </button>
-            <button
-              className="btn btn-sm"
-              disabled={busy}
-              onClick={() =>
-                act(async () => {
-                  const b = await api<{ scoreHome: number; scoreAway: number }>(
-                    `/api/admin/matches/${m.id}/events`,
-                    {
-                      method: "POST",
-                      body: { type: "goal", entryId: m.awayEntryId },
-                    },
-                  );
-                  return `进球！当前比分 ${b.scoreHome} : ${b.scoreAway}`;
-                })
-              }
-            >
-              {awayName} 进球
-            </button>
-          </div>
           <EventForm
             match={m}
             homePlayers={homePlayers}
@@ -423,8 +425,10 @@ function MatchPanel({
             act={act}
             tick={tick}
           />
-          <ScoreForm match={m} busy={busy} act={act} onDone={togglePanel} live />
         </>
+      )}
+      {m.status === "live" && (
+        <ScoreForm match={m} busy={busy} act={act} onDone={togglePanel} live />
       )}
     </div>
   );

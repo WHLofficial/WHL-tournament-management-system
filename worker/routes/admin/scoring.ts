@@ -222,7 +222,7 @@ app.post("/:id/finish", async (c) => {
   }
 });
 
-// POST /events：live 期间录事件，进球/点球进球/乌龙球实时累计比分，不触发重算
+// POST /events：live 期间录事件实时累计比分；完赛后可补录/删改事件（只动事件流，比分列不变）
 const EVENT_TYPES = [
   "goal",
   "pen_goal",
@@ -251,7 +251,7 @@ app.post("/:id/events", async (c) => {
   try {
     const m = await loadMatch(c.env.DB, id);
     await assertNotArchived(c.env.DB, id);
-    if (m.status !== "live") return fail(c, 400, "仅进行中的比赛可录事件");
+    if (m.status === "pending") return fail(c, 400, "比赛还没开打，开赛后才能录事件");
     if (body.entryId !== m.home_entry_id && body.entryId !== m.away_entry_id)
       return fail(c, 400, "该球队不在本场对阵中");
     // 球员归属校验：射手/助攻必须属于该参赛队（entry.team_id 关联 player.team_id）
@@ -290,8 +290,16 @@ app.post("/:id/events", async (c) => {
         c.get("user")!.id,
       )
       .run();
-    const score = await liveScore(c.env.DB, m);
-    return c.json({ ok: true, scoreHome: score.home, scoreAway: score.away });
+    if (m.status === "live") {
+      const score = await liveScore(c.env.DB, m);
+      return c.json({ ok: true, scoreHome: score.home, scoreAway: score.away });
+    }
+    // 完赛后的补录不改比分列，返回当前比分即可
+    return c.json({
+      ok: true,
+      scoreHome: m.score_home ?? 0,
+      scoreAway: m.score_away ?? 0,
+    });
   } catch (e) {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
     throw e;
