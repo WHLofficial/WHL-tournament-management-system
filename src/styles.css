@@ -2023,6 +2023,7 @@ button.add-stage {
   .ev-side-seg {
     display: flex;
     width: 100%;
+    max-width: 100%;
   }
   .ev-side-seg button {
     flex: 1;
