@@ -12,7 +12,14 @@ import {
   readStageStandings,
   buildStandingsStmts,
 } from "../../lib/standings";
-import { buildStats, buildToplists } from "../../lib/topstats";
+import { buildStats } from "../../lib/topstats";
+import {
+  getSuspensionConfig,
+  normalizeSuspensionInput,
+  computeSuspensions,
+  buildToplistsWithSuspension,
+} from "../../lib/suspension";
+import type { SuspensionConfig } from "../../../shared/types";
 import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
 import { putDefaultCover } from "../../lib/defaultCover";
 import { requireSuperadmin } from "../../middleware/auth";
@@ -655,7 +662,81 @@ app.get(
       .bind(id)
       .first<{ id: number }>();
     if (!t) return c.json({ message: "赛事不存在" }, 404);
-    return c.json(await buildToplists(c.env.DB, id));
+    return c.json(await buildToplistsWithSuspension(c.env.DB, id));
+  }
+);
+
+// ---------- 停赛规则 ----------
+// GET /:id/suspensions：配置 + 每球员停赛/黄牌累积状态（纯派生实时计算）
+app.get(
+  "/:id/suspensions",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ id: number }>();
+    if (!t) return c.json({ message: "赛事不存在" }, 404);
+    const config = await getSuspensionConfig(c.env.DB, id);
+    const players = await computeSuspensions(c.env.DB, id, config);
+    return c.json({ config, players });
+  }
+);
+
+// PUT /:id/suspensions：存停赛参数（yellowResetAt 只能由 reset-yellows 写，此处保留原值）
+app.put(
+  "/:id/suspensions",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const body = await c.req.json().catch(() => null);
+    const norm = normalizeSuspensionInput(body);
+    if (!norm) return c.json({ message: "停赛场数与黄牌阈值须为 0-10 的整数" }, 400);
+    const row = await c.env.DB.prepare("SELECT config_json FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ config_json: string | null }>();
+    if (!row) return c.json({ message: "赛事不存在" }, 404);
+    let cfg: Record<string, unknown> = {};
+    try {
+      cfg = (JSON.parse(row.config_json || "{}") ?? {}) as Record<string, unknown>;
+    } catch {
+      cfg = {};
+    }
+    const prev = (cfg.suspension ?? {}) as Partial<SuspensionConfig>;
+    const next: SuspensionConfig = {
+      ...norm,
+      yellowResetAt: typeof prev.yellowResetAt === "string" ? prev.yellowResetAt : null,
+    };
+    cfg.suspension = next;
+    await c.env.DB.prepare("UPDATE tournament SET config_json = ? WHERE id = ?")
+      .bind(JSON.stringify(cfg), id)
+      .run();
+    return c.json({ ok: true, config: next });
+  }
+);
+
+// POST /:id/suspensions/reset-yellows：手动清零黄牌累积——记时间戳锚点，
+// 锚点后的黄牌重新计数；已触发的停赛继续执行
+app.post(
+  "/:id/suspensions/reset-yellows",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const row = await c.env.DB.prepare("SELECT config_json FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ config_json: string | null }>();
+    if (!row) return c.json({ message: "赛事不存在" }, 404);
+    let cfg: Record<string, unknown> = {};
+    try {
+      cfg = (JSON.parse(row.config_json || "{}") ?? {}) as Record<string, unknown>;
+    } catch {
+      cfg = {};
+    }
+    const prev = { ...{ redBan: 2, red2yBan: 1, yellowThreshold: 3 }, ...(cfg.suspension ?? {}) } as SuspensionConfig;
+    // 保留毫秒：与 match_event.created_at（毫秒精度）做字典序比较，截秒会同秒内误判先后
+    const now = new Date().toISOString();
+    cfg.suspension = { ...prev, yellowResetAt: now };
+    await c.env.DB.prepare("UPDATE tournament SET config_json = ? WHERE id = ?")
+      .bind(JSON.stringify(cfg), id)
+      .run();
+    return c.json({ ok: true, yellowResetAt: now });
   }
 );
 
