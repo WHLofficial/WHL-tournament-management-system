@@ -54,6 +54,14 @@ export default function MatchesTab({
   const [message, setMessage] = useState<string | null>(null);
   const [openPanel, setOpenPanel] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
+  // 参赛队名单缓存：tab 打开即并行预取全部队，面板展开零等待
+  const [playersCache, setPlayersCache] = useState<Map<number, PlayerDTO[]>>(
+    new Map(),
+  );
+
+  const entryById = new Map<number, EntryDTO>(
+    detail.entries.map((e) => [e.id, e]),
+  );
 
   const refetch = useCallback(async () => {
     try {
@@ -69,6 +77,44 @@ export default function MatchesTab({
   useEffect(() => {
     refetch();
   }, [refetch]);
+
+  // 自驱动补拉缺失的队名单（拉完缓存更新，触发重试直至补齐）
+  useEffect(() => {
+    if (!matches) return;
+    const ids = new Set<number>();
+    for (const m of matches) {
+      for (const eid of [m.homeEntryId, m.awayEntryId]) {
+        const tid = eid != null ? entryById.get(eid)?.teamId : undefined;
+        if (tid != null) ids.add(tid);
+      }
+    }
+    const missing = [...ids].filter((tid) => !playersCache.has(tid));
+    if (missing.length === 0) return;
+    let alive = true;
+    Promise.all(
+      missing.map((tid) =>
+        api<{ players: PlayerDTO[] }>(`/api/admin/teams/${tid}`).then(
+          (b) => [tid, b.players] as const,
+        ),
+      ),
+    )
+      .then((pairs) => {
+        if (alive)
+          setPlayersCache((prev) => new Map([...prev, ...pairs]));
+      })
+      .catch(() => {}); // 名单拉不到就保持空：事件照录，仅无球员选项
+    return () => {
+      alive = false;
+    };
+  }, [matches, playersCache, entryById]);
+
+  const playersOf = (entryId: number | null): PlayerDTO[] =>
+    entryId == null
+      ? []
+      : (playersCache.get(entryById.get(entryId)?.teamId ?? -1) ?? []);
+  const playerById = new Map<number, string>();
+  for (const list of playersCache.values())
+    for (const p of list) playerById.set(p.id, p.name);
 
   const act = async (fn: () => Promise<string | null>) => {
     setBusy(true);
@@ -87,10 +133,6 @@ export default function MatchesTab({
   };
 
   if (matches === null) return <p className="muted card">加载中…</p>;
-
-  const entryById = new Map<number, EntryDTO>(
-    detail.entries.map((e) => [e.id, e]),
-  );
 
   const stagesWithMatches = detail.stages.filter((s) =>
     matches.some((m) => m.stageId === s.id),
@@ -127,6 +169,9 @@ export default function MatchesTab({
                       match={m}
                       agg={computeAgg(m, roundList)}
                       entryById={entryById}
+                      homePlayers={playersOf(m.homeEntryId)}
+                      awayPlayers={playersOf(m.awayEntryId)}
+                      playerById={playerById}
                       busy={busy}
                       act={act}
                       tick={tick}
@@ -152,6 +197,9 @@ export default function MatchesTab({
               match={m}
               agg={null}
               entryById={entryById}
+              homePlayers={playersOf(m.homeEntryId)}
+              awayPlayers={playersOf(m.awayEntryId)}
+              playerById={playerById}
               busy={busy}
               act={act}
               tick={tick}
@@ -171,6 +219,9 @@ function MatchRow({
   match: m,
   agg,
   entryById,
+  homePlayers,
+  awayPlayers,
+  playerById,
   busy,
   act,
   tick,
@@ -180,6 +231,9 @@ function MatchRow({
   match: MatchDTO;
   agg: [number, number] | null;
   entryById: Map<number, EntryDTO>;
+  homePlayers: PlayerDTO[];
+  awayPlayers: PlayerDTO[];
+  playerById: Map<number, string>;
   busy: boolean;
   act: Act;
   tick: number;
@@ -223,6 +277,9 @@ function MatchRow({
         <MatchPanel
           match={m}
           entryById={entryById}
+          homePlayers={homePlayers}
+          awayPlayers={awayPlayers}
+          playerById={playerById}
           busy={busy}
           act={act}
           tick={tick}
@@ -287,6 +344,9 @@ function MatchActions({
 function MatchPanel({
   match: m,
   entryById,
+  homePlayers,
+  awayPlayers,
+  playerById,
   busy,
   act,
   tick,
@@ -294,6 +354,9 @@ function MatchPanel({
 }: {
   match: MatchDTO;
   entryById: Map<number, EntryDTO>;
+  homePlayers: PlayerDTO[];
+  awayPlayers: PlayerDTO[];
+  playerById: Map<number, string>;
   busy: boolean;
   act: Act;
   tick: number;
@@ -301,42 +364,6 @@ function MatchPanel({
 }) {
   const homeName = m.homeTeamName ?? "主队";
   const awayName = m.awayTeamName ?? "客队";
-  // 两队名单：事件表单选球员、事件列表显示人名都要用
-  const [teamPlayers, setTeamPlayers] = useState<Map<number, PlayerDTO[]> | null>(
-    null,
-  );
-
-  useEffect(() => {
-    const teamIds = [
-      m.homeEntryId != null ? entryById.get(m.homeEntryId)?.teamId : undefined,
-      m.awayEntryId != null ? entryById.get(m.awayEntryId)?.teamId : undefined,
-    ].filter((x): x is number => x != null);
-    const uniq = [...new Set(teamIds)];
-    if (uniq.length === 0) return;
-    let alive = true;
-    Promise.all(
-      uniq.map((tid) =>
-        api<{ players: PlayerDTO[] }>(`/api/admin/teams/${tid}`).then(
-          (b) => [tid, b.players] as const,
-        ),
-      ),
-    ).then((pairs) => {
-      if (alive) setTeamPlayers(new Map(pairs));
-    });
-    return () => {
-      alive = false;
-    };
-  }, [m.id, entryById]);
-
-  const playersOf = (entryId: number | null): PlayerDTO[] =>
-    entryId == null
-      ? []
-      : (teamPlayers?.get(entryById.get(entryId)?.teamId ?? -1) ?? []);
-  const playerById = new Map<number, string>();
-  if (teamPlayers) {
-    for (const list of teamPlayers.values())
-      for (const p of list) playerById.set(p.id, p.name);
-  }
 
   return (
     <div className="match-panel">
@@ -383,8 +410,8 @@ function MatchPanel({
           </div>
           <EventForm
             match={m}
-            homePlayers={playersOf(m.homeEntryId)}
-            awayPlayers={playersOf(m.awayEntryId)}
+            homePlayers={homePlayers}
+            awayPlayers={awayPlayers}
             busy={busy}
             act={act}
           />
