@@ -83,7 +83,7 @@ app.get("/:id", async (c) => {
   if (!teamRow) return c.json({ message: "球队不存在" }, 404);
   const team = { id: teamRow.id, name: teamRow.name, logoUrl: mediaUrl(teamRow.logo_key) };
   const rows = await c.env.DB.prepare(
-    "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY id"
+    "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id"
   )
     .bind(id)
     .all<{ id: number; name: string; number: string | null }>();

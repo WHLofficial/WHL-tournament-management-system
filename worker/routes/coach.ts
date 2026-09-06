@@ -88,7 +88,7 @@ app.get("/me/team", async (c) => {
   const [players, members, entries] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, name, number FROM player WHERE team_id = ?
-       ORDER BY (number IS NULL), number, id`
+       ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id`
     )
       .bind(tm.team_id)
       .all<{ id: number; name: string; number: string | null }>(),
