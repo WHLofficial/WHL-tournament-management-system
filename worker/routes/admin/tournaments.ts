@@ -153,7 +153,7 @@ app.get("/:id", async (c) => {
     }>();
   if (!t) return c.json({ message: "赛事不存在" }, 404);
 
-  const [stages, groups, entries] = await Promise.all([
+  const [stages, groups, entries, tiebreakers] = await Promise.all([
     c.env.DB.prepare(
       "SELECT id, kind, sort_order, name, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order"
     )
@@ -183,6 +183,7 @@ app.get("/:id", async (c) => {
         logo_key: string | null;
         player_count: number;
       }>(),
+    getTiebreakers(c.env.DB, id),
   ]);
 
   const detail = {
@@ -221,7 +222,7 @@ app.get("/:id", async (c) => {
         teamLogoUrl: mediaUrl(e.logo_key),
       })
     ),
-    tiebreakers: await getTiebreakers(c.env.DB, id),
+    tiebreakers,
   };
   return c.json(detail);
 });

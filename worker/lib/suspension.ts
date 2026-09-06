@@ -251,8 +251,10 @@ export async function buildToplistsWithSuspension(
   db: D1Database,
   tid: number
 ): Promise<Toplists> {
-  const [cfg, lists] = await Promise.all([getSuspensionConfig(db, tid), buildToplists(db, tid)]);
-  const susp = await computeSuspensions(db, tid, cfg);
+  // buildToplists 与 computeSuspensions 互不依赖（后者只等配置），重叠执行
+  const listsP = buildToplists(db, tid);
+  const suspP = getSuspensionConfig(db, tid).then((cfg) => computeSuspensions(db, tid, cfg));
+  const [lists, susp] = await Promise.all([listsP, suspP]);
   const off = new Set(susp.filter((s) => s.remaining > 0).map((s) => s.playerId));
   return {
     ...lists,

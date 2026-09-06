@@ -9,7 +9,11 @@ import mediaRoutes from "./routes/media";
 
 const app = new Hono<AppEnv>();
 
-app.use("/api/*", attachUser);
+// 公开读路由（公开接口 + 媒体）不读登录态：跳过会话检查，登录用户每请求省一次 KV+D1 往返
+const PUBLIC_PATHS = ["/api/public/", "/api/media/"];
+app.use("/api/*", (c, next) =>
+  PUBLIC_PATHS.some((p) => c.req.path.startsWith(p)) ? next() : attachUser(c, next)
+);
 
 app.get("/api/health", (c) => c.json({ ok: true, ts: Date.now() }));
 

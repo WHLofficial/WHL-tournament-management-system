@@ -3,7 +3,7 @@ import type { AppEnv } from "../../env";
 import { requireAdmin } from "../../middleware/auth";
 import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
 import { buildAutoFillStmts } from "./schedule";
-import { getSuspensionConfig, computeSuspensions } from "../../lib/suspension";
+import { getSuspensionConfig } from "../../lib/suspension";
 import { fetchMatchLineup, LineupError } from "../../lib/lineup";
 import type { MatchEventDTO, MatchEventType } from "../../../shared/types";
 
@@ -280,11 +280,10 @@ app.post("/:id/events", async (c) => {
       return fail(c, 400, "助攻球员不能和进球球员是同一人");
 
     // 纪律记录：已被罚下的球员本场不能再吃牌（更正请先删红牌事件）；
-    // 第二张黄牌自动转存为两黄变一红（red_2y 只由系统生成，不在录入白名单）；
-    // 软约束停赛警告：录入前该球员已在停赛中则随响应提示，不拦截。
+    // 第二张黄牌自动转存为两黄变一红（red_2y 只由系统生成，不在录入白名单）。
+    // 停赛提醒不在这里做——那需要全量重放整届赛事，前端事件表单已用已拉取的停赛数据做提交前警告。
     let eventType: MatchEventType = body.type as MatchEventType;
     let notice: string | null = null;
-    let warning: string | null = null;
     if (body.playerId != null) {
       const stageRow = await c.env.DB.prepare(
         "SELECT tournament_id FROM stage WHERE id = ?"
@@ -293,11 +292,6 @@ app.post("/:id/events", async (c) => {
         .first<{ tournament_id: number }>();
       if (stageRow) {
         const sc = await getSuspensionConfig(c.env.DB, stageRow.tournament_id);
-        // 软约束停赛警告：录入前该球员已在停赛中则随响应提示，不拦截（录任何事件都提示）
-        const susp = await computeSuspensions(c.env.DB, stageRow.tournament_id, sc);
-        const hit = susp.find((x) => x.playerId === body.playerId);
-        if (hit && hit.remaining > 0)
-          warning = `警告：${hit.playerName} 停赛中（剩 ${hit.remaining} 场）`;
         if (body.type === "yellow" || body.type === "red") {
           const sentOff = await c.env.DB.prepare(
             `SELECT COUNT(*) AS n FROM match_event
@@ -339,7 +333,6 @@ app.post("/:id/events", async (c) => {
       .run();
     const extras: Record<string, string> = {};
     if (notice) extras.notice = notice;
-    if (warning) extras.warning = warning;
     if (m.status === "live") {
       const score = await liveScore(c.env.DB, m);
       return c.json({ ok: true, scoreHome: score.home, scoreAway: score.away, ...extras });

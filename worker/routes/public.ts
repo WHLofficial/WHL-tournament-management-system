@@ -15,11 +15,12 @@ import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
 import { mediaUrl } from "../lib/media";
 import { fetchMatchLineup, LineupError } from "../lib/lineup";
+import { pubCache } from "../lib/cache";
 
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
 const app = new Hono<AppEnv>();
 
-app.get("/tournaments", async (c) => {
+app.get("/tournaments", pubCache(60), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
@@ -50,7 +51,7 @@ app.get("/tournaments", async (c) => {
   return c.json({ tournaments });
 });
 
-app.get("/tournaments/:id", async (c) => {
+app.get("/tournaments/:id", pubCache(60), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
@@ -162,26 +163,34 @@ async function fetchPublicEvents(
     minute: number | null; entry_id: number | null;
     player_name: string | null; assist_player_name: string | null;
   }[] = [];
+  const chunkQueries: Promise<D1Result<{
+    id: number; match_id: number; type: PublicMatchEventDTO["type"];
+    minute: number | null; entry_id: number | null;
+    player_name: string | null; assist_player_name: string | null;
+  }>>[] = [];
   for (let i = 0; i < ids.length; i += 90) {
     const chunk = ids.slice(i, i + 90);
-    const res = await db
-      .prepare(
-        `SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,
-           p.name AS player_name, ap.name AS assist_player_name
-         FROM match_event me
-         LEFT JOIN player p ON p.id = me.player_id
-         LEFT JOIN player ap ON ap.id = me.assist_player_id
-         WHERE me.match_id IN (${chunk.map(() => "?").join(",")})
-         ORDER BY me.match_id, COALESCE(me.minute, -1), me.id`
-      )
-      .bind(...chunk)
-      .all<{
-        id: number; match_id: number; type: PublicMatchEventDTO["type"];
-        minute: number | null; entry_id: number | null;
-        player_name: string | null; assist_player_name: string | null;
-      }>();
-    rows.push(...(res.results ?? []));
+    chunkQueries.push(
+      db
+        .prepare(
+          `SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,
+             p.name AS player_name, ap.name AS assist_player_name
+           FROM match_event me
+           LEFT JOIN player p ON p.id = me.player_id
+           LEFT JOIN player ap ON ap.id = me.assist_player_id
+           WHERE me.match_id IN (${chunk.map(() => "?").join(",")})
+           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id`
+        )
+        .bind(...chunk)
+        .all<{
+          id: number; match_id: number; type: PublicMatchEventDTO["type"];
+          minute: number | null; entry_id: number | null;
+          player_name: string | null; assist_player_name: string | null;
+        }>(),
+    );
   }
+  // 批间并行同发，不再逐批串行等往返
+  for (const res of await Promise.all(chunkQueries)) rows.push(...(res.results ?? []));
   for (const r of rows) {
     const side = r.entry_id !== null ? sideByEvent.get(`${r.match_id}:${r.entry_id}`) : undefined;
     if (!side) continue;
@@ -296,7 +305,7 @@ const toPubMatch = (
   };
 };
 
-app.get("/tournaments/:id/matches", async (c) => {
+app.get("/tournaments/:id/matches", pubCache(10), async (c) => {
   const tid = Number(c.req.param("id"));
   const pub = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'"
@@ -334,18 +343,22 @@ app.get("/tournaments/:id/matches", async (c) => {
     if (r.home_entry_id !== null) sideByEvent.set(`${r.id}:${r.home_entry_id}`, "home");
     if (r.away_entry_id !== null) sideByEvent.set(`${r.id}:${r.away_entry_id}`, "away");
   }
-  const liveScores =
+  // live 比分与事件查询互不依赖，并行发；无参调用是兼容旧路径（前端全按轮拉取），不再附带全赛事事件大 payload
+  const [liveScores, eventsByMatch] = await Promise.all([
     list.some((r) => r.status === "live")
-      ? await fetchLiveScores(c.env.DB, tid, sideByEvent)
-      : new Map<number, { home: number; away: number }>();
-  const eventsByMatch = await fetchPublicEvents(c.env.DB, list);
+      ? fetchLiveScores(c.env.DB, tid, sideByEvent)
+      : Promise.resolve(new Map<number, { home: number; away: number }>()),
+    qStage || qRound
+      ? fetchPublicEvents(c.env.DB, list)
+      : Promise.resolve(new Map<number, PublicMatchEventDTO[]>()),
+  ]);
 
   const matches: MatchDTO[] = list.map((r) => toPubMatch(r, liveScores, eventsByMatch));
   return c.json({ matches });
 });
 
 // 轮次元信息：公开页跨阶段统一轮次条的分页依据（必须注册在 /matches/:mid 之前，否则被 :mid 吞掉）
-app.get("/tournaments/:id/matches/rounds", async (c) => {
+app.get("/tournaments/:id/matches/rounds", pubCache(10), async (c) => {
   const tid = Number(c.req.param("id"));
   const pub = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'"
@@ -404,7 +417,7 @@ app.get("/tournaments/:id/matches/rounds", async (c) => {
 });
 
 // 赛事摘要：分享卡数据源——最近完赛 4 场（带事件）+ 最早待打 4 场（排除轮空与队伍待定）
-app.get("/tournaments/:id/matches/summary", async (c) => {
+app.get("/tournaments/:id/matches/summary", pubCache(60), async (c) => {
   const tid = Number(c.req.param("id"));
   const pub = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'"
@@ -445,7 +458,7 @@ app.get("/tournaments/:id/matches/summary", async (c) => {
 });
 
 // 单场详情：公开端比赛页用，结构同赛程接口的元素
-app.get("/tournaments/:id/matches/:mid", async (c) => {
+app.get("/tournaments/:id/matches/:mid", pubCache(10), async (c) => {
   const tid = Number(c.req.param("id"));
   const mid = Number(c.req.param("mid"));
   const pub = await c.env.DB.prepare(
@@ -487,11 +500,13 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
   if (row.home_entry_id !== null) sideByEvent.set(`${row.id}:${row.home_entry_id}`, "home");
   if (row.away_entry_id !== null) sideByEvent.set(`${row.id}:${row.away_entry_id}`, "away");
 
-  const liveScores =
+  // live 比分与事件查询互不依赖，并行发
+  const [liveScores, eventsByMatch] = await Promise.all([
     row.status === "live"
-      ? await fetchLiveScores(c.env.DB, tid, sideByEvent)
-      : new Map<number, { home: number; away: number }>();
-  const eventsByMatch = await fetchPublicEvents(c.env.DB, [row]);
+      ? fetchLiveScores(c.env.DB, tid, sideByEvent)
+      : Promise.resolve(new Map<number, { home: number; away: number }>()),
+    fetchPublicEvents(c.env.DB, [row]),
+  ]);
   const live = liveScores.get(row.id);
   const match: MatchDTO = {
     id: row.id,
@@ -519,7 +534,7 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
 });
 
 // 已提交战术阵容：开赛（live/finished）后公开；未开打或草稿赛事一律双方 null（赛前不亮牌）
-app.get("/matches/:mid/lineup", async (c) => {
+app.get("/matches/:mid/lineup", pubCache(60), async (c) => {
   try {
     return c.json(await fetchMatchLineup(c.env.DB, Number(c.req.param("mid")), true));
   } catch (e) {
@@ -529,7 +544,7 @@ app.get("/matches/:mid/lineup", async (c) => {
 });
 
 // 跨赛事"即将进行"：非草稿赛事的未开打场次（排除轮空/队伍待定），running 优先
-app.get("/upcoming", async (c) => {
+app.get("/upcoming", pubCache(10), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status,
        m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round,
@@ -566,7 +581,7 @@ app.get("/upcoming", async (c) => {
 });
 
 // 跨赛事"进行中"：live 场，实时比分与 liveScore 同口径（goal/pen_goal 计事件方，own_goal 记对方）
-app.get("/live", async (c) => {
+app.get("/live", pubCache(10), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name,
        m.id AS match_id, s.kind AS stage_kind, m.round,
@@ -596,6 +611,11 @@ app.get("/live", async (c) => {
     sideByEvent.set(`${r.match_id}:${r.home_entry_id}`, "home");
     sideByEvent.set(`${r.match_id}:${r.away_entry_id}`, "away");
   }
+  // 聚合计分查询与公开事件查询互不依赖，先发后收并行
+  const eventsByMatchP = fetchPublicEvents(
+    c.env.DB,
+    list.map((r) => ({ id: r.match_id, home_entry_id: r.home_entry_id, away_entry_id: r.away_entry_id })),
+  );
   if (list.length > 0) {
     const ev = await c.env.DB.prepare(
       `SELECT me.match_id, me.entry_id, me.type, COUNT(*) AS n
@@ -624,11 +644,7 @@ app.get("/live", async (c) => {
       scores.set(r.match_id, sc);
     }
   }
-
-  const eventsByMatch = await fetchPublicEvents(
-    c.env.DB,
-    list.map((r) => ({ id: r.match_id, home_entry_id: r.home_entry_id, away_entry_id: r.away_entry_id })),
-  );
+  const eventsByMatch = await eventsByMatchP;
   const live: LiveDTO[] = list.map((r) => {
     const sc = scores.get(r.match_id) ?? { home: 0, away: 0 };
     return {
@@ -648,7 +664,7 @@ app.get("/live", async (c) => {
 });
 
 // 跨赛事"最近进行"：最近完赛的 10 场，按完赛时间倒序（改判刷新时间）
-app.get("/recent", async (c) => {
+app.get("/recent", pubCache(10), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name,
        m.id AS match_id, s.kind AS stage_kind, m.round,
@@ -694,7 +710,7 @@ app.get("/recent", async (c) => {
   return c.json({ recent });
 });
 
-app.get("/tournaments/:id/standings", async (c) => {
+app.get("/tournaments/:id/standings", pubCache(60), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
@@ -707,7 +723,7 @@ app.get("/tournaments/:id/standings", async (c) => {
 });
 
 // 榜单（球员榜+球队榜）与数据统计：单赛事内；管理端另有不受草稿限制的同名端点
-app.get("/tournaments/:id/toplists", async (c) => {
+app.get("/tournaments/:id/toplists", pubCache(60), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
@@ -718,7 +734,7 @@ app.get("/tournaments/:id/toplists", async (c) => {
   return c.json(await buildToplistsWithSuspension(c.env.DB, id));
 });
 
-app.get("/tournaments/:id/stats", async (c) => {
+app.get("/tournaments/:id/stats", pubCache(60), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"

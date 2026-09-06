@@ -180,8 +180,10 @@ export async function fetchMatchLineup(
 
   const homeRow = m.home_tid != null ? byTeam.get(m.home_tid) : undefined;
   const awayRow = m.away_tid != null ? byTeam.get(m.away_tid) : undefined;
-  return {
-    home: homeRow ? await buildTeamLineup(db, homeRow) : null,
-    away: awayRow ? await buildTeamLineup(db, awayRow) : null,
-  };
+  // 双方阵容构建互不依赖，并行发
+  const [home, away] = await Promise.all([
+    homeRow ? buildTeamLineup(db, homeRow) : Promise.resolve(null),
+    awayRow ? buildTeamLineup(db, awayRow) : Promise.resolve(null),
+  ]);
+  return { home, away };
 }

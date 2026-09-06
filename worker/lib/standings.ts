@@ -533,45 +533,50 @@ export async function readStageStandings(
   db: D1Database,
   tournamentId: number
 ): Promise<StageStandingDTO[]> {
-  const stages = await db
-    .prepare(
-      `SELECT id, kind, sort_order FROM stage
-       WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order`
-    )
-    .bind(tournamentId)
-    .all<{ id: number; kind: "group" | "round_robin"; sort_order: number }>();
+  // 阶段清单与破同分规则互不依赖，并行发
+  const [stages, chain] = await Promise.all([
+    db
+      .prepare(
+        `SELECT id, kind, sort_order FROM stage
+         WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order`
+      )
+      .bind(tournamentId)
+      .all<{ id: number; kind: "group" | "round_robin"; sort_order: number }>(),
+    getTiebreakers(db, tournamentId),
+  ]);
 
-  const standings: StageStandingDTO[] = [];
-  const chain = await getTiebreakers(db, tournamentId);
-  for (const st of stages.results ?? []) {
-    const rows = await readStandings(db, st.id, chain);
-    if (rows.length === 0) continue;
-    let groups: StandingGroupDTO[];
-    if (st.kind === "group") {
-      const gRes = await db
-        .prepare(`SELECT id, name FROM "group" WHERE stage_id = ? ORDER BY sort_order, id`)
-        .bind(st.id)
-        .all<{ id: number; name: string }>();
-      const gname = new Map(gRes.results.map((g) => [g.id, g.name]));
-      const byGroup = new Map<number | null, StandingGroupDTO>();
-      for (const r of rows) {
-        if (!byGroup.has(r.groupId)) {
-          byGroup.set(r.groupId, {
-            groupId: r.groupId,
-            name: r.groupId != null ? (gname.get(r.groupId) ?? "") : "",
-            rows: [],
-          });
+  // 各阶段并行计算：原先逐阶段串行等往返（2 阶段 = 8 连击），大陆高 RTT 下最差读路径
+  const computed = await Promise.all(
+    (stages.results ?? []).map(async (st) => {
+      const rows = await readStandings(db, st.id, chain);
+      if (rows.length === 0) return null;
+      let groups: StandingGroupDTO[];
+      if (st.kind === "group") {
+        const gRes = await db
+          .prepare(`SELECT id, name FROM "group" WHERE stage_id = ? ORDER BY sort_order, id`)
+          .bind(st.id)
+          .all<{ id: number; name: string }>();
+        const gname = new Map(gRes.results.map((g) => [g.id, g.name]));
+        const byGroup = new Map<number | null, StandingGroupDTO>();
+        for (const r of rows) {
+          if (!byGroup.has(r.groupId)) {
+            byGroup.set(r.groupId, {
+              groupId: r.groupId,
+              name: r.groupId != null ? (gname.get(r.groupId) ?? "") : "",
+              rows: [],
+            });
+          }
+          byGroup.get(r.groupId)!.rows.push(r);
         }
-        byGroup.get(r.groupId)!.rows.push(r);
+        const order = new Map(gRes.results.map((g, i) => [g.id, i]));
+        groups = [...byGroup.values()].sort(
+          (a, b) => (order.get(a.groupId ?? -1) ?? 99) - (order.get(b.groupId ?? -1) ?? 99)
+        );
+      } else {
+        groups = [{ groupId: null, name: "", rows }];
       }
-      const order = new Map(gRes.results.map((g, i) => [g.id, i]));
-      groups = [...byGroup.values()].sort(
-        (a, b) => (order.get(a.groupId ?? -1) ?? 99) - (order.get(b.groupId ?? -1) ?? 99)
-      );
-    } else {
-      groups = [{ groupId: null, name: "", rows }];
-    }
-    standings.push({ stageId: st.id, kind: st.kind, sortOrder: st.sort_order, groups });
-  }
-  return standings;
+      return { stageId: st.id, kind: st.kind, sortOrder: st.sort_order, groups } satisfies StageStandingDTO;
+    })
+  );
+  return computed.filter((s): s is StageStandingDTO => s !== null);
 }
