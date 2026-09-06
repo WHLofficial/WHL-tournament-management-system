@@ -14,6 +14,7 @@ import { readStageStandings } from "../lib/standings";
 import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
 import { mediaUrl } from "../lib/media";
+import { fetchMatchLineup, LineupError } from "../lib/lineup";
 
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
 const app = new Hono<AppEnv>();
@@ -515,6 +516,16 @@ app.get("/tournaments/:id/matches/:mid", async (c) => {
     awayLogoUrl: mediaUrl(row.away_logo_key),
   };
   return c.json({ match });
+});
+
+// 已提交战术阵容：开赛（live/finished）后公开；未开打或草稿赛事一律双方 null（赛前不亮牌）
+app.get("/matches/:mid/lineup", async (c) => {
+  try {
+    return c.json(await fetchMatchLineup(c.env.DB, Number(c.req.param("mid")), true));
+  } catch (e) {
+    if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
+    throw e;
+  }
 });
 
 // 跨赛事"即将进行"：非草稿赛事的未开打场次（排除轮空/队伍待定），running 优先

@@ -4,6 +4,7 @@ import { requireAdmin } from "../../middleware/auth";
 import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
 import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig, computeSuspensions } from "../../lib/suspension";
+import { fetchMatchLineup, LineupError } from "../../lib/lineup";
 import type { MatchEventDTO, MatchEventType } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
@@ -409,6 +410,16 @@ app.get("/:id/events", async (c) => {
     createdAt: r.created_at,
   }));
   return c.json({ events });
+});
+
+// GET /:id/lineup：双方提交的战术阵容。管理员备案可见，无比赛状态门槛（公开端开赛后才放行）
+app.get("/:id/lineup", async (c) => {
+  try {
+    return c.json(await fetchMatchLineup(c.env.DB, Number(c.req.param("id")), false));
+  } catch (e) {
+    if (e instanceof LineupError) return fail(c, e.status, e.message);
+    throw e;
+  }
 });
 
 export default app;

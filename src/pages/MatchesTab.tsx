@@ -3,11 +3,13 @@ import { api } from "../api";
 import { MatchScore, computeAgg } from "../components/MatchScore";
 import { TeamLogo } from "../components/TeamLogo";
 import { EventDot } from "../components/Cards";
+import { LineupGrid } from "../components/LineupView";
 import type {
   EntryDTO,
   MatchDTO,
   MatchEventDTO,
   MatchEventType,
+  MatchLineupDTO,
   PlayerDTO,
   StageDTO,
   SuspensionConfig,
@@ -278,6 +280,7 @@ function MatchRow({
   togglePanel: () => void;
 }) {
   const bye = m.note === "轮空";
+  const [lineupOpen, setLineupOpen] = useState(false);
 
   return (
     <div className={`match-row mr-${m.status}`}>
@@ -308,6 +311,11 @@ function MatchRow({
           {!bye && m.homeEntryId !== null && m.awayEntryId !== null && (
             <MatchActions match={m} busy={busy} act={act} panelOpen={panelOpen} togglePanel={togglePanel} />
           )}
+          {!bye && (
+            <button className="btn btn-sm" onClick={() => setLineupOpen((v) => !v)}>
+              {lineupOpen ? "收起阵容" : "阵容"}
+            </button>
+          )}
         </span>
       </div>
       {!bye && panelOpen && m.homeEntryId !== null && m.awayEntryId !== null && (
@@ -325,6 +333,7 @@ function MatchRow({
           togglePanel={togglePanel}
         />
       )}
+      {lineupOpen && !bye && <LineupPanel matchId={m.id} />}
     </div>
   );
 }
@@ -846,5 +855,37 @@ function EventList({
         );
       })}
     </ul>
+  );
+}
+
+// 管理端：双方提交的战术阵容（赛前备案可见；公开端开赛后才显示）
+function LineupPanel({ matchId }: { matchId: number }) {
+  const [data, setData] = useState<MatchLineupDTO | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let dead = false;
+    api<MatchLineupDTO>(`/api/admin/matches/${matchId}/lineup`)
+      .then((b) => {
+        if (!dead) setData(b);
+      })
+      .catch((e: unknown) => {
+        if (!dead) setErr(e instanceof Error ? e.message : "加载失败");
+      });
+    return () => {
+      dead = true;
+    };
+  }, [matchId]);
+  return (
+    <div className="match-panel">
+      {err ? (
+        <p className="error-msg">{err}</p>
+      ) : !data ? (
+        <p className="muted">加载中…</p>
+      ) : data.home || data.away ? (
+        <LineupGrid home={data.home} away={data.away} />
+      ) : (
+        <p className="muted">双方都还没提交阵容（教练在战术板 → 提交阵容）。</p>
+      )}
+    </div>
   );
 }

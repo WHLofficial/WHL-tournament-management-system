@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
+import { fetchMatchLineup, LineupError, validateLineupSlots } from "../lib/lineup";
 import { requirePwChanged, requireUser } from "../middleware/auth";
+import type { LineupSubmitBody } from "../../shared/types";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
 const app = new Hono<AppEnv>();
@@ -137,6 +139,162 @@ app.get("/me/team", async (c) => {
       })),
     },
   });
+});
+
+// 教练侧写入口约定：阵容提交是唯一的教练写赛事数据端点（一赛一队一份，重复提交覆盖）。
+// 可见性：赛前仅管理员可见（备案）；开赛（live）后公开。教练回显只看得到自己那份，看不到对手的。
+
+async function teamIdOf(db: D1Database, userId: number): Promise<number | null> {
+  const tm = await db
+    .prepare("SELECT team_id FROM team_member WHERE user_id = ?")
+    .bind(userId)
+    .first<{ team_id: number }>();
+  return tm?.team_id ?? null;
+}
+
+// 本队待开的比赛：选一场提交阵容用。轮空场排除（没有对阵意义）
+app.get("/me/matches", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env.DB, user.id);
+  if (!teamId) return c.json({ matches: [] });
+  const rows = await c.env.DB.prepare(
+    `SELECT m.id, m.round, m.leg, m.note,
+       t.id AS tournament_id, t.name AS tournament_name,
+       s.name AS stage_name, s.kind AS stage_kind,
+       he.team_id AS home_tid, ae.team_id AS away_tid,
+       ht.name AS home_team_name, at.name AS away_team_name,
+       ts.id AS sub_id
+     FROM match m
+     JOIN stage s ON s.id = m.stage_id
+     JOIN tournament t ON t.id = s.tournament_id
+     LEFT JOIN entry he ON he.id = m.home_entry_id
+     LEFT JOIN entry ae ON ae.id = m.away_entry_id
+     LEFT JOIN team ht ON ht.id = he.team_id
+     LEFT JOIN team at ON at.id = ae.team_id
+     LEFT JOIN tactic_submission ts ON ts.match_id = m.id AND ts.team_id = ?
+     WHERE m.status = 'pending' AND t.status != 'draft'
+       AND (m.note IS NULL OR m.note != '轮空')
+       AND (he.team_id = ? OR ae.team_id = ?)
+     ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`,
+  )
+    .bind(teamId, teamId, teamId)
+    .all<{
+      id: number;
+      round: number;
+      leg: number | null;
+      tournament_id: number;
+      tournament_name: string;
+      stage_name: string | null;
+      stage_kind: "elim" | "round_robin" | "group";
+      home_tid: number | null;
+      away_tid: number | null;
+      home_team_name: string | null;
+      away_team_name: string | null;
+      sub_id: number | null;
+    }>();
+  return c.json({
+    matches: (rows.results ?? []).map((r) => {
+      const side: "home" | "away" = r.home_tid === teamId ? "home" : "away";
+      return {
+        id: r.id,
+        tournamentId: r.tournament_id,
+        tournamentName: r.tournament_name,
+        stageName: r.stage_name,
+        stageKind: r.stage_kind,
+        round: r.round,
+        leg: r.leg,
+        side,
+        opponentName: side === "home" ? r.away_team_name : r.home_team_name,
+        submitted: r.sub_id !== null,
+      };
+    }),
+  });
+});
+
+// 我在某场比赛已提交的阵容（提交面板回显；只回自己那份，对手的赛前看不到）
+app.get("/matches/:mid/lineup", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env.DB, user.id);
+  if (!teamId) return c.json({ lineup: null });
+  const mid = Number(c.req.param("mid"));
+  let lineup;
+  try {
+    lineup = await fetchMatchLineup(c.env.DB, mid, false);
+  } catch (e) {
+    if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
+    throw e;
+  }
+  const mine =
+    lineup.home?.teamId === teamId ? lineup.home : lineup.away?.teamId === teamId ? lineup.away : null;
+  return c.json({ lineup: mine });
+});
+
+// 提交/覆盖阵容：比赛须属于本队且未开打；球员必须都在本队名单里
+app.put("/matches/:mid/lineup", async (c) => {
+  const user = c.get("user")!;
+  if (user.locked) return c.json({ message: "你的账号暂不能提交阵容，请联系管理员解锁" }, 403);
+  const teamId = await teamIdOf(c.env.DB, user.id);
+  if (!teamId) return c.json({ message: "请先绑定球队再提交阵容" }, 403);
+  const ip = c.req.header("CF-Connecting-IP") ?? "local";
+  if (!(await rateLimit(c.env, `tsub:${ip}:${user.id}`, 10, 60))) {
+    return c.json({ message: "提交太频繁，请一分钟后再试" }, 429);
+  }
+
+  const body = await c.req.json<LineupSubmitBody>().catch(() => null);
+  if (!body || typeof body.form !== "string" || !Array.isArray(body.slots)) {
+    return c.json({ message: "请求格式不对" }, 400);
+  }
+  let slots;
+  try {
+    slots = validateLineupSlots(body.form, body.slots);
+  } catch (e) {
+    if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
+    throw e;
+  }
+
+  const mid = Number(c.req.param("mid"));
+  const m = await c.env.DB.prepare(
+    `SELECT m.status, he.team_id AS home_tid, ae.team_id AS away_tid
+     FROM match m
+     LEFT JOIN entry he ON he.id = m.home_entry_id
+     LEFT JOIN entry ae ON ae.id = m.away_entry_id
+     WHERE m.id = ?`,
+  )
+    .bind(mid)
+    .first<{
+      status: "pending" | "live" | "finished";
+      home_tid: number | null;
+      away_tid: number | null;
+    }>();
+  if (!m || (m.home_tid !== teamId && m.away_tid !== teamId)) {
+    return c.json({ message: "比赛不存在或不属于你的球队" }, 404);
+  }
+  if (m.status !== "pending") {
+    return c.json({ message: "比赛已开打，阵容已锁定" }, 409);
+  }
+
+  const ids = [...new Set(slots.map((s) => s.player_id))];
+  const owned = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM player WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`,
+  )
+    .bind(teamId, ...ids)
+    .first<{ n: number }>();
+  if (owned?.n !== ids.length) {
+    return c.json({ message: "名单里有不属于你球队的球员，请回战术板重选" }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `INSERT INTO tactic_submission (match_id, team_id, created_by, form, slots_json)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(match_id, team_id) DO UPDATE SET
+       created_by = excluded.created_by,
+       form = excluded.form,
+       slots_json = excluded.slots_json,
+       created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+  )
+    .bind(mid, teamId, user.id, body.form, JSON.stringify(slots))
+    .run();
+  return c.json({ ok: true });
 });
 
 export default app;

@@ -22,6 +22,12 @@ import {
   type Buildup,
   type TacticState,
 } from "../../shared/tactics";
+import type {
+  CoachPendingMatchDTO,
+  TeamLineupDTO,
+} from "../../shared/types";
+
+const STAGE_ZH: Record<string, string> = { elim: "淘汰赛", round_robin: "循环赛", group: "小组赛" };
 
 const LS_STATE = "ftc26-state-v1";
 const LS_NAMES = "ftc26-names-v1";
@@ -87,8 +93,16 @@ export default function Tactics() {
   const [toast, setToast] = useState<string | null>(null);
   const [armReset, setArmReset] = useState(false);
   const [teamPlayers, setTeamPlayers] = useState<TeamPlayer[] | null>(null);
+  const [subOpen, setSubOpen] = useState(false);
+  const [subMatches, setSubMatches] = useState<CoachPendingMatchDTO[] | null>(null);
+  const [subMatchId, setSubMatchId] = useState<number | null>(null);
+  const [mine, setMine] = useState<TeamLineupDTO | null>(null);
+  const [subBusy, setSubBusy] = useState(false);
+  const [subMsg, setSubMsg] = useState<{ t: "ok" | "err"; text: string } | null>(null);
+  const [armSubmit, setArmSubmit] = useState(false);
   const toastTimer = useRef<number | null>(null);
   const armTimer = useRef<number | null>(null);
+  const subArmTimer = useRef<number | null>(null);
 
   useEffect(() => saveLS(LS_STATE, state), [state]);
   useEffect(() => saveLS(LS_NAMES, names), [names]);
@@ -116,6 +130,7 @@ export default function Tactics() {
     () => () => {
       if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
       if (armTimer.current !== null) window.clearTimeout(armTimer.current);
+      if (subArmTimer.current !== null) window.clearTimeout(subArmTimer.current);
     },
     [],
   );
@@ -241,6 +256,97 @@ export default function Tactics() {
     setCodeInput("");
     setMsg(null);
     showToast("已重置");
+  }
+
+  // ---------- 阵容提交（登录绑队后可见；两击确认沿用重置的 arm 模式） ----------
+  function refetchSubMatches() {
+    api<{ matches: CoachPendingMatchDTO[] }>("/api/coach/me/matches")
+      .then((b) => setSubMatches(b.matches))
+      .catch(() => setSubMatches([]));
+  }
+
+  function disarmSubmit() {
+    if (subArmTimer.current !== null) window.clearTimeout(subArmTimer.current);
+    setArmSubmit(false);
+  }
+
+  function toggleSubmit() {
+    const next = !subOpen;
+    setSubOpen(next);
+    if (next) {
+      setSubMsg(null);
+      refetchSubMatches();
+    }
+  }
+
+  function pickSubMatch(v: string) {
+    const id = v ? Number(v) : null;
+    setSubMatchId(id);
+    setMine(null);
+    setSubMsg(null);
+    disarmSubmit();
+    if (id != null) {
+      api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${id}/lineup`)
+        .then((b) => setMine(b.lineup))
+        .catch(() => setMine(null));
+    }
+  }
+
+  // 提交前的前端预检：首发 11 人齐、无重复（后端还会再校验一遍）
+  function lineupProblem(): string | null {
+    const ids = form.pos.map((p) => Number(names[String(p.lid)]));
+    if (ids.some((v) => !Number.isInteger(v) || v <= 0)) {
+      return "首发还没选满 11 名球员，点球场上的位置选人";
+    }
+    if (new Set(ids).size !== 11) return "首发里有重复球员";
+    const benchIds = BENCH.map((i) => Number(names[`b${i}`])).filter(
+      (v) => Number.isInteger(v) && v > 0,
+    );
+    if (new Set([...ids, ...benchIds]).size !== ids.length + benchIds.length) {
+      return "首发和替补有重复球员";
+    }
+    return null;
+  }
+
+  function submitLineup() {
+    if (subMatchId == null || subBusy) return;
+    const problem = lineupProblem();
+    if (problem) {
+      setSubMsg({ t: "err", text: problem });
+      return;
+    }
+    if (!armSubmit) {
+      setArmSubmit(true);
+      if (subArmTimer.current !== null) window.clearTimeout(subArmTimer.current);
+      subArmTimer.current = window.setTimeout(() => setArmSubmit(false), 3000);
+      return;
+    }
+    disarmSubmit();
+    setSubBusy(true);
+    const slots = [
+      ...form.pos.map((p) => ({
+        lid: p.lid,
+        position: p.position,
+        player_id: Number(names[String(p.lid)]),
+      })),
+      ...BENCH.map((i) => ({ kind: "bench" as const, player_id: Number(names[`b${i}`]) })).filter(
+        (s) => Number.isInteger(s.player_id) && s.player_id > 0,
+      ),
+    ];
+    const mid = subMatchId;
+    api(`/api/coach/matches/${mid}/lineup`, { method: "PUT", body: { form: state.form, slots } })
+      .then(() => {
+        setSubMsg({ t: "ok", text: "已提交，开赛前随时可回来覆盖" });
+        showToast("阵容已提交");
+        refetchSubMatches();
+        api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${mid}/lineup`)
+          .then((b) => setMine(b.lineup))
+          .catch(() => {});
+      })
+      .catch((e: unknown) =>
+        setSubMsg({ t: "err", text: e instanceof Error ? e.message : "提交失败" }),
+      )
+      .finally(() => setSubBusy(false));
   }
 
   // Esc 关球员卡（鸣谢弹层自己管自己的 Esc）
@@ -562,6 +668,55 @@ export default function Tactics() {
               })}
             </div>
           </section>
+
+          {teamPlayers && (
+            <section className="card tac-submit">
+              <div className="tac-submit-head">
+                <h2>
+                  提交阵容 <small>赛前备案 · 开赛后公开</small>
+                </h2>
+                <button className="btn" onClick={toggleSubmit}>
+                  {subOpen ? "收起" : "展开"}
+                </button>
+              </div>
+              {subOpen && (
+                <div className="tac-submit-body">
+                  <select
+                    aria-label="选择比赛"
+                    value={subMatchId ?? ""}
+                    onChange={(e) => pickSubMatch(e.target.value)}
+                  >
+                    <option value="">选择比赛…</option>
+                    {(subMatches ?? []).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
+                        {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
+                        {m.opponentName ?? "待定"}
+                        {m.submitted ? "（已提交）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {subMatches != null && subMatches.length === 0 && (
+                    <p className="tac-hint">你的球队当前没有待开的比赛。</p>
+                  )}
+                  {mine && (
+                    <p className="tac-hint">
+                      该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
+                      {formTitle(mine.form)}），再次提交将覆盖。
+                    </p>
+                  )}
+                  {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
+                  <button
+                    className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
+                    disabled={subMatchId == null || subBusy}
+                    onClick={submitLineup}
+                  >
+                    {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
         </div>
       </div>
 

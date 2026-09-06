@@ -518,6 +518,36 @@ button.btn-ghost:hover:not(:disabled) {
 .ev-assist { color: var(--muted); }
 .ev-team { color: var(--muted); }
 
+/* ---------- 牌类图标（CSS 纯色矩形，替代橙黄的系统 emoji） ---------- */
+.fcard { display: inline-block; vertical-align: middle; }
+.fcard-single { width: 0.66em; height: 0.88em; border-radius: 0.09em; }
+.fcard-red { background: #e53935; }
+.fcard-yellow { background: #ffd60a; }
+.fcard-pair { position: relative; width: 1.14em; height: 0.88em; }
+.fcard-pair::before {
+  content: ""; position: absolute; left: 0; bottom: 0;
+  width: 0.66em; height: 0.88em; background: #ffd60a; border-radius: 0.09em;
+}
+.fcard-pair::after {
+  content: ""; position: absolute; right: 0; top: 0;
+  width: 0.66em; height: 0.88em; background: #e53935; border-radius: 0.09em;
+  box-shadow: 0 0 0 1.5px var(--card, #fff);
+}
+/* 停赛标记：录事件表单警告条 + 榜单徽标 */
+.warn-line { flex-basis: 100%; }
+.susp-warn { color: #c92a2a; font-size: 13px; font-weight: 600; }
+.yellow-warn { color: #b45309; font-size: 13px; }
+.susp-badge {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #c92a2a;
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
 /* ---------- 积分榜 ---------- */
 .standings-stage { margin-bottom: 18px; }
 .standings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
@@ -1815,31 +1845,86 @@ button.add-stage {
   color: #c2402a;
   border-color: #c2402a;
 }
-.fcard { display: inline-block; vertical-align: middle; }
-.fcard-single { width: 0.66em; height: 0.88em; border-radius: 0.09em; }
-.fcard-red { background: #e53935; }
-.fcard-yellow { background: #ffd60a; }
-.fcard-pair { position: relative; width: 1.14em; height: 0.88em; }
-.fcard-pair::before {
-  content: ""; position: absolute; left: 0; bottom: 0;
-  width: 0.66em; height: 0.88em; background: #ffd60a; border-radius: 0.09em;
+
+/* ---------- 战术阵容提交 ---------- */
+.tac-submit {
+  margin-top: 14px;
 }
-.fcard-pair::after {
-  content: ""; position: absolute; right: 0; top: 0;
-  width: 0.66em; height: 0.88em; background: #e53935; border-radius: 0.09em;
-  box-shadow: 0 0 0 1.5px var(--card, #fff);
+.tac-submit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-/* 停赛标记：录事件表单警告条 + 榜单徽标 */
-.warn-line { flex-basis: 100%; }
-.susp-warn { color: #c92a2a; font-size: 13px; font-weight: 600; }
-.yellow-warn { color: #b45309; font-size: 13px; }
-.susp-badge {
-  margin-left: 6px;
-  font-size: 11px;
+.tac-submit-head h2 {
+  margin: 0;
+}
+.tac-submit-body {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.tac-submit-body select {
+  width: 100%;
+}
+
+.md-lineups {
+  margin-top: 14px;
+  border-top: 1px dashed var(--border);
+  padding-top: 12px;
+}
+.md-lineups h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.lu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.lu-col {
+  font-size: 13px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.lu-col > b {
+  font-size: 14px;
+}
+.lu-none p {
+  margin: 0;
+}
+.lu-form {
+  color: var(--pitch);
   font-weight: 700;
-  color: #fff;
-  background: #c92a2a;
-  border-radius: 4px;
-  padding: 0 5px;
-  white-space: nowrap;
+  font-size: 12px;
+}
+.lu-starters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+.lu-starters i {
+  font-style: normal;
+  display: inline-block;
+  min-width: 40px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.lu-bench {
+  margin: 0;
+  color: var(--muted);
+}
+.lu-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .lu-grid {
+    grid-template-columns: 1fr;
+  }
 }

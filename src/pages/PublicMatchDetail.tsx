@@ -6,7 +6,8 @@ import { EventTimeline, eventMeta, timelineSide } from "../components/EventTimel
 import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawMatchCard, matchToShare } from "../lib/share";
-import type { MatchDTO } from "../../shared/types";
+import { LineupGrid } from "../components/LineupView";
+import type { MatchDTO, MatchLineupDTO } from "../../shared/types";
 
 const STAGE_TITLE: Record<string, string> = {
   elim: "淘汰赛",
@@ -22,6 +23,7 @@ export default function PublicMatchDetail() {
   const [m, setM] = useState<MatchDTO | null>(null);
   const [tInfo, setTInfo] = useState<{ name: string; coverUrl: string | null } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [lineup, setLineup] = useState<MatchLineupDTO | null>(null);
 
   // 分享卡标题需要赛事名，进来时顺手拉一次
   useEffect(() => {
@@ -52,6 +54,25 @@ export default function PublicMatchDetail() {
     }, 30000);
     return () => clearInterval(t);
   }, [refetch]);
+
+  // 提交阵容：开赛（live/finished）后公开接口才有数据，pending 不拉
+  useEffect(() => {
+    if (!m || m.status === "pending" || m.note === "轮空") {
+      setLineup(null);
+      return;
+    }
+    let dead = false;
+    api<MatchLineupDTO>(`/api/public/matches/${matchId}/lineup`)
+      .then((b) => {
+        if (!dead) setLineup(b);
+      })
+      .catch(() => {
+        if (!dead) setLineup(null);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [m?.status, m?.note, matchId]);
 
   return (
     <main className="container">
@@ -133,6 +154,12 @@ export default function PublicMatchDetail() {
             <EventTimeline events={m.events ?? []} showAll />
             {(m.events ?? []).length === 0 && m.note !== "轮空" && (
               <p className="muted md-empty">还没有事件记录。</p>
+            )}
+            {lineup && (lineup.home || lineup.away) && (
+              <div className="md-lineups">
+                <h3>提交阵容</h3>
+                <LineupGrid home={lineup.home} away={lineup.away} />
+              </div>
             )}
           </div>
         </>

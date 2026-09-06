@@ -307,6 +307,66 @@ export interface MatchDTO {
   awayLogoUrl?: string | null;
 }
 
+// ---------- 战术阵容提交（tactic_submission，migration 0009/0011） ----------
+
+// slots_json 的存储形态：首发 {lid,position,player_id} + 替补 {kind:'bench',player_id}
+export type StoredLineupSlot =
+  | { lid: number; position: string; player_id: number }
+  | { kind: "bench"; player_id: number };
+
+// PUT /api/coach/matches/:mid/lineup 请求体
+export interface LineupSubmitBody {
+  form: string;
+  slots: StoredLineupSlot[];
+}
+
+export interface LineupPlayerDTO {
+  playerId: number;
+  /** 球员被删后为 null，前端显示「已离队」 */
+  name: string | null;
+  number: string | null;
+}
+
+export interface LineupStarterDTO extends LineupPlayerDTO {
+  kind: "starter";
+  lid: number;
+  position: string;
+}
+
+export interface LineupBenchDTO extends LineupPlayerDTO {
+  kind: "bench";
+}
+
+export interface TeamLineupDTO {
+  teamId: number;
+  teamName: string;
+  /** 阵型值（如 433），展示用 shared/tactics 的 formTitle() 转义 */
+  form: string;
+  submittedAt: string;
+  submittedBy: string | null;
+  starters: LineupStarterDTO[];
+  bench: LineupBenchDTO[];
+}
+
+export interface MatchLineupDTO {
+  home: TeamLineupDTO | null;
+  away: TeamLineupDTO | null;
+}
+
+// 教练端可提交的待开比赛
+export interface CoachPendingMatchDTO {
+  id: number;
+  tournamentId: number;
+  tournamentName: string;
+  stageName: string | null;
+  stageKind: "elim" | "round_robin" | "group";
+  round: number;
+  leg: number | null;
+  side: "home" | "away";
+  opponentName: string | null;
+  submitted: boolean;
+}
+
 export interface RoundMetaDTO {
   round: number;
   count: number;
