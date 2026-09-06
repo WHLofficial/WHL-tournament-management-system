@@ -1725,7 +1725,10 @@ button.add-stage {
   border: 1px solid #e0a93e;
   background: linear-gradient(180deg, #f6d878, #e0a93e);
   color: #3d2e05;
-  font: 700 12px/1 inherit;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
   box-shadow:
