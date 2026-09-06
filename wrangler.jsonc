@@ -34,5 +34,9 @@
   ],
   "observability": {
     "enabled": true
+  },
+  // Smart Placement：让 CF 把 Worker 计算挪到靠近 D1 库（亚太）的数据中心，削减跨洋查询往返；部署后 ~15 分钟热身
+  "placement": {
+    "mode": "smart"
   }
 }
