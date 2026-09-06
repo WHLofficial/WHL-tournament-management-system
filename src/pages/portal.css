@@ -1,0 +1,179 @@
+/* #13 头版门户：公告 banner / 快讯 ticker / 头版报头 / 头条对撞卡 / 快讯流橱窗 / emoji 表态。 */
+
+/* ---------- 公告 banner（官方通报层，至多一条） ---------- */
+.whl-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: linear-gradient(90deg, #eaf5ee, #ffffff);
+  border: 1px solid #b7cdbd;
+  border-left: 4px solid var(--pitch);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 16px;
+}
+.whl-banner-icon { flex: none; font-size: 18px; line-height: 1.3; }
+.whl-banner-title { font-weight: 700; font-size: 14px; }
+.whl-banner-body { margin: 2px 0 0; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+
+/* ---------- 快讯 ticker（一 行 流，hover 暂停） ---------- */
+.whl-ticker {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  margin-top: 12px;
+}
+.whl-ticker-tag {
+  flex: none;
+  display: flex;
+  align-items: center;
+  background: var(--pitch);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 12px;
+  letter-spacing: 3px;
+}
+.whl-ticker-viewport { overflow: hidden; flex: 1; min-width: 0; }
+.whl-ticker-inner {
+  display: inline-flex;
+  gap: 32px;
+  padding: 9px 0;
+  white-space: nowrap;
+  animation: whl-ticker 60s linear infinite;
+}
+.whl-ticker:hover .whl-ticker-inner { animation-play-state: paused; }
+.whl-ticker-item, .whl-ticker-item:visited { font-size: 13px; color: var(--ink); text-decoration: none; }
+.whl-ticker-item .t { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-right: 8px; }
+.whl-ticker-item:hover, .whl-ticker-item:hover .t { color: var(--pitch); text-decoration: underline; }
+@keyframes whl-ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* ---------- 「WHL 头版」报头 ---------- */
+.whl-press { margin-top: 24px; }
+.whl-masthead {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 3px double var(--pitch);
+  padding-bottom: 8px;
+}
+.whl-masthead h2 { margin: 0; font-size: 24px; letter-spacing: 6px; color: var(--pitch-deep); }
+.whl-masthead-date { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.whl-masthead-all { margin-left: auto; font-size: 13px; color: var(--pitch); text-decoration: none; flex: none; }
+.whl-masthead-all:hover { text-decoration: underline; }
+
+/* ---------- 头条对撞卡（品牌绿渐变 + 双队徽 + 大比分） ---------- */
+.whl-headline {
+  position: relative;
+  overflow: hidden;
+  margin-top: 14px;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--pitch) 0%, var(--pitch-deep) 100%);
+  padding: 20px 22px 16px;
+}
+.whl-headline::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(115deg, transparent 0 26px, rgba(255, 255, 255, .05) 26px 27px);
+  pointer-events: none;
+}
+.whl-headline-link { display: block; text-decoration: none; color: inherit; position: relative; }
+.whl-headline-kicker { font-size: 12px; letter-spacing: 3px; opacity: .85; font-family: var(--mono); }
+.whl-headline-vs { display: flex; align-items: center; justify-content: center; gap: 26px; margin: 18px 0 4px; }
+.whl-headline-side { display: flex; flex-direction: column; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.whl-headline-side .tname {
+  font-size: clamp(15px, 2.6vw, 20px);
+  font-weight: 700;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.whl-headline-score {
+  flex: none;
+  font-size: clamp(38px, 7vw, 56px);
+  font-weight: 800;
+  font-family: var(--mono);
+  letter-spacing: 2px;
+}
+.whl-headline-vs .whl-headline-score { min-width: 150px; text-align: center; }
+.whl-headline-title { text-align: center; font-size: 15px; margin: 12px auto 0; max-width: 640px; opacity: .95; }
+.whl-headline-read { display: block; text-align: center; margin-top: 8px; font-size: 12px; opacity: .7; }
+.whl-headline .reaction-bar { position: relative; justify-content: center; margin-top: 12px; }
+.whl-headline .react-btn { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .35); color: #fff; }
+.whl-headline .react-btn.on { background: #fff; border-color: #fff; color: var(--pitch-deep); }
+
+/* ---------- 快讯流橱窗 ---------- */
+.whl-shelf { margin-top: 12px; }
+.news-item {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.news-item + .news-item { margin-top: 8px; }
+.news-item:hover { border-color: #b7cdbd; box-shadow: 0 2px 10px rgba(10, 61, 36, .08); }
+.news-item-link { display: block; text-decoration: none; color: inherit; min-width: 0; }
+.news-item-top { display: flex; align-items: center; gap: 8px; }
+.news-kind {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: #eaf5ee;
+  color: var(--pitch);
+}
+.news-kind.k-hot { background: var(--live-bg); color: var(--live); }
+.news-kind.k-weekly { background: #e8ecf7; color: #3b5bdb; }
+.news-item-title {
+  font-size: 14px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.news-item-time { margin-left: auto; flex: none; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.news-item-body {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.news-item .reaction-bar { margin-top: 8px; margin-bottom: -2px; }
+
+/* ---------- emoji 表态 ---------- */
+.reaction-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+.react-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 99px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ink);
+  line-height: 1.6;
+}
+.react-btn:hover { border-color: var(--pitch); }
+.react-btn.on { background: #eaf5ee; border-color: var(--pitch); color: var(--pitch-deep); font-weight: 700; }
+.react-btn:disabled { opacity: .55; cursor: default; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 640px) {
+  .whl-masthead h2 { font-size: 19px; letter-spacing: 4px; }
+  .whl-headline { padding: 16px 14px 12px; }
+  .whl-headline-vs { gap: 14px; }
+  .whl-headline-vs .whl-headline-score { min-width: 108px; }
+}
