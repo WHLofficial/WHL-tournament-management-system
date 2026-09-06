@@ -668,60 +668,60 @@ export default function Tactics() {
               })}
             </div>
           </section>
-
-          {teamPlayers && (
-            <section className="card tac-submit">
-              <div className="tac-submit-head">
-                <h2>
-                  提交阵容 <small>赛前备案 · 开赛后公开</small>
-                </h2>
-                <button className="btn" onClick={toggleSubmit}>
-                  {subOpen ? "收起" : "展开"}
-                </button>
-              </div>
-              {subOpen && (
-                <div className="tac-submit-body">
-                  <select
-                    aria-label="选择比赛"
-                    value={subMatchId ?? ""}
-                    onChange={(e) => pickSubMatch(e.target.value)}
-                  >
-                    <option value="">选择比赛…</option>
-                    {(subMatches ?? []).map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
-                        {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
-                        {m.opponentName ?? "待定"}
-                        {m.submitted ? "（已提交）" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {subMatches != null && subMatches.length === 0 && (
-                    <p className="tac-hint">你的球队当前没有待开的比赛。</p>
-                  )}
-                  {mine && (
-                    <p className="tac-hint">
-                      该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
-                      {formTitle(mine.form)}），再次提交将覆盖。
-                    </p>
-                  )}
-                  {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
-                  <button
-                    className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
-                    disabled={subMatchId == null || subBusy}
-                    onClick={submitLineup}
-                  >
-                    {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
-                  </button>
-                </div>
-              )}
-            </section>
-          )}
         </div>
       </div>
 
+      {teamPlayers && (
+        <section className="card tac-submit">
+          <div className="tac-submit-head">
+            <h2>
+              提交阵容 <small>赛前备案 · 开赛后公开</small>
+            </h2>
+            <button className="btn" onClick={toggleSubmit}>
+              {subOpen ? "收起" : "展开"}
+            </button>
+          </div>
+          {subOpen && (
+            <div className="tac-submit-body">
+              <select
+                aria-label="选择比赛"
+                value={subMatchId ?? ""}
+                onChange={(e) => pickSubMatch(e.target.value)}
+              >
+                <option value="">选择比赛…</option>
+                {(subMatches ?? []).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
+                    {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
+                    {m.opponentName ?? "待定"}
+                    {m.submitted ? "（已提交）" : ""}
+                  </option>
+                ))}
+              </select>
+              {subMatches != null && subMatches.length === 0 && (
+                <p className="tac-hint">你的球队当前没有待开的比赛。</p>
+              )}
+              {mine && (
+                <p className="tac-hint">
+                  该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
+                  {formTitle(mine.form)}），再次提交将覆盖。
+                </p>
+              )}
+              {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
+              <button
+                className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
+                disabled={subMatchId == null || subBusy}
+                onClick={submitLineup}
+              >
+                {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
       <footer className="tac-foot">
-        代码不��球员名，名字只�在你的浏览器里。
+        代码不包含球员名，名字只存在你的浏览器里。
       </footer>
 
       {selected != null && <button className="tac-scrim" aria-label="关闭球员卡" onClick={() => setSelected(null)} />}
