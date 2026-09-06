@@ -113,6 +113,7 @@ function buildNarrative(
         type: "red",
         minute: e.minute,
         playerName: e.playerName,
+        playerId: e.playerId,
         teamName: side === "home" ? m.homeTeamName : m.awayTeamName,
       });
       continue;
@@ -126,6 +127,7 @@ function buildNarrative(
         type: "yellow",
         minute: e.minute,
         playerName: e.playerName,
+        playerId: e.playerId,
         teamName: side === "home" ? m.homeTeamName : m.awayTeamName,
       });
     }
@@ -458,6 +460,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
   const goals: ReportGoalDTO[] = goalFacts.map((g) => ({
     minute: g.minute,
     playerName: g.playerName,
+    playerId: g.playerKey.startsWith("p:") ? Number(g.playerKey.slice(2)) : null,
     teamName: g.teamName,
     side: g.side,
     type: g.type,

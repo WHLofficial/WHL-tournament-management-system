@@ -667,3 +667,78 @@ export function downloadCanvas(canvas: HTMLCanvasElement, filename: string): voi
     URL.revokeObjectURL(a.href);
   }, "image/png");
 }
+
+// 新闻卡：头条对撞风格——kicker + 标题自动换行 + 大比分对阵 + 品牌底纹
+export interface NewsCardData {
+  kicker: string; // 「WHL 头版 · 半决赛」
+  title: string;
+  homeTeam?: string;
+  awayTeam?: string;
+  score?: string; // "2:0"
+  url: string;
+}
+
+function wrapNewsTitle(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  const lines: string[] = [];
+  let cur = "";
+  for (const ch of text) {
+    if (cur && ctx.measureText(cur + ch).width > maxWidth) {
+      lines.push(cur);
+      cur = ch;
+      if (lines.length === maxLines) {
+        cur = "";
+        break;
+      }
+    } else {
+      cur += ch;
+    }
+  }
+  if (lines.length < maxLines && cur) lines.push(cur);
+  else if (cur) {
+    // 没写完的尾巴挂到末行省略号
+    lines[lines.length - 1] = lines[lines.length - 1] + "…";
+  } else if (lines.length === maxLines && lines.join("").length < text.length) {
+    const last = lines[lines.length - 1];
+    lines[lines.length - 1] = last.slice(0, -1) + "…";
+  }
+  return lines;
+}
+
+export async function drawNewsCard(canvas: HTMLCanvasElement, data: NewsCardData): Promise<void> {
+  canvas.width = CARD_W;
+  canvas.height = CARD_H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  drawBaseBg(ctx, CARD_H);
+
+  font(ctx, 700, 26);
+  ctx.fillStyle = "rgba(255,255,255,0.72)";
+  ctx.fillText(data.kicker, 48, 118);
+
+  font(ctx, 800, 44);
+  ctx.fillStyle = "#ffffff";
+  const lines = wrapNewsTitle(ctx, data.title, CARD_W - 96, 3);
+  let y = 188;
+  for (const ln of lines) {
+    ctx.fillText(ln, 48, y);
+    y += 58;
+  }
+
+  if (data.score) {
+    ctx.textAlign = "center";
+    font(ctx, 800, 110);
+    ctx.fillText(data.score, CARD_W / 2, y + 140);
+    font(ctx, 600, 32);
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillText(`${data.homeTeam ?? ""}  vs  ${data.awayTeam ?? ""}`, CARD_W / 2, y + 200);
+    ctx.textAlign = "left";
+  }
+
+  drawFootBrand(ctx, CARD_H);
+  await drawQr(ctx, data.url, CARD_H);
+}

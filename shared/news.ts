@@ -74,6 +74,7 @@ export interface WeeklyDTO {
 export interface ReportGoalDTO {
   minute: number | null;
   playerName: string | null;
+  playerId: number | null; // MOTM 投票候选用；无球员名退化时为 null
   teamName: string;
   side: "home" | "away";
   type: MatchEventType; // goal / pen_goal / own_goal
@@ -83,6 +84,7 @@ export interface ReportCardDTO {
   type: "yellow" | "red"; // red_2y 归入 red
   minute: number | null;
   playerName: string | null;
+  playerId: number | null;
   teamName: string;
 }
 

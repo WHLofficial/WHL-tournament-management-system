@@ -33,6 +33,10 @@ const Accounts = lazy(() =>
 const ChangePassword = lazy(() =>
   import("./pages/ChangePassword").then((m) => ({ default: m.ChangePassword })),
 );
+// 头版门户详情页（公开，按路由拆包）
+const ReportPage = lazy(() => import("./pages/ReportPage"));
+const WeeklyPage = lazy(() => import("./pages/WeeklyPage"));
+const RecapPage = lazy(() => import("./pages/RecapPage"));
 
 export default function App() {
   return (
@@ -69,6 +73,9 @@ function AppShell() {
           <Route path="/t/:id" element={<PublicTournament />} />
           <Route path="/tactics" element={<Tactics />} />
           <Route path="/t/:id/match/:mid" element={<PublicMatchDetail />} />
+          <Route path="/report/:mid" element={<ReportPage />} />
+          <Route path="/weekly" element={<WeeklyPage />} />
+          <Route path="/recap/:tid/:sid/:round" element={<RecapPage />} />
           <Route
             path="/my-team"
             element={
