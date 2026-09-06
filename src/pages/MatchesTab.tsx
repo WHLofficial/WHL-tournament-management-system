@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { MatchScore, computeAgg } from "../components/MatchScore";
 import { TeamLogo } from "../components/TeamLogo";
@@ -453,8 +453,33 @@ function ScoreForm({
   const [ph, setPh] = useState(m.penHome?.toString() ?? "");
   const [pa, setPa] = useState(m.penAway?.toString() ?? "");
   const [err, setErr] = useState<string | null>(null);
+  // 两击确认防误触：首击进入待确认态，3 秒内再击才真正提交；改动输入即复位
+  const [arm, setArm] = useState(false);
+  const armTimer = useRef<number | null>(null);
 
-  const submit = () =>
+  useEffect(() => {
+    return () => {
+      if (armTimer.current) window.clearTimeout(armTimer.current);
+    };
+  }, []);
+
+  const change = (
+    setter: (v: string) => void
+  ) =>
+    (v: string) => {
+      setter(v);
+      setArm(false);
+      if (armTimer.current) window.clearTimeout(armTimer.current);
+    };
+
+  const submit = () => {
+    if (!arm) {
+      setArm(true);
+      if (armTimer.current) window.clearTimeout(armTimer.current);
+      armTimer.current = window.setTimeout(() => setArm(false), 3000);
+      return;
+    }
+    if (armTimer.current) window.clearTimeout(armTimer.current);
     act(async () => {
       setErr(null);
       const body: Record<string, number> = {};
@@ -471,6 +496,7 @@ function ScoreForm({
     }).then(() => undefined, (e: unknown) => {
       setErr(e instanceof Error ? e.message : "提交失败");
     });
+  };
 
   const equal = sh !== "" && sa !== "" && Number(sh) === Number(sa);
 
@@ -489,7 +515,7 @@ function ScoreForm({
           type="number"
           min="0"
           value={sh}
-          onChange={(e) => setSh(e.target.value)}
+          onChange={(e) => change(setSh)(e.target.value)}
           placeholder={live ? String(m.scoreHome ?? 0) : "主"}
           style={{ width: "4.5em" }}
         />
@@ -499,7 +525,7 @@ function ScoreForm({
           type="number"
           min="0"
           value={sa}
-          onChange={(e) => setSa(e.target.value)}
+          onChange={(e) => change(setSa)(e.target.value)}
           placeholder={live ? String(m.scoreAway ?? 0) : "客"}
           style={{ width: "4.5em" }}
         />
@@ -511,7 +537,7 @@ function ScoreForm({
           type="number"
           min="0"
           value={ph}
-          onChange={(e) => setPh(e.target.value)}
+          onChange={(e) => change(setPh)(e.target.value)}
           placeholder="主"
           style={{ width: "4.5em" }}
         />
@@ -521,13 +547,23 @@ function ScoreForm({
           type="number"
           min="0"
           value={pa}
-          onChange={(e) => setPa(e.target.value)}
+          onChange={(e) => change(setPa)(e.target.value)}
           placeholder="客"
           style={{ width: "4.5em" }}
         />
       </label>
-      <button className="btn btn-sm" type="submit" disabled={busy}>
-        {live ? "终场确认" : m.status === "finished" ? "保存改判" : "记为完赛"}
+      <button
+        className={arm ? "btn btn-sm btn-danger" : "btn btn-sm"}
+        type="submit"
+        disabled={busy}
+      >
+        {arm
+          ? "再点一次确认"
+          : live
+            ? "终场确认"
+            : m.status === "finished"
+              ? "保存改判"
+              : "记为完赛"}
       </button>
       {live && <button className="btn btn-sm" type="button" disabled={busy} onClick={onDone}>取消</button>}
       {live && <span className="muted">留空 = 按事件累计比分终场</span>}
