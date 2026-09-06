@@ -4,6 +4,7 @@ import { attachUser } from "./middleware/auth";
 import authRoutes from "./routes/auth";
 import adminRoutes from "./routes/admin";
 import publicRoutes from "./routes/public";
+import portalRoutes from "./routes/portal";
 import coachRoutes from "./routes/coach";
 import mediaRoutes from "./routes/media";
 
@@ -20,6 +21,7 @@ app.get("/api/health", (c) => c.json({ ok: true, ts: Date.now() }));
 app.route("/api/auth", authRoutes);
 app.route("/api/admin", adminRoutes);
 app.route("/api/public", publicRoutes);
+app.route("/api/public", portalRoutes); // #13 头版门户：公告/快讯/周报/战报（独立文件，不动 public.ts）
 app.route("/api/coach", coachRoutes);
 app.route("/api/media", mediaRoutes);
 

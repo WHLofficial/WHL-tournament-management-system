@@ -18,6 +18,7 @@ import type {
   SuspensionsResp,
   TournamentDetailDTO,
 } from "../../shared/types";
+import { elimRoundName } from "../../shared/rounds";
 
 const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   pending: "未开打",
@@ -42,14 +43,6 @@ const EVENT_NAME: Record<MatchEventType, string> = {
   ...EVENT_LABEL,
   red_2y: "两黄变一红",
 };
-
-export function elimRoundName(round: number, rounds: number): string {
-  const slots = 2 ** (rounds - round);
-  if (slots === 1) return "决赛";
-  if (slots === 2) return "半决赛";
-  if (slots === 4) return "1/4 决赛";
-  return `1/${slots} 决赛`;
-}
 
 export const stageTitle: Record<StageDTO["kind"], string> = {
   elim: "淘汰赛",

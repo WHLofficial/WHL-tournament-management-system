@@ -1,0 +1,51 @@
+// #13 头版门户公开端点：公告 / 快讯流 / 周报 / 单场战报。
+// 全部 GET-only + pubCache：读时现算的派生口径见 lib/feedNews.ts 头注释，
+// 缓存保证重算频率与访客数无关（每边缘节点每 TTL 至多算一次，其余访客边缘直出）。
+// 本文件只新增路由，不改动 routes/public.ts 现有 handler（并行会话边界）。
+import { Hono } from "hono";
+import type { AppEnv } from "../env";
+import { pubCache } from "../lib/cache";
+import { buildFeed, buildWeekly } from "../lib/feedNews";
+import { buildMatchReport } from "../lib/report";
+import type { AnnouncementDTO } from "../../shared/news";
+
+const app = new Hono<AppEnv>();
+
+// 活跃公告（至多一条）；无公告返回 null，前端不渲染 banner
+app.get("/announcement", pubCache(60), async (c) => {
+  const row = await c.env.DB.prepare(
+    "SELECT id, title, body, updated_at FROM announcement WHERE active = 1 ORDER BY updated_at DESC, id DESC LIMIT 1",
+  ).first<{ id: number; title: string; body: string; updated_at: string }>();
+  const announcement: AnnouncementDTO | null = row
+    ? { id: row.id, title: row.title, body: row.body, updatedAt: row.updated_at }
+    : null;
+  return c.json({ announcement });
+});
+
+// 快讯流：?limit（默认 15，上限 50）&before（ISO 游标，档案页翻页用）
+app.get("/feed", pubCache(60), async (c) => {
+  const limitRaw = Number(c.req.query("limit"));
+  const before = c.req.query("before") || undefined;
+  const items = await buildFeed(c.env.DB, {
+    limit: Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 15,
+    before,
+  });
+  return c.json({ items });
+});
+
+// 周报：?week=YYYY-MM-DD（该周周一）按周回看；缺省=本周（空则回退最近有比赛周）
+app.get("/weekly", pubCache(300), async (c) => {
+  const week = c.req.query("week");
+  const weekly = await buildWeekly(c.env.DB, week && /^\d{4}-\d{2}-\d{2}$/.test(week) ? week : undefined);
+  return c.json({ weekly });
+});
+
+// 单场战报文章（仅完赛场；数据预渲染，前端整页直出）
+app.get("/matches/:mid/report", pubCache(60), async (c) => {
+  const mid = Number(c.req.param("mid"));
+  const report = await buildMatchReport(c.env.DB, mid);
+  if (!report) return c.json({ error: "not_found" }, 404);
+  return c.json({ report });
+});
+
+export default app;
