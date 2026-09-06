@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 import type { MeResp } from "../../shared/types";
 
 export function Login() {
-  const { refresh } = useAuth();
+  const { applyUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   // 被 RequireRole 踢过来时带着原路径，登录完送回去
@@ -18,8 +18,12 @@ export function Login() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     void run(async () => {
-      await api<MeResp>("/api/auth/login", { method: "POST", body: { name, password } });
-      await refresh();
+      // 登录接口直接返回用户对象，落地后省一趟 /me 往返
+      const me = await api<MeResp>("/api/auth/login", {
+        method: "POST",
+        body: { name, password },
+      });
+      applyUser(me);
       navigate(from);
     });
   }

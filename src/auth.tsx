@@ -6,6 +6,8 @@ interface AuthState {
   user: MeResp | null;
   loading: boolean;
   refresh: () => Promise<void>;
+  /** 登录接口已返回完整用户对象时直接落地，省一趟 /me 往返 */
+  applyUser: (u: MeResp) => void;
   logout: () => Promise<void>;
 }
 
@@ -13,6 +15,7 @@ const AuthCtx = createContext<AuthState>({
   user: null,
   loading: true,
   refresh: async () => {},
+  applyUser: () => {},
   logout: async () => {},
 });
 
@@ -35,11 +38,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  function applyUser(u: MeResp) {
+    setUser(u);
+    setLoading(false);
+  }
+
   useEffect(() => {
     void refresh();
   }, []);
 
-  return <AuthCtx.Provider value={{ user, loading, refresh, logout }}>{children}</AuthCtx.Provider>;
+  return (
+    <AuthCtx.Provider value={{ user, loading, refresh, applyUser, logout }}>
+      {children}
+    </AuthCtx.Provider>
+  );
 }
 
 export function useAuth() {

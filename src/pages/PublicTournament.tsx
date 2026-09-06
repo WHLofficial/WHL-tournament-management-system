@@ -124,25 +124,6 @@ export default function PublicTournament() {
     };
   }, [meta, sel, roundCache, tid]);
 
-  // 预加载其余轮次：进入页面后错开间隔逐轮拉取，之后切任何轮都是秒开，不用现等
-  useEffect(() => {
-    if (!meta) return;
-    const next = flatRounds(meta).find((c) => !roundCache.has(roundKey(c)));
-    if (!next) return;
-    const timer = window.setTimeout(() => {
-      void api<{ matches: MatchDTO[] }>(
-        `/api/public/tournaments/${tid}/matches?stageId=${next.stageId}&round=${next.round}`,
-      )
-        .then((b) =>
-          setRoundCache((prev) =>
-            prev.has(roundKey(next)) ? prev : new Map(prev).set(roundKey(next), b.matches),
-          ),
-        )
-        .catch(() => undefined);
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [meta, roundCache, tid]);
-
   const hasLive = !!meta?.some((st) => st.rounds.some((r) => r.live > 0));
 
   // 30s 轮询：只有存在进行中比赛时才启动；页面不可见时暂停，回来立刻刷一次
@@ -155,13 +136,16 @@ export default function PublicTournament() {
         const targets = new Set<string>();
         if (sel) targets.add(roundKey(sel));
         for (const c of flatRounds(meta ?? [])) if (c.live > 0) targets.add(roundKey(c));
-        for (const t of targets) {
-          const [sid, rd] = t.split(":").map(Number);
-          const b = await api<{ matches: MatchDTO[] }>(
-            `/api/public/tournaments/${tid}/matches?stageId=${sid}&round=${rd}`,
-          );
-          setRoundCache((prev) => new Map(prev).set(t, b.matches));
-        }
+        // 各目标轮并行拉取，原先逐轮串行等往返
+        await Promise.all(
+          [...targets].map(async (t) => {
+            const [sid, rd] = t.split(":").map(Number);
+            const b = await api<{ matches: MatchDTO[] }>(
+              `/api/public/tournaments/${tid}/matches?stageId=${sid}&round=${rd}`,
+            );
+            setRoundCache((prev) => new Map(prev).set(t, b.matches));
+          }),
+        );
       } catch {
         // 单次轮询失败静默，下一轮再试
       }

@@ -1,0 +1,6 @@
+# 静态资源缓存策略（Workers Assets 支持 _headers）
+# 哈希文件名资源：一年不可变；其余（HTML/SPA 回退）不缓存，保证发版即生效
+/*
+  Cache-Control: no-cache
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

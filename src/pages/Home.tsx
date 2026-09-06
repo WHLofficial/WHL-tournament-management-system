@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
@@ -17,6 +17,8 @@ export function Home() {
   const [recent, setRecent] = useState<RecentDTO[] | null>(null);
   const [liveList, setLiveList] = useState<LiveDTO[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // 轮询节流闸：有无进行中比赛决定快慢刷（ref 避免 load 闭包重建）
+  const liveRef = useRef(0);
 
   const load = useCallback(async () => {
     try {
@@ -30,6 +32,7 @@ export function Home() {
       setUpcoming(u.upcoming);
       setRecent(r.recent);
       setLiveList(l.live);
+      liveRef.current = l.live.length;
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "加载失败");
@@ -38,8 +41,12 @@ export function Home() {
 
   useEffect(() => {
     void load();
+    let ticks = 0;
     const t = setInterval(() => {
-      if (!document.hidden) void load();
+      if (document.hidden) return;
+      ticks++;
+      // 有 live 30s 快刷；无 live 降到 120s 慢刷兜底（不漏新开的比赛）
+      if (liveRef.current > 0 || ticks % 4 === 0) void load();
     }, 30000);
     return () => clearInterval(t);
   }, [load]);

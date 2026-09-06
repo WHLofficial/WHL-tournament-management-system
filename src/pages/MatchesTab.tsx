@@ -61,7 +61,7 @@ export default function MatchesTab({
   reload,
 }: {
   detail: TournamentDetailDTO;
-  reload: () => void;
+  reload: () => void | Promise<void>;
 }) {
   const [matches, setMatches] = useState<MatchDTO[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -95,7 +95,10 @@ export default function MatchesTab({
     refetch();
   }, [refetch]);
 
+  // 停赛状态（纯派生）：打开事件面板才拉，事件增删后随 tick 重拉——进 tab 不再全量重放整届停赛
+  const panelActive = openPanel !== null;
   useEffect(() => {
+    if (!panelActive) return;
     let on = true;
     api<SuspensionsResp>(`/api/admin/tournaments/${detail.tournament.id}/suspensions`)
       .then((b) => {
@@ -107,7 +110,7 @@ export default function MatchesTab({
     return () => {
       on = false;
     };
-  }, [detail.tournament.id, tick]);
+  }, [panelActive, detail.tournament.id, tick]);
 
   // 自驱动补拉缺失的队名单（拉完缓存更新，触发重试直至补齐）
   useEffect(() => {
@@ -152,8 +155,8 @@ export default function MatchesTab({
     setMessage(null);
     try {
       const note = await fn();
-      await refetch();
-      reload();
+      // 操作后的全量刷新改并行：赛程与赛事详情同时重取，停赛数据随 tick 跟进
+      await Promise.all([refetch(), reload()]);
       setTick((t) => t + 1);
       if (note) setMessage(note);
     } catch (e) {
