@@ -80,6 +80,11 @@ body {
 .topbar button.btn-ghost:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.12);
 }
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 
 /* ---- 卡片与表单 ---- */
 .card {
@@ -483,6 +488,19 @@ button.btn-ghost:hover:not(:disabled) {
 .match-panel { border-top: 1px dashed var(--border); padding: 10px 12px; display: grid; gap: 8px; background: #f7faf7; }
 .event-quick { display: flex; gap: 8px; flex-wrap: wrap; }
 .score-form, .event-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ev-side-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.ev-side-seg button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ev-side-seg button + button { border-left: 1px solid var(--border); }
+.ev-side-seg button[aria-pressed="true"] { background: var(--pitch); color: #fff; font-weight: 700; }
 .error-text { color: #dc2626; font-size: 13px; }
 .event-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .event-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }

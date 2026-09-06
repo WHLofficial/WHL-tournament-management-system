@@ -586,7 +586,7 @@ function EventForm({
   busy: boolean;
   act: Act;
 }) {
-  const [type, setType] = useState<MatchEventDTO["type"]>("yellow");
+  const [type, setType] = useState<MatchEventDTO["type"]>("goal");
   const [side, setSide] = useState<"home" | "away">("home");
   const [playerId, setPlayerId] = useState("");
   const [assistId, setAssistId] = useState("");
@@ -624,6 +624,22 @@ function EventForm({
         });
       }}
     >
+      <div className="ev-side-seg" role="group" aria-label="所属球队">
+        <button
+          type="button"
+          aria-pressed={side === "home"}
+          onClick={() => switchSide("home")}
+        >
+          {m.homeTeamName ?? "主队"}
+        </button>
+        <button
+          type="button"
+          aria-pressed={side === "away"}
+          onClick={() => switchSide("away")}
+        >
+          {m.awayTeamName ?? "客队"}
+        </button>
+      </div>
       <select
         className="input"
         value={type}
@@ -634,14 +650,6 @@ function EventForm({
             {EVENT_LABEL[t]}
           </option>
         ))}
-      </select>
-      <select
-        className="input"
-        value={side}
-        onChange={(e) => switchSide(e.target.value as "home" | "away")}
-      >
-        <option value="home">{m.homeTeamName ?? "主队"}</option>
-        <option value="away">{m.awayTeamName ?? "客队"}</option>
       </select>
       <select
         className="input"
