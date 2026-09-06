@@ -9,12 +9,20 @@ import type {
   StageRoundsDTO,
   TournamentDTO,
   UpcomingDTO,
+  H2HDTO,
+  H2HFormItem,
+  H2HMeetingDTO,
+  LineupStatsDTO,
+  TeamTacticsDTO,
+  TacticXIPlayerDTO,
 } from "../../shared/types";
 import { readStageStandings } from "../lib/standings";
 import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
 import { mediaUrl } from "../lib/media";
-import { fetchMatchLineup, LineupError } from "../lib/lineup";
+import { fetchMatchLineup, LineupError, parseSlotsJson } from "../lib/lineup";
+import { FORMS } from "../../shared/tactics";
+import type { StoredLineupSlot } from "../../shared/types";
 import { pubCache } from "../lib/cache";
 
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
@@ -553,6 +561,452 @@ app.get("/matches/:mid/lineup", pubCache(60), async (c) => {
     if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
     throw e;
   }
+});
+
+// ---------- 赛前情报：未开赛详情页三 Tab ----------
+
+// 待定/轮空时的空壳：前端据 home/away 为 null 直接不渲染
+const H2H_EMPTY: H2HDTO = {
+  home: null,
+  away: null,
+  overall: null,
+  meetings: [],
+  storylines: [],
+  homeForm: [],
+  awayForm: [],
+  ranks: null,
+};
+
+type PairRow = {
+  id: number;
+  finished_at: string | null;
+  score_home: number | null;
+  score_away: number | null;
+  pen_home: number | null;
+  pen_away: number | null;
+  walkover_side: string | null;
+  tournament_id: number;
+  tournament_name: string;
+  stage_name: string | null;
+  round: number;
+  leg: number | null;
+  h_tid: number;
+  h_name: string;
+  h_logo: string | null;
+  a_tid: number;
+  a_name: string;
+  a_logo: string | null;
+};
+
+// 单场结果（本队视角）：W/D/L。双弃权双方记负；点球决胜按点球——与积分榜口径一致
+function formLetter(r: PairRow, teamTid: number): "W" | "D" | "L" {
+  if (r.walkover_side === "both") return "L";
+  const home = r.h_tid === teamTid;
+  const mine = (home ? r.score_home : r.score_away) ?? 0;
+  const theirs = (home ? r.score_away : r.score_home) ?? 0;
+  if (mine !== theirs) return mine > theirs ? "W" : "L";
+  const pm = home ? r.pen_home : r.pen_away;
+  const pt = home ? r.pen_away : r.pen_home;
+  if (pm != null && pt != null && pm !== pt) return pm > pt ? "W" : "L";
+  return "D";
+}
+
+// 交锋总览口径的胜方 team_id：双弃权视为平（两队的交锋里「双负」无法表达）；其余按比分/点球
+function meetingWinner(r: PairRow): number | null {
+  if (r.walkover_side !== "both") {
+    const sh = r.score_home ?? 0;
+    const sa = r.score_away ?? 0;
+    if (sh !== sa) return sh > sa ? r.h_tid : r.a_tid;
+    if (r.pen_home != null && r.pen_away != null && r.pen_home !== r.pen_away)
+      return r.pen_home > r.pen_away ? r.h_tid : r.a_tid;
+  }
+  return null;
+}
+
+const PAIR_FROM = `
+  FROM match m
+  JOIN stage s ON s.id = m.stage_id
+  JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'
+  JOIN entry he ON he.id = m.home_entry_id
+  JOIN entry ae ON ae.id = m.away_entry_id
+  JOIN team ht ON ht.id = he.team_id
+  JOIN team at ON at.id = ae.team_id`;
+
+const PAIR_COLS = `
+  SELECT m.id, m.finished_at, m.score_home, m.score_away, m.pen_home, m.pen_away,
+    m.walkover_side, t.id AS tournament_id, t.name AS tournament_name,
+    s.name AS stage_name, m.round, m.leg,
+    he.team_id AS h_tid, ht.name AS h_name, ht.logo_key AS h_logo,
+    ae.team_id AS a_tid, at.name AS a_name, at.logo_key AS a_logo`;
+
+// 跨赛事历史交锋（未开赛场次用）：两队按 team_id 对 team_id，全量安全帽 100，展示取前 10
+app.get("/tournaments/:id/matches/:mid/h2h", pubCache(60), async (c) => {
+  const tid = Number(c.req.param("id"));
+  const mid = Number(c.req.param("mid"));
+  const m = await c.env.DB.prepare(
+    `SELECT m.id, m.note, m.stage_id, m.home_entry_id, m.away_entry_id, s.kind AS stage_kind,
+       he.team_id AS home_tid, ae.team_id AS away_tid,
+       ht.name AS home_name, at.name AS away_name,
+       ht.logo_key AS home_logo, at.logo_key AS away_logo
+     FROM match m
+     JOIN stage s ON s.id = m.stage_id
+     JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'
+     LEFT JOIN entry he ON he.id = m.home_entry_id
+     LEFT JOIN team ht ON ht.id = he.team_id
+     LEFT JOIN entry ae ON ae.id = m.away_entry_id
+     LEFT JOIN team at ON at.id = ae.team_id
+     WHERE s.tournament_id = ? AND m.id = ?`
+  )
+    .bind(tid, mid)
+    .first<{
+      id: number;
+      note: string | null;
+      stage_id: number;
+      home_entry_id: number | null;
+      away_entry_id: number | null;
+      stage_kind: string;
+      home_tid: number | null;
+      away_tid: number | null;
+      home_name: string | null;
+      away_name: string | null;
+      home_logo: string | null;
+      away_logo: string | null;
+    }>();
+  if (!m) return c.json({ message: "比赛不存在" }, 404);
+  if (m.home_tid == null || m.away_tid == null || m.note === "轮空") return c.json(H2H_EMPTY);
+
+  const FORM_SQL = `${PAIR_COLS} ${PAIR_FROM}
+    WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
+      AND (he.team_id = ? OR ae.team_id = ?)
+    ORDER BY m.finished_at DESC, m.id DESC LIMIT 5`;
+
+  const [meetingsRes, homeFormRes, awayFormRes, stageList] = await Promise.all([
+    c.env.DB.prepare(
+      `${PAIR_COLS} ${PAIR_FROM}
+       WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
+         AND ((he.team_id = ? AND ae.team_id = ?) OR (he.team_id = ? AND ae.team_id = ?))
+       ORDER BY m.finished_at DESC, m.id DESC LIMIT 100`
+    )
+      .bind(mid, m.home_tid, m.away_tid, m.away_tid, m.home_tid)
+      .all<PairRow>(),
+    c.env.DB.prepare(FORM_SQL).bind(mid, m.home_tid, m.home_tid).all<PairRow>(),
+    c.env.DB.prepare(FORM_SQL).bind(mid, m.away_tid, m.away_tid).all<PairRow>(),
+    // 排名对话只有非淘汰赛阶段才有；淘汰赛直接跳过省一趟查询
+    m.stage_kind === "elim"
+      ? Promise.resolve([])
+      : readStageStandings(c.env.DB, tid),
+  ]);
+
+  const meetings = meetingsRes.results ?? [];
+  let winsHome = 0;
+  let draws = 0;
+  let winsAway = 0;
+  let goals = 0;
+  for (const r of meetings) {
+    const w = meetingWinner(r);
+    if (w === m.home_tid) winsHome++;
+    else if (w === m.away_tid) winsAway++;
+    else draws++;
+    goals += (r.score_home ?? 0) + (r.score_away ?? 0);
+  }
+  const played = meetings.length;
+  const overall =
+    played > 0
+      ? {
+          played,
+          winsHome,
+          draws,
+          winsAway,
+          avgGoals: Math.round((goals / played) * 10) / 10,
+        }
+      : null;
+
+  // 彩蛋文案：连胜/不败 → 点球宿敌 → 最大分差之战 → 场均进球，最多 3 条
+  const homeName = m.home_name ?? "主队";
+  const awayName = m.away_name ?? "客队";
+  const storylines: string[] = [];
+  if (played > 0) {
+    const results = meetings.map(meetingWinner); // 最新一场在前
+    const first = results[0];
+    if (first != null) {
+      let allWin = 0;
+      let unbeaten = 0;
+      for (const w of results) {
+        if (w === first) {
+          allWin++;
+          unbeaten++;
+        } else if (w == null) {
+          unbeaten++;
+        } else break;
+      }
+      const who = first === m.home_tid ? homeName : awayName;
+      if (allWin >= 2) storylines.push(`近 ${allWin} 次交手，${who} 全胜`);
+      else if (unbeaten >= 2) storylines.push(`近 ${unbeaten} 次交手，${who} 保持不败`);
+    }
+    const penGames = meetings.filter((r) => r.pen_home != null && r.pen_away != null).length;
+    if (penGames >= 2) storylines.push(`两队有 ${penGames} 次交手打到点球`);
+    let best: PairRow | null = null;
+    let bestMargin = 0;
+    for (const r of meetings) {
+      const margin = Math.abs((r.score_home ?? 0) - (r.score_away ?? 0));
+      if (margin > bestMargin) {
+        bestMargin = margin;
+        best = r;
+      }
+    }
+    if (best && bestMargin >= 2) {
+      const d = best.finished_at?.slice(5, 10) ?? "";
+      storylines.push(
+        `最大分差之战：${d} ${best.h_name} ${best.score_home}:${best.score_away} ${best.a_name}`,
+      );
+    }
+    if (storylines.length < 3 && overall) storylines.push(`两队交手场均 ${overall.avgGoals} 球`);
+  }
+  storylines.splice(3);
+
+  const toForm = (rows: PairRow[], teamTid: number): H2HFormItem[] =>
+    rows.map((r) => {
+      const home = r.h_tid === teamTid;
+      return {
+        matchId: r.id,
+        result: formLetter(r, teamTid),
+        scoreLabel: `${(home ? r.score_home : r.score_away) ?? 0}:${(home ? r.score_away : r.score_home) ?? 0}`,
+        opponentName: home ? r.a_name : r.h_name,
+      };
+    });
+
+  // 排名对话：两队须同阶段同组（循环赛 groupId 为 null 也算同组）
+  let ranks: H2HDTO["ranks"] = null;
+  const st = stageList.find((s) => s.stageId === m.stage_id);
+  if (st) {
+    for (const g of st.groups) {
+      const h = g.rows.find((r) => r.entryId === m.home_entry_id);
+      const a = g.rows.find((r) => r.entryId === m.away_entry_id);
+      if (h && a) {
+        ranks = {
+          label: st.kind === "group" ? "小组排名" : "积分排名",
+          home: { rank: h.rank, pts: h.pts, played: h.played, groupName: g.name || null },
+          away: { rank: a.rank, pts: a.pts, played: a.played, groupName: g.name || null },
+        };
+        break;
+      }
+    }
+  }
+
+  const meetingDTOs: H2HMeetingDTO[] = meetings.slice(0, 10).map((r) => ({
+    matchId: r.id,
+    tournamentId: r.tournament_id,
+    tournamentName: r.tournament_name,
+    stageName: r.stage_name,
+    round: r.round,
+    leg: r.leg,
+    dateLabel: r.finished_at?.slice(0, 10) ?? "",
+    homeTeamName: r.h_name,
+    awayTeamName: r.a_name,
+    homeLogoUrl: mediaUrl(r.h_logo),
+    awayLogoUrl: mediaUrl(r.a_logo),
+    scoreHome: r.score_home ?? 0,
+    scoreAway: r.score_away ?? 0,
+    penHome: r.pen_home,
+    penAway: r.pen_away,
+    walkoverSide: (r.walkover_side || null) as H2HMeetingDTO["walkoverSide"],
+    winnerTeamId: meetingWinner(r),
+    isThisTournament: r.tournament_id === tid,
+  }));
+
+  const dto: H2HDTO = {
+    home: { teamId: m.home_tid, teamName: m.home_name ?? "", logoUrl: mediaUrl(m.home_logo) },
+    away: { teamId: m.away_tid, teamName: m.away_name ?? "", logoUrl: mediaUrl(m.away_logo) },
+    overall,
+    meetings: meetingDTOs,
+    storylines,
+    homeForm: toForm(homeFormRes.results ?? [], m.home_tid),
+    awayForm: toForm(awayFormRes.results ?? [], m.away_tid),
+    ranks,
+  };
+  return c.json(dto);
+});
+
+// 某队最近场次的「有效阵容」序列（链式沿用：未提交的场次自动按上一场的算）。
+// 只统计已开打（live/finished）的非草稿赛事场次；窗口外更早的真实提交也能作为沿用源头。
+async function buildTeamTactics(
+  db: D1Database,
+  teamId: number,
+  teamName: string,
+  excludeMatchId: number,
+): Promise<TeamTacticsDTO | null> {
+  const rows = await db
+    .prepare(
+      `SELECT m.id
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'
+       JOIN entry he ON he.id = m.home_entry_id
+       JOIN entry ae ON ae.id = m.away_entry_id
+       WHERE m.status IN ('live','finished') AND m.id != ?
+         AND (he.team_id = ? OR ae.team_id = ?)
+       ORDER BY s.sort_order DESC, m.round DESC, m.slot DESC, m.leg DESC, m.id DESC
+       LIMIT 25`
+    )
+    .bind(excludeMatchId, teamId, teamId)
+    .all<{ id: number }>();
+  const matchIds = (rows.results ?? []).map((r) => r.id);
+  if (matchIds.length === 0) return null;
+
+  const subs = await db
+    .prepare(
+      `SELECT match_id, form, slots_json FROM tactic_submission
+       WHERE team_id = ? AND match_id IN (${matchIds.map(() => "?").join(",")})`
+    )
+    .bind(teamId, ...matchIds)
+    .all<{ match_id: number; form: string; slots_json: string }>();
+  const subByMatch = new Map<number, { form: string; slots: StoredLineupSlot[] }>();
+  for (const r of subs.results ?? []) {
+    // 同场重复提交以后写的为准（与 fetchMatchLineup 口径一致）
+    subByMatch.set(r.match_id, { form: r.form, slots: parseSlotsJson(r.slots_json) });
+  }
+
+  // 时间正序走一遍：某场没提交就沿用「上一场」的有效阵容；首次提交之前的场次不计入样本
+  type StarterSlot = Extract<StoredLineupSlot, { lid: number }>;
+  type EffLineup = { form: string; slots: StarterSlot[] };
+  let last: EffLineup | null = null;
+  const eff: { lineup: EffLineup | null; real: boolean }[] = [];
+  let firstRealSeen = false;
+  for (const id of [...matchIds].reverse()) {
+    const sub = subByMatch.get(id);
+    let real = false;
+    if (sub) {
+      const starters = sub.slots.filter((s): s is StarterSlot => !("kind" in s));
+      if (starters.length === 11) {
+        last = { form: sub.form, slots: starters };
+        real = true;
+        firstRealSeen = true;
+      }
+    }
+    eff.push({ lineup: firstRealSeen ? last : null, real });
+  }
+  const sample = eff.filter((e) => e.lineup).slice(-10);
+  if (sample.length === 0) return null;
+  const real = sample.filter((e) => e.real).length;
+
+  const formCount = new Map<string, number>();
+  for (const e of sample) formCount.set(e.lineup!.form, (formCount.get(e.lineup!.form) ?? 0) + 1);
+  const forms = [...formCount.entries()]
+    .map(([form, n]) => ({ form, n }))
+    .sort((a, b) => b.n - a.n);
+  const typicalForm = forms[0]?.form ?? null;
+
+  const startCount = new Map<number, number>();
+  const posCount = new Map<number, Map<string, number>>();
+  const lidBest = new Map<number, Map<number, number>>(); // 典型阵型位 → 球员 → 次数
+  for (const e of sample) {
+    for (const s of e.lineup!.slots) {
+      startCount.set(s.player_id, (startCount.get(s.player_id) ?? 0) + 1);
+      const pc = posCount.get(s.player_id) ?? new Map<string, number>();
+      pc.set(s.position, (pc.get(s.position) ?? 0) + 1);
+      posCount.set(s.player_id, pc);
+      if (e.lineup!.form === typicalForm) {
+        const lb = lidBest.get(s.lid) ?? new Map<number, number>();
+        lb.set(s.player_id, (lb.get(s.player_id) ?? 0) + 1);
+        lidBest.set(s.lid, lb);
+      }
+    }
+  }
+
+  const typicalXI: TacticXIPlayerDTO[] = [];
+  const def = FORMS.find((f) => f.value === typicalForm);
+  if (def) {
+    for (const p of def.pos) {
+      const lb = lidBest.get(p.lid);
+      if (!lb) continue;
+      let pid = 0;
+      let n = 0;
+      for (const [k, v] of lb) {
+        if (v > n) {
+          pid = k;
+          n = v;
+        }
+      }
+      if (pid) typicalXI.push({ lid: p.lid, position: p.position, playerId: pid, name: null, number: null, starts: n });
+    }
+  }
+
+  // 名字/号码一次补齐（含典型首发与首发王涉及的球员）
+  const ids = [...new Set([...startCount.keys(), ...typicalXI.map((x) => x.playerId)])];
+  const players = new Map<number, { name: string | null; number: string | null }>();
+  if (ids.length) {
+    const rs = await db
+      .prepare(`SELECT id, name, number FROM player WHERE id IN (${ids.map(() => "?").join(",")})`)
+      .bind(...ids)
+      .all<{ id: number; name: string; number: string | null }>();
+    for (const p of rs.results ?? []) players.set(p.id, { name: p.name, number: p.number });
+  }
+  for (const x of typicalXI) {
+    const p = players.get(x.playerId);
+    x.name = p?.name ?? null;
+    x.number = p?.number ?? null;
+  }
+
+  const topEntry = [...startCount.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+  let topStarter: TeamTacticsDTO["topStarter"] = null;
+  if (topEntry) {
+    const pc = [...(posCount.get(topEntry[0])?.entries() ?? [])].sort((a, b) => b[1] - a[1])[0];
+    const p = players.get(topEntry[0]);
+    topStarter = {
+      playerId: topEntry[0],
+      name: p?.name ?? "已离队",
+      number: p?.number ?? null,
+      position: pc?.[0] ?? "",
+      starts: topEntry[1],
+    };
+  }
+
+  return {
+    teamId,
+    teamName,
+    sampleSize: sample.length,
+    realSubmissions: real,
+    forms,
+    typicalForm,
+    typicalXI,
+    topStarter,
+  };
+}
+
+// 未开赛场次的双方阵容档案（跨赛事）：常用阵型 / 典型首发 / 首发王。
+// 沿用规则：未提交的场次按上一场算（见 buildTeamTactics）；本场永远排除。
+app.get("/tournaments/:id/matches/:mid/lineup-stats", pubCache(60), async (c) => {
+  const tid = Number(c.req.param("id"));
+  const mid = Number(c.req.param("mid"));
+  const m = await c.env.DB.prepare(
+    `SELECT m.id, m.note, he.team_id AS home_tid, ae.team_id AS away_tid,
+       ht.name AS home_name, at.name AS away_name
+     FROM match m
+     JOIN stage s ON s.id = m.stage_id
+     JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'
+     LEFT JOIN entry he ON he.id = m.home_entry_id
+     LEFT JOIN team ht ON ht.id = he.team_id
+     LEFT JOIN entry ae ON ae.id = m.away_entry_id
+     LEFT JOIN team at ON at.id = ae.team_id
+     WHERE s.tournament_id = ? AND m.id = ?`
+  )
+    .bind(tid, mid)
+    .first<{
+      note: string | null;
+      home_tid: number | null;
+      away_tid: number | null;
+      home_name: string | null;
+      away_name: string | null;
+    }>();
+  if (!m) return c.json({ message: "比赛不存在" }, 404);
+  if (m.home_tid == null || m.away_tid == null || m.note === "轮空")
+    return c.json({ home: null, away: null } satisfies LineupStatsDTO);
+
+  const [home, away] = await Promise.all([
+    buildTeamTactics(c.env.DB, m.home_tid, m.home_name ?? "", mid),
+    buildTeamTactics(c.env.DB, m.away_tid, m.away_name ?? "", mid),
+  ]);
+  return c.json({ home, away } satisfies LineupStatsDTO);
 });
 
 // 跨赛事"即将进行"：非草稿赛事的未开打场次（排除轮空/队伍待定），running 优先

@@ -2142,3 +2142,344 @@ button.add-stage {
 .audit-detail {
   color: var(--text);
 }
+
+/* ---------- 赛前情报：未开赛详情页三 Tab（交锋 / 球员 / 阵容） ---------- */
+.pmt-wrap {
+  width: 100%;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+.pmt-tabs {
+  display: flex;
+  gap: 6px;
+}
+.pmt-tab {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pmt-tab.on {
+  background: var(--pitch);
+  border-color: var(--pitch);
+  color: var(--chalk);
+  font-weight: 600;
+}
+.pmt-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+}
+.pmt-loading,
+.pmt-empty {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+/* 交锋：战绩条 + 交锋列表 + 近况 + 排名 */
+.h2h-record {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.h2h-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.h2h-side.right {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+.h2h-nums {
+  font-size: 14px;
+  white-space: nowrap;
+}
+.h2h-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border);
+}
+.h2h-bar-h {
+  background: var(--pitch);
+}
+.h2h-bar-d {
+  background: #c3cdc5;
+}
+.h2h-bar-a {
+  background: var(--ink);
+}
+.h2h-fact {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.h2h-first {
+  margin: 6px 0;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--pitch-deep);
+}
+.h2h-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.h2h-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+.h2h-list li:last-child {
+  border-bottom: none;
+}
+.h2h-m-meta {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ms-this {
+  background: #eaf4ee;
+  border-color: #9ec9ae;
+  color: #2f6a48;
+}
+.h2h-m-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.h2h-m-team {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.h2h-m-team.right {
+  text-align: right;
+}
+.h2h-m-team.win {
+  font-weight: 700;
+  color: var(--pitch-deep);
+}
+.h2h-m-score {
+  font: 600 14px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.h2h-m-score small {
+  font: 500 11px/1 var(--mono);
+  color: var(--muted);
+}
+.h2h-forms {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.h2h-formstrip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.h2h-formstrip .h2h-formlabel {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.h2h-formstrip.right {
+  flex-direction: row-reverse;
+}
+.h2h-dots {
+  display: flex;
+  gap: 4px;
+}
+.fdot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 10px/1 var(--mono);
+  color: #fff;
+}
+.fdot-W {
+  background: var(--pitch);
+}
+.fdot-D {
+  background: #b7c2ba;
+}
+.fdot-L {
+  background: #b05a3a;
+}
+.h2h-ranks {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 球员：射手/助攻/纪律 对决 + 停赛情报 */
+.pl-duel {
+  display: flex;
+  gap: 12px;
+}
+.pl-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pl-team {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  min-width: 0;
+}
+.pl-col.away .pl-team {
+  flex-direction: row-reverse;
+}
+.pl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+}
+.pl-k {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pl-v {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pl-cards {
+  gap: 10px;
+}
+.pl-cards > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: 600 12px/1 var(--mono);
+}
+.pl-susp {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  font-size: 13px;
+}
+.pl-susp ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #8a3b20;
+}
+
+/* 阵容：常用阵型 + 典型首发小战术板 */
+.lu-duel {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.tac-col {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tac-forms {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tac-top {
+  margin: 0;
+  font-size: 13px;
+}
+.tac-meta {
+  margin: 0;
+  font-size: 11px;
+}
+.h2h-pitch {
+  position: relative;
+  width: 100%;
+  max-width: 300px;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--pitch) 0 12.5%,
+    var(--pitch-deep) 12.5% 25%
+  );
+  border-radius: 10px;
+  aspect-ratio: 10 / 13;
+  overflow: hidden;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.25);
+}
+.h2h-pitch svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.h2h-tile {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 44px;
+  padding: 2px 5px;
+  border-radius: 7px;
+  border: 1px solid rgba(244, 246, 243, 0.9);
+  background: rgba(26, 36, 32, 0.78);
+  color: var(--chalk);
+  font: 700 10px/1.2 var(--mono);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  text-align: center;
+}
+.h2h-tile small {
+  font: 500 9px/1.2 system-ui, sans-serif;
+  max-width: 62px;
+  color: rgba(244, 246, 243, 0.85);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.h2h-tile .h2h-tile-n {
+  font: 600 9px/1.2 var(--mono);
+  color: #bfe3cd;
+  font-style: normal;
+}
+.h2h-tile .h2h-tile-none {
+  color: rgba(244, 246, 243, 0.55);
+}

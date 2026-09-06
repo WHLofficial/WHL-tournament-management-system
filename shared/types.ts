@@ -367,6 +367,104 @@ export interface MatchLineupDTO {
   away: TeamLineupDTO | null;
 }
 
+// ---------- 赛前情报：未开赛详情页三 Tab（交锋 / 球员 / 阵容） ----------
+
+// GET /api/public/tournaments/:tid/matches/:mid/h2h
+export interface H2HMeetingDTO {
+  matchId: number;
+  tournamentId: number;
+  tournamentName: string;
+  stageName: string | null;
+  round: number;
+  leg: number | null;
+  /** 完赛日期 YYYY-MM-DD（缺失为空串） */
+  dateLabel: string;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeLogoUrl: string | null;
+  awayLogoUrl: string | null;
+  scoreHome: number;
+  scoreAway: number;
+  penHome: number | null;
+  penAway: number | null;
+  walkoverSide: "home" | "away" | "both" | null;
+  /** 胜方球队 id；平局 null（口径同积分榜：点球点胜=胜、双弃权双方不计胜） */
+  winnerTeamId: number | null;
+  isThisTournament: boolean;
+}
+
+export interface H2HFormItem {
+  matchId: number;
+  result: "W" | "D" | "L";
+  /** 该队视角比分，如 "2:1" */
+  scoreLabel: string;
+  opponentName: string | null;
+}
+
+export interface H2HRankSide {
+  rank: number;
+  pts: number;
+  played: number;
+  groupName: string | null;
+}
+
+export interface H2HDTO {
+  home: { teamId: number; teamName: string; logoUrl: string | null } | null;
+  away: { teamId: number; teamName: string; logoUrl: string | null } | null;
+  /** 跨赛事总交锋（全量场次计，不只展示的前 10 场）；无历史为 null */
+  overall: {
+    played: number;
+    winsHome: number;
+    draws: number;
+    winsAway: number;
+    avgGoals: number;
+  } | null;
+  meetings: H2HMeetingDTO[];
+  /** 趣味彩蛋文案（最多 3 条）：连胜/不败、点球宿敌、最大分差之战、场均进球 */
+  storylines: string[];
+  homeForm: H2HFormItem[];
+  awayForm: H2HFormItem[];
+  /** 两队同在一个非淘汰赛阶段（同组/同循环赛）时才有当前排名 */
+  ranks: { label: string; home: H2HRankSide; away: H2HRankSide } | null;
+}
+
+// GET /api/public/tournaments/:tid/matches/:mid/lineup-stats
+export interface TacticXIPlayerDTO {
+  lid: number;
+  position: string;
+  playerId: number;
+  name: string | null;
+  number: string | null;
+  /** 窗口内该阵型位上的首发次数 */
+  starts: number;
+}
+
+export interface TeamTacticsDTO {
+  teamId: number;
+  teamName: string;
+  /** 计入统计的场次（含自动沿用上一场的） */
+  sampleSize: number;
+  /** 其中教练真实提交阵容的场次 */
+  realSubmissions: number;
+  /** 阵型使用分布，按次数降序 */
+  forms: { form: string; n: number }[];
+  typicalForm: string | null;
+  /** 最常用阵型下各位置历史首发最多的球员（只含有人的位） */
+  typicalXI: TacticXIPlayerDTO[];
+  topStarter: {
+    playerId: number;
+    name: string;
+    number: string | null;
+    position: string;
+    starts: number;
+  } | null;
+}
+
+export interface LineupStatsDTO {
+  home: TeamTacticsDTO | null;
+  away: TeamTacticsDTO | null;
+}
+
 // 教练端可提交的待开比赛
 export interface CoachPendingMatchDTO {
   id: number;

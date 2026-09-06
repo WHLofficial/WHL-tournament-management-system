@@ -5,6 +5,7 @@ import { MatchScore } from "../components/MatchScore";
 import { EventTimeline, eventMeta, timelineSide } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
+import { PreMatchTabs } from "../components/PreMatchPanels";
 import { drawMatchCard, matchToShare } from "../lib/share";
 import { LineupGrid } from "../components/LineupView";
 import type { MatchDTO, MatchLineupDTO } from "../../shared/types";
@@ -162,8 +163,12 @@ export default function PublicMatchDetail() {
             {m.walkoverSide && m.note && m.note !== "轮空" && (
               <p className="muted md-wo-note">{m.note}</p>
             )}
+            {m.status === "pending" &&
+              m.homeEntryId != null &&
+              m.awayEntryId != null &&
+              m.note !== "轮空" && <PreMatchTabs tid={tid} match={m} />}
             <EventTimeline events={m.events ?? []} showAll />
-            {(m.events ?? []).length === 0 && m.note !== "轮空" && (
+            {(m.events ?? []).length === 0 && m.note !== "轮空" && m.status !== "pending" && (
               <p className="muted md-empty">还没有事件记录。</p>
             )}
             {lineup && (lineup.home || lineup.away) && (
