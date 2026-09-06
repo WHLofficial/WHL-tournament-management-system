@@ -91,6 +91,7 @@ export default function PublicMatchDetail() {
                           {
                             side: timelineSide(e),
                             icon: meta.icon,
+                            card: meta.card,
                             tag: meta.tag ?? null,
                             minute: e.minute,
                             playerName: e.playerName,

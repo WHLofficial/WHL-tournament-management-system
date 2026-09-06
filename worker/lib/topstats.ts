@@ -14,6 +14,8 @@ export interface CardsPlayerRow {
   teamName: string;
   yellows: number;
   reds: number;
+  /** 当前是否停赛中（两黄变红计入红牌数；黄牌数不含与 red_2y 同场的黄牌） */
+  suspended?: boolean;
 }
 
 export interface TeamRow {
@@ -71,6 +73,7 @@ export interface Stats {
 }
 
 interface EventRow {
+  match_id: number;
   player_id: number | null;
   assist_player_id: number | null;
   type: string;
@@ -139,7 +142,7 @@ const FINISHED_SQL = `
 async function fetchEvents(db: D1Database, tid: number) {
   return db
     .prepare(
-      `SELECT me.player_id, me.assist_player_id, me.type,
+      `SELECT me.match_id, me.player_id, me.assist_player_id, me.type,
          p.name AS player_name, ap.name AS assist_name,
          t.id AS team_id, t.name AS team_name
        FROM match_event me
@@ -212,12 +215,20 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
   const bucket = (id: number, name: string, teamName: string): PlayerBucket =>
     players.get(id) ?? { name, teamName, goals: 0, assists: 0, yellows: 0, reds: 0, injuries: 0 };
 
+  // 两黄变一红口径：red_2y 计 1 张红牌；与 red_2y 同场同球员的黄牌不计入黄牌数
+  const twoYellow = new Set<string>();
+  for (const r of ev.results ?? []) {
+    if (r.type === "red_2y") twoYellow.add(`${r.match_id}:${r.player_id}`);
+  }
+  const isYellow = (r: EventRow) =>
+    r.type === "yellow" && !twoYellow.has(`${r.match_id}:${r.player_id}`);
+
   for (const r of ev.results ?? []) {
     if (r.player_id !== null && r.player_name !== null) {
       const b = bucket(r.player_id, r.player_name, r.team_name);
       if (r.type === "goal" || r.type === "pen_goal") b.goals += 1;
-      else if (r.type === "yellow") b.yellows += 1;
-      else if (r.type === "red") b.reds += 1;
+      else if (isYellow(r)) b.yellows += 1;
+      else if (r.type === "red" || r.type === "red_2y") b.reds += 1;
       else if (r.type === "injury_minor" || r.type === "injury_major") b.injuries += 1;
       players.set(r.player_id, b);
     }
@@ -227,8 +238,8 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
       players.set(r.assist_player_id, b);
     }
     const tb = teams.get(r.team_id) ?? { name: r.team_name, yellows: 0, reds: 0 };
-    if (r.type === "yellow") tb.yellows += 1;
-    else if (r.type === "red") tb.reds += 1;
+    if (isYellow(r)) tb.yellows += 1;
+    else if (r.type === "red" || r.type === "red_2y") tb.reds += 1;
     teams.set(r.team_id, tb);
   }
 
@@ -272,7 +283,7 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
 }
 
 export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
-  const [statusRows, typeRows, fin, injuryRows] = await Promise.all([
+  const [statusRows, typeRows, fin, injuryRows, cardRow] = await Promise.all([
     db
       .prepare(
         `SELECT m.status, COUNT(*) AS n FROM match m
@@ -294,6 +305,24 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
       )
       .bind(tid)
       .all<{ match_id: number; n: number }>(),
+    // 红黄牌口径与榜单一致：黄牌排除两黄变一场，红牌含 red_2y
+    db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN me.type = 'yellow'
+                     AND NOT EXISTS (SELECT 1 FROM match_event r
+                                     WHERE r.match_id = me.match_id
+                                       AND r.player_id = me.player_id
+                                       AND r.type = 'red_2y')
+                    THEN 1 ELSE 0 END) AS yellows,
+           SUM(CASE WHEN me.type IN ('red', 'red_2y') THEN 1 ELSE 0 END) AS reds
+         FROM match_event me
+         JOIN match m ON m.id = me.match_id
+         JOIN stage s ON s.id = m.stage_id
+         WHERE s.tournament_id = ?`
+      )
+      .bind(tid)
+      .first<{ yellows: number | null; reds: number | null }>(),
   ]);
 
   const progress = { total: 0, finished: 0, live: 0, pending: 0 };
@@ -305,15 +334,13 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
   }
 
   const goals = { total: 0, avg: 0, penScored: 0, penMissed: 0 };
-  const cards = { yellows: 0, reds: 0 };
+  const cards = { yellows: cardRow?.yellows ?? 0, reds: cardRow?.reds ?? 0 };
   let ownGoals = 0;
   for (const r of typeRows.results ?? []) {
     if (r.type === "goal" || r.type === "pen_goal" || r.type === "own_goal") goals.total += r.n;
     if (r.type === "pen_goal") goals.penScored = r.n;
     else if (r.type === "pen_miss") goals.penMissed = r.n;
     else if (r.type === "own_goal") ownGoals = r.n;
-    else if (r.type === "yellow") cards.yellows = r.n;
-    else if (r.type === "red") cards.reds = r.n;
   }
   goals.avg = avg2(goals.total, progress.finished);
 

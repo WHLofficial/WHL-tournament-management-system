@@ -11,7 +11,8 @@ import type {
   UpcomingDTO,
 } from "../../shared/types";
 import { readStageStandings } from "../lib/standings";
-import { buildStats, buildToplists } from "../lib/topstats";
+import { buildStats } from "../lib/topstats";
+import { buildToplistsWithSuspension } from "../lib/suspension";
 import { mediaUrl } from "../lib/media";
 
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
@@ -703,7 +704,7 @@ app.get("/tournaments/:id/toplists", async (c) => {
     .bind(id)
     .first<{ id: number }>();
   if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
-  return c.json(await buildToplists(c.env.DB, id));
+  return c.json(await buildToplistsWithSuspension(c.env.DB, id));
 });
 
 app.get("/tournaments/:id/stats", async (c) => {

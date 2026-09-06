@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import ScheduleTab from "./ScheduleTab";
@@ -14,6 +14,8 @@ import type {
   TeamDTO,
   TournamentDetailDTO,
   TournamentStatus,
+  SuspensionConfig,
+  SuspensionsResp,
 } from "../../shared/types";
 
 // 同分规则下拉的选项；value 对应后端 TiebreakerKey，none 表示这一级不启用
@@ -439,6 +441,8 @@ function SettingsTab({
         保存同分规则
       </button>
       <hr className="divider" />
+      <SuspensionCard tid={t.id} />
+      <hr className="divider" />
       <h3>封面图</h3>
       <div className="logo-row">
         {t.coverUrl ? (
@@ -473,6 +477,145 @@ function SettingsTab({
         删除赛事
       </button>
     </div>
+  );
+}
+
+// 停赛规则卡：参数存 config_json.suspension；软约束——录入时只警告不拦截。
+// 两黄变一红的说明：同场第二张黄牌由系统自动生成事件，停赛档位独立于直红。
+function SuspensionCard({ tid }: { tid: number }) {
+  const [cfg, setCfg] = useState<SuspensionConfig | null>(null);
+  const [redBan, setRedBan] = useState("2");
+  const [red2yBan, setRed2yBan] = useState("1");
+  const [yellowThreshold, setYellowThreshold] = useState("3");
+  const { busy, error, setError, run } = useSubmit();
+  // 清零两击确认：首击进入待确认态，3 秒内再击才执行；照终场确认的防误触模式
+  const [arm, setArm] = useState(false);
+  const armTimer = useRef<number | null>(null);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let on = true;
+    api<SuspensionsResp>(`/api/admin/tournaments/${tid}/suspensions`)
+      .then((b) => {
+        if (!on) return;
+        setCfg(b.config);
+        setRedBan(String(b.config.redBan));
+        setRed2yBan(String(b.config.red2yBan));
+        setYellowThreshold(String(b.config.yellowThreshold));
+      })
+      .catch(() => {});
+    return () => {
+      on = false;
+    };
+  }, [tid]);
+
+  useEffect(() => {
+    return () => {
+      if (armTimer.current) window.clearTimeout(armTimer.current);
+    };
+  }, []);
+
+  function save() {
+    const vals = [redBan, red2yBan, yellowThreshold].map((v) => Number(v));
+    if (vals.some((n) => !Number.isInteger(n) || n < 0 || n > 10)) {
+      setError("停赛场数与阈值须为 0-10 的整数");
+      return;
+    }
+    void run(async () => {
+      const b = await api<{ config: SuspensionConfig }>(
+        `/api/admin/tournaments/${tid}/suspensions`,
+        {
+          method: "PUT",
+          body: { redBan: vals[0], red2yBan: vals[1], yellowThreshold: vals[2] },
+        },
+      );
+      setCfg(b.config);
+      setError(null);
+    });
+  }
+
+  function resetYellows() {
+    if (!arm) {
+      setArm(true);
+      if (armTimer.current) window.clearTimeout(armTimer.current);
+      armTimer.current = window.setTimeout(() => setArm(false), 3000);
+      return;
+    }
+    if (armTimer.current) window.clearTimeout(armTimer.current);
+    setArm(false);
+    void run(async () => {
+      const b = await api<{ yellowResetAt: string }>(
+        `/api/admin/tournaments/${tid}/suspensions/reset-yellows`,
+        { method: "POST" },
+      );
+      setCfg((prev) => (prev ? { ...prev, yellowResetAt: b.yellowResetAt } : prev));
+      setResetMsg("已清零：之后的黄牌从 0 重新累计，已生效的停赛继续执行");
+      setError(null);
+    });
+  }
+
+  return (
+    <>
+      <h3>停赛规则</h3>
+      <p className="muted">
+        红黄牌自动累计停赛：直红与两黄变一红按下方设置的场数停赛；同场第二张黄牌自动记为两黄变一红；
+        累积黄牌达到阈值停 1 场并重新计数。录事件时对停赛球员只警告不拦截（软约束），
+        每打一场比赛消耗 1 场停赛，轮空不消耗。
+      </p>
+      <div className="tb-row">
+        <label className="field">
+          直红停赛场数
+          <input
+            className="input"
+            type="number"
+            min="0"
+            max="10"
+            value={redBan}
+            onChange={(e) => setRedBan(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          两黄变一红停赛场数
+          <input
+            className="input"
+            type="number"
+            min="0"
+            max="10"
+            value={red2yBan}
+            onChange={(e) => setRed2yBan(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          累积黄牌停赛阈值（0 = 不启用）
+          <input
+            className="input"
+            type="number"
+            min="0"
+            max="10"
+            value={yellowThreshold}
+            onChange={(e) => setYellowThreshold(e.target.value)}
+          />
+        </label>
+      </div>
+      {error && <p className="error-msg">{error}</p>}
+      <div className="logo-row">
+        <button type="button" className="btn" disabled={busy} onClick={save}>
+          保存停赛规则
+        </button>
+        <button
+          type="button"
+          className={arm ? "btn btn-danger" : "btn btn-ghost"}
+          disabled={busy}
+          onClick={resetYellows}
+        >
+          {arm ? "再点一次确认清零" : "清零黄牌累计"}
+        </button>
+        {cfg?.yellowResetAt && (
+          <span className="muted">上次清零：{new Date(cfg.yellowResetAt).toLocaleString("zh-CN")}</span>
+        )}
+      </div>
+      {resetMsg && <p className="muted">{resetMsg}</p>}
+    </>
   );
 }
 

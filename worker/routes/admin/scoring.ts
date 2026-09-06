@@ -3,6 +3,7 @@ import type { AppEnv } from "../../env";
 import { requireAdmin } from "../../middleware/auth";
 import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
 import { buildAutoFillStmts } from "./schedule";
+import { getSuspensionConfig, computeSuspensions } from "../../lib/suspension";
 import type { MatchEventDTO, MatchEventType } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
@@ -276,6 +277,51 @@ app.post("/:id/events", async (c) => {
       return fail(c, 400, "记助攻需要先选择进球球员");
     if (wantsAssist && body.assistPlayerId === body.playerId)
       return fail(c, 400, "助攻球员不能和进球球员是同一人");
+
+    // 纪律记录：已被罚下的球员本场不能再吃牌（更正请先删红牌事件）；
+    // 第二张黄牌自动转存为两黄变一红（red_2y 只由系统生成，不在录入白名单）；
+    // 软约束停赛警告：录入前该球员已在停赛中则随响应提示，不拦截。
+    let eventType: MatchEventType = body.type as MatchEventType;
+    let notice: string | null = null;
+    let warning: string | null = null;
+    if (body.playerId != null) {
+      const stageRow = await c.env.DB.prepare(
+        "SELECT tournament_id FROM stage WHERE id = ?"
+      )
+        .bind(m.stage_id)
+        .first<{ tournament_id: number }>();
+      if (stageRow) {
+        const sc = await getSuspensionConfig(c.env.DB, stageRow.tournament_id);
+        // 软约束停赛警告：录入前该球员已在停赛中则随响应提示，不拦截（录任何事件都提示）
+        const susp = await computeSuspensions(c.env.DB, stageRow.tournament_id, sc);
+        const hit = susp.find((x) => x.playerId === body.playerId);
+        if (hit && hit.remaining > 0)
+          warning = `警告：${hit.playerName} 停赛中（剩 ${hit.remaining} 场）`;
+        if (body.type === "yellow" || body.type === "red") {
+          const sentOff = await c.env.DB.prepare(
+            `SELECT COUNT(*) AS n FROM match_event
+             WHERE match_id = ? AND player_id = ? AND type IN ('red', 'red_2y')`
+          )
+            .bind(id, body.playerId)
+            .first<{ n: number }>();
+          if ((sentOff?.n ?? 0) >= 1)
+            return fail(c, 400, "该球员本场已被罚下，如需更正请先删除红牌事件");
+          if (body.type === "yellow") {
+            const y = await c.env.DB.prepare(
+              `SELECT COUNT(*) AS n FROM match_event
+               WHERE match_id = ? AND player_id = ? AND type = 'yellow'`
+            )
+              .bind(id, body.playerId)
+              .first<{ n: number }>();
+            if ((y?.n ?? 0) >= 1) {
+              eventType = "red_2y";
+              notice = `第 2 张黄牌已自动记录为两黄变一红（停赛 ${sc.red2yBan} 场）`;
+            }
+          }
+        }
+      }
+    }
+
     await c.env.DB.prepare(
       `INSERT INTO match_event (match_id, entry_id, player_id, assist_player_id, type, minute, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -285,20 +331,24 @@ app.post("/:id/events", async (c) => {
         body.entryId,
         body.playerId ?? null,
         body.assistPlayerId ?? null,
-        body.type,
+        eventType,
         body.minute ?? null,
         c.get("user")!.id,
       )
       .run();
+    const extras: Record<string, string> = {};
+    if (notice) extras.notice = notice;
+    if (warning) extras.warning = warning;
     if (m.status === "live") {
       const score = await liveScore(c.env.DB, m);
-      return c.json({ ok: true, scoreHome: score.home, scoreAway: score.away });
+      return c.json({ ok: true, scoreHome: score.home, scoreAway: score.away, ...extras });
     }
     // 完赛后的补录不改比分列，返回当前比分即可
     return c.json({
       ok: true,
       scoreHome: m.score_home ?? 0,
       scoreAway: m.score_away ?? 0,
+      ...extras,
     });
   } catch (e) {
     if (e instanceof HttpError) return fail(c, e.status, e.message);

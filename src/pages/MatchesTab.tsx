@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { MatchScore, computeAgg } from "../components/MatchScore";
 import { TeamLogo } from "../components/TeamLogo";
+import { EventDot } from "../components/Cards";
 import type {
   EntryDTO,
   MatchDTO,
   MatchEventDTO,
+  MatchEventType,
   PlayerDTO,
   StageDTO,
+  SuspensionConfig,
+  SuspensionStatusDTO,
+  SuspensionsResp,
   TournamentDetailDTO,
 } from "../../shared/types";
 
@@ -17,7 +22,8 @@ const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   finished: "已完赛",
 };
 
-const EVENT_LABEL: Record<MatchEventDTO["type"], string> = {
+// 事件类型下拉只列 8 类：red_2y（两黄变一红）由后端在第二张黄牌时自动生成，不开放手选
+const EVENT_LABEL: Record<Exclude<MatchEventType, "red_2y">, string> = {
   goal: "进球",
   pen_goal: "点球进球",
   pen_miss: "点球射失",
@@ -26,6 +32,12 @@ const EVENT_LABEL: Record<MatchEventDTO["type"], string> = {
   injury_major: "重伤 🚑",
   yellow: "黄牌",
   red: "红牌",
+};
+
+// 事件显示名（含自动生成的 red_2y），事件列表用
+const EVENT_NAME: Record<MatchEventType, string> = {
+  ...EVENT_LABEL,
+  red_2y: "两黄变一红",
 };
 
 export function elimRoundName(round: number, rounds: number): string {
@@ -58,6 +70,9 @@ export default function MatchesTab({
   const [playersCache, setPlayersCache] = useState<Map<number, PlayerDTO[]>>(
     new Map(),
   );
+  // 停赛状态（纯派生，事件增删后随 tick 重拉）
+  const [susp, setSusp] = useState<Map<number, SuspensionStatusDTO>>(new Map());
+  const [suspCfg, setSuspCfg] = useState<SuspensionConfig | null>(null);
 
   const entryById = new Map<number, EntryDTO>(
     detail.entries.map((e) => [e.id, e]),
@@ -77,6 +92,20 @@ export default function MatchesTab({
   useEffect(() => {
     refetch();
   }, [refetch]);
+
+  useEffect(() => {
+    let on = true;
+    api<SuspensionsResp>(`/api/admin/tournaments/${detail.tournament.id}/suspensions`)
+      .then((b) => {
+        if (!on) return;
+        setSusp(new Map(b.players.map((p) => [p.playerId, p])));
+        setSuspCfg(b.config);
+      })
+      .catch(() => {}); // 拉不到就不做停赛标记，录入流程不受影响
+    return () => {
+      on = false;
+    };
+  }, [detail.tournament.id, tick]);
 
   // 自驱动补拉缺失的队名单（拉完缓存更新，触发重试直至补齐）
   useEffect(() => {
@@ -172,6 +201,8 @@ export default function MatchesTab({
                       homePlayers={playersOf(m.homeEntryId)}
                       awayPlayers={playersOf(m.awayEntryId)}
                       playerById={playerById}
+                      susp={susp}
+                      suspThreshold={suspCfg?.yellowThreshold ?? 0}
                       busy={busy}
                       act={act}
                       tick={tick}
@@ -200,6 +231,8 @@ export default function MatchesTab({
               homePlayers={playersOf(m.homeEntryId)}
               awayPlayers={playersOf(m.awayEntryId)}
               playerById={playerById}
+              susp={susp}
+              suspThreshold={suspCfg?.yellowThreshold ?? 0}
               busy={busy}
               act={act}
               tick={tick}
@@ -222,6 +255,8 @@ function MatchRow({
   homePlayers,
   awayPlayers,
   playerById,
+  susp,
+  suspThreshold,
   busy,
   act,
   tick,
@@ -234,6 +269,8 @@ function MatchRow({
   homePlayers: PlayerDTO[];
   awayPlayers: PlayerDTO[];
   playerById: Map<number, string>;
+  susp: Map<number, SuspensionStatusDTO>;
+  suspThreshold: number;
   busy: boolean;
   act: Act;
   tick: number;
@@ -280,6 +317,8 @@ function MatchRow({
           homePlayers={homePlayers}
           awayPlayers={awayPlayers}
           playerById={playerById}
+          susp={susp}
+          suspThreshold={suspThreshold}
           busy={busy}
           act={act}
           tick={tick}
@@ -347,6 +386,8 @@ function MatchPanel({
   homePlayers,
   awayPlayers,
   playerById,
+  susp,
+  suspThreshold,
   busy,
   act,
   tick,
@@ -357,6 +398,8 @@ function MatchPanel({
   homePlayers: PlayerDTO[];
   awayPlayers: PlayerDTO[];
   playerById: Map<number, string>;
+  susp: Map<number, SuspensionStatusDTO>;
+  suspThreshold: number;
   busy: boolean;
   act: Act;
   tick: number;
@@ -414,6 +457,8 @@ function MatchPanel({
             match={m}
             homePlayers={homePlayers}
             awayPlayers={awayPlayers}
+            susp={susp}
+            suspThreshold={suspThreshold}
             busy={busy}
             act={act}
           />
@@ -577,16 +622,20 @@ function EventForm({
   match: m,
   homePlayers,
   awayPlayers,
+  susp,
+  suspThreshold,
   busy,
   act,
 }: {
   match: MatchDTO;
   homePlayers: PlayerDTO[];
   awayPlayers: PlayerDTO[];
+  susp: Map<number, SuspensionStatusDTO>;
+  suspThreshold: number;
   busy: boolean;
   act: Act;
 }) {
-  const [type, setType] = useState<MatchEventDTO["type"]>("goal");
+  const [type, setType] = useState<Exclude<MatchEventDTO["type"], "red_2y">>("goal");
   const [side, setSide] = useState<"home" | "away">("home");
   const [playerId, setPlayerId] = useState("");
   const [assistId, setAssistId] = useState("");
@@ -600,101 +649,135 @@ function EventForm({
     setAssistId("");
   };
 
+  // 软约束提示：选中停赛球员给红色警告，逼近黄牌阈值给黄色预警（都不拦截录入）
+  const sel = playerId !== "" ? susp.get(Number(playerId)) : undefined;
+  const suspWarn = sel && sel.remaining > 0;
+  const yellowWarn =
+    sel && !suspWarn && suspThreshold > 0 && sel.yellows === suspThreshold - 1;
+
+  // 下拉选项文本：停赛球员与临界黄牌球员加后缀（option 是纯文本，用符号标记）
+  const optionSuffix = (pid: number): string => {
+    const s = susp.get(pid);
+    if (!s) return "";
+    if (s.remaining > 0) return `（⛔停赛 剩${s.remaining}场）`;
+    if (suspThreshold > 0 && s.yellows === suspThreshold - 1)
+      return `（⚠️再${suspThreshold - s.yellows}黄停赛）`;
+    return "";
+  };
+
   return (
-    <form
-      className="inline-form event-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (busy) return;
-        act(async () => {
-          const entryId = side === "home" ? m.homeEntryId : m.awayEntryId;
-          if (entryId === null) return null;
-          await api(`/api/admin/matches/${m.id}/events`, {
-            method: "POST",
-            body: {
-              type,
-              entryId,
-              playerId: playerId === "" ? undefined : Number(playerId),
-              assistPlayerId:
-                goalish && assistId !== "" ? Number(assistId) : undefined,
-              minute: minute === "" ? undefined : Number(minute),
-            },
+    <>
+      <form
+        className="inline-form event-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (busy) return;
+          act(async () => {
+            const entryId = side === "home" ? m.homeEntryId : m.awayEntryId;
+            if (entryId === null) return null;
+            const b = await api<{
+              scoreHome: number;
+              scoreAway: number;
+              notice?: string;
+              warning?: string;
+            }>(`/api/admin/matches/${m.id}/events`, {
+              method: "POST",
+              body: {
+                type,
+                entryId,
+                playerId: playerId === "" ? undefined : Number(playerId),
+                assistPlayerId:
+                  goalish && assistId !== "" ? Number(assistId) : undefined,
+                minute: minute === "" ? undefined : Number(minute),
+              },
+            });
+            return [b.notice, b.warning].filter(Boolean).join("；") || null;
           });
-          return null;
-        });
-      }}
-    >
-      <div className="ev-side-seg" role="group" aria-label="所属球队">
-        <button
-          type="button"
-          aria-pressed={side === "home"}
-          onClick={() => switchSide("home")}
-        >
-          {m.homeTeamName ?? "主队"}
-        </button>
-        <button
-          type="button"
-          aria-pressed={side === "away"}
-          onClick={() => switchSide("away")}
-        >
-          {m.awayTeamName ?? "客队"}
-        </button>
-      </div>
-      <select
-        className="input"
-        value={type}
-        onChange={(e) => setType(e.target.value as MatchEventDTO["type"])}
+        }}
       >
-        {(Object.keys(EVENT_LABEL) as MatchEventDTO["type"][]).map((t) => (
-          <option key={t} value={t}>
-            {EVENT_LABEL[t]}
-          </option>
-        ))}
-      </select>
-      <select
-        className="input"
-        value={playerId}
-        onChange={(e) => setPlayerId(e.target.value)}
-      >
-        <option value="">球员（可选）</option>
-        {players.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.number ? `#${p.number} ` : ""}
-            {p.name}
-          </option>
-        ))}
-      </select>
-      {goalish && (
+        <div className="ev-side-seg" role="group" aria-label="所属球队">
+          <button
+            type="button"
+            aria-pressed={side === "home"}
+            onClick={() => switchSide("home")}
+          >
+            {m.homeTeamName ?? "主队"}
+          </button>
+          <button
+            type="button"
+            aria-pressed={side === "away"}
+            onClick={() => switchSide("away")}
+          >
+            {m.awayTeamName ?? "客队"}
+          </button>
+        </div>
         <select
           className="input"
-          value={assistId}
-          onChange={(e) => setAssistId(e.target.value)}
+          value={type}
+          onChange={(e) => setType(e.target.value as Exclude<MatchEventDTO["type"], "red_2y">)}
         >
-          <option value="">助攻（可选）</option>
-          {players
-            .filter((p) => String(p.id) !== playerId)
-            .map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.number ? `#${p.number} ` : ""}
-                {p.name}
-              </option>
-            ))}
+          {(Object.keys(EVENT_LABEL) as Exclude<MatchEventType, "red_2y">[]).map((t) => (
+            <option key={t} value={t}>
+              {EVENT_LABEL[t]}
+            </option>
+          ))}
         </select>
-      )}
-      <input
-        className="input"
-        type="number"
-        min="0"
-        max="300"
-        value={minute}
-        onChange={(e) => setMinute(e.target.value)}
-        placeholder="分钟"
-        style={{ width: "5em" }}
-      />
-      <button className="btn btn-sm" type="submit" disabled={busy}>
-        记录事件
-      </button>
-    </form>
+        <select
+          className="input"
+          value={playerId}
+          onChange={(e) => setPlayerId(e.target.value)}
+        >
+          <option value="">球员（可选）</option>
+          {players.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.number ? `#${p.number} ` : ""}
+              {p.name}
+              {optionSuffix(p.id)}
+            </option>
+          ))}
+        </select>
+        {goalish && (
+          <select
+            className="input"
+            value={assistId}
+            onChange={(e) => setAssistId(e.target.value)}
+          >
+            <option value="">助攻（可选）</option>
+            {players
+              .filter((p) => String(p.id) !== playerId)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.number ? `#${p.number} ` : ""}
+                  {p.name}
+                </option>
+              ))}
+          </select>
+        )}
+        <input
+          className="input"
+          type="number"
+          min="0"
+          max="300"
+          value={minute}
+          onChange={(e) => setMinute(e.target.value)}
+          placeholder="分钟"
+          style={{ width: "5em" }}
+        />
+        <button className="btn btn-sm" type="submit" disabled={busy}>
+          记录事件
+        </button>
+        {sel && suspWarn && (
+          <span className="warn-line susp-warn">
+            ⚠ {sel.playerName} 停赛中（剩 {sel.remaining} 场）——软约束不拦截，请确认该球员是否合规出场
+          </span>
+        )}
+        {sel && yellowWarn && (
+          <span className="warn-line yellow-warn">
+            ⚠ {sel.playerName} 已累积 {sel.yellows} 张黄牌，再吃 1 张将自动停赛 1 场
+          </span>
+        )}
+      </form>
+    </>
   );
 }
 
@@ -739,9 +822,9 @@ function EventList({
             : undefined;
         return (
           <li key={ev.id}>
-            <span className={`ev-dot ev-${ev.type}`} />
+            <EventDot type={ev.type} />
             {ev.minute !== null && <span className="ev-minute">{ev.minute}′</span>}
-            <span>{EVENT_LABEL[ev.type]}</span>
+            <span>{EVENT_NAME[ev.type]}</span>
             {who && <span className="ev-player">{who}</span>}
             {assist && <span className="ev-assist">（助攻 {assist}）</span>}
             <span className="ev-team">{name}</span>

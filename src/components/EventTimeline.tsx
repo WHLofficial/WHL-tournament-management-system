@@ -1,29 +1,35 @@
 import type { PublicMatchEventDTO } from "../../shared/types";
+import { CardIcon } from "./Cards";
 
 // 定论口径：赛程内联时间线显示 进球（含点球/乌龙）、红牌、受伤；
 // 详情页 showAll 时补上黄牌和点球不进。
-// 图标 = ⚽ emoji + 类型角标：点球叠绿点、乌龙叠玫红点、点球不进叠红叉；牌/受伤用 emoji。
+// 图标 = ⚽ emoji + 类型角标：点球叠绿点、乌龙叠玫红点、点球不进叠红叉；
+// 牌类用 CSS 画的红黄牌（打样定稿 C 方案），injury 用 emoji；icon 保留 emoji 字符串供分享卡降级。
 type EType = PublicMatchEventDTO["type"];
+type CardKind = "red" | "yellow" | "red_2y";
 const BALL_MARK: Partial<Record<EType, string>> = {
   pen_goal: "pen",
   own_goal: "own",
   pen_miss: "miss",
 };
-const SHOW: Partial<Record<EType, { icon: string; tag?: string }>> = {
+const SHOW: Partial<Record<EType, { icon: string; card?: CardKind; tag?: string }>> = {
   goal: { icon: "⚽" },
   pen_goal: { icon: "⚽", tag: "点球" },
   own_goal: { icon: "⚽", tag: "乌龙" },
-  red: { icon: "🟥" },
+  red: { icon: "🟥", card: "red" },
+  red_2y: { icon: "🟨🟥", card: "red_2y", tag: "两黄变红" },
   injury_minor: { icon: "🩹" },
   injury_major: { icon: "🚑" },
 };
-const EXTRA: Partial<Record<EType, { icon: string; tag?: string }>> = {
-  yellow: { icon: "🟨" },
+const EXTRA: Partial<Record<EType, { icon: string; card?: CardKind; tag?: string }>> = {
+  yellow: { icon: "🟨", card: "yellow" },
   pen_miss: { icon: "⚽", tag: "点球不进" },
 };
 
-// 事件是否上时间线（详情页 showAll = 全部 8 类）；分享卡与页面共用同一口径
-export function eventMeta(type: EType): { icon: string; tag?: string } | null {
+// 事件是否上时间线（详情页 showAll = 全部 9 类）；分享卡与页面共用同一口径
+export function eventMeta(
+  type: EType
+): { icon: string; card?: CardKind; tag?: string } | null {
   return SHOW[type] ?? EXTRA[type] ?? null;
 }
 
@@ -50,7 +56,9 @@ export function EventTimeline({
         const mark = BALL_MARK[e.type];
         const info = (
           <span className="evt-info">
-            <span className={`evt-icon${mark ? ` evt-ball ${mark}` : ""}`}>{meta.icon}</span>
+            <span className={`evt-icon${mark ? ` evt-ball ${mark}` : ""}`}>
+              {meta.card ? <CardIcon kind={meta.card} /> : meta.icon}
+            </span>
             <span className="evt-min">{e.minute !== null ? `${e.minute}′` : ""}</span>
             <span className="evt-who">
               {e.playerName}

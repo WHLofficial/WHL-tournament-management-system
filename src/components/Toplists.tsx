@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { ShareButton } from "./ShareButton";
 import { drawTableCard } from "../lib/share";
+import { CardIcon } from "./Cards";
 
 interface PlayerRow {
   playerId: number;
@@ -16,6 +17,7 @@ interface CardsPlayerRow {
   teamName: string;
   yellows: number;
   reds: number;
+  suspended?: boolean;
 }
 
 interface TeamRow {
@@ -127,12 +129,17 @@ export function Toplists({
   if (err) return <p className="error-msg">{err}</p>;
   if (!data) return <p className="muted">加载中…</p>;
 
+  // 牌徽标用 CSS 画的纯色牌（与时间线一致）；分享卡 plain 文本仍用 emoji
   const cards = (y: number, r: number) => (
     <>
-      {y > 0 && <span title="黄牌">🟨 {y}</span>}
+      {y > 0 && (
+        <span title="黄牌" style={{ whiteSpace: "nowrap" }}>
+          <CardIcon kind="yellow" /> {y}
+        </span>
+      )}
       {r > 0 && (
-        <span title="红牌" style={{ marginLeft: y > 0 ? 8 : 0 }}>
-          🟥 {r}
+        <span title="红牌" style={{ marginLeft: y > 0 ? 8 : 0, whiteSpace: "nowrap" }}>
+          <CardIcon kind="red" /> {r}
         </span>
       )}
     </>
@@ -167,8 +174,21 @@ export function Toplists({
       name: "红黄牌榜",
       title: "红黄牌榜",
       head: ["#", "球员", "球队", "牌"],
-      rows: data.cardsPlayers.map((r, i) => [i + 1, r.playerName, r.teamName, cards(r.yellows, r.reds)]),
-      plain: data.cardsPlayers.map((r, i) => [String(i + 1), r.playerName, r.teamName, cardsText(r.yellows, r.reds)]),
+      rows: data.cardsPlayers.map((r, i) => [
+        i + 1,
+        <>
+          {r.playerName}
+          {r.suspended && <span className="susp-badge">停赛中</span>}
+        </>,
+        r.teamName,
+        cards(r.yellows, r.reds),
+      ]),
+      plain: data.cardsPlayers.map((r, i) => [
+        String(i + 1),
+        r.suspended ? `${r.playerName}（停赛中）` : r.playerName,
+        r.teamName,
+        cardsText(r.yellows, r.reds),
+      ]),
       colWidths: [0.5, 2.2, 2.0, 1],
       nameCol: [1, 2],
     },

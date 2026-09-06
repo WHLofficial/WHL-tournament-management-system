@@ -62,7 +62,7 @@ export function matchToShare(m: ShareMatchInput): ShareMatch {
   };
 }
 
-// 对阵行事件摘要：⚽进球（点球进球不特殊标注，乌龙归受益侧标 OG）+ 🟥红牌。
+// 对阵行事件摘要：⚽进球（点球进球不特殊标注，乌龙归受益侧标 OG）+ 🟥红牌（含两黄变一红）。
 // 同侧多人逗号分隔，同一人多球聚合 ×n。返回主/客两侧文本。
 function eventSummaries(m: ShareMatch): { home: string | null; away: string | null } {
   const goals: Record<"home" | "away", Map<string, number>> = { home: new Map(), away: new Map() };
@@ -75,7 +75,7 @@ function eventSummaries(m: ShareMatch): { home: string | null; away: string | nu
       const s = e.side === "home" ? "away" : "home";
       const key = `${name}(OG)`;
       goals[s].set(key, (goals[s].get(key) ?? 0) + 1);
-    } else if (e.type === "red") {
+    } else if (e.type === "red" || e.type === "red_2y") {
       reds[e.side].push(name);
     }
   }
@@ -101,10 +101,41 @@ export interface TournamentCardData {
 export interface ShareEventRow {
   side: "home" | "away";
   icon: string;
+  /** 牌类事件：canvas 直接画纯色矩形（与页面 CSS 牌同款），不走 emoji 字体 */
+  card?: "red" | "yellow" | "red_2y";
   tag?: string | null;
   minute: number | null;
   playerName: string | null;
   assistName?: string | null;
+}
+
+// canvas 小牌：与页面 CSS 牌同配色；红牌带深底描边（叠在黄牌上时分层）。返回占用宽度。
+function drawCardMark(
+  ctx: CanvasRenderingContext2D,
+  kind: "red" | "yellow" | "red_2y",
+  x: number,
+  cy: number
+): number {
+  const w = 11;
+  const h = 15;
+  const top = cy - h / 2 - 1;
+  const rect = (px: number, py: number, color: string, outline: boolean) => {
+    if (outline) {
+      ctx.fillStyle = "#0e5030";
+      roundRectPath(ctx, px - 1.5, py - 1.5, w + 3, h + 3, 3.5);
+      ctx.fill();
+    }
+    ctx.fillStyle = color;
+    roundRectPath(ctx, px, py, w, h, 2.5);
+    ctx.fill();
+  };
+  if (kind === "red") rect(x, top, "#e53935", false);
+  else if (kind === "yellow") rect(x, top, "#ffd60a", false);
+  else {
+    rect(x, top + 3, "#ffd60a", false);
+    rect(x + 7, top, "#e53935", true);
+  }
+  return kind === "red_2y" ? w + 7 : w;
 }
 
 export interface MatchCardData {
@@ -494,16 +525,22 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
       const who = ev.playerName ?? "";
       const tag = ev.tag ? `（${ev.tag}）` : "";
       const assist = ev.assistName ? ` 👟 ${ev.assistName}` : "";
-      const text = `${ev.icon}${min} ${who}${tag}${assist}`;
+      const cardW = ev.card ? (ev.card === "red_2y" ? 18 : 11) + 6 : 0;
+      const text = ev.card ? `${min} ${who}${tag}${assist}` : `${ev.icon}${min} ${who}${tag}${assist}`;
       font(ctx, 400, 17);
       ctx.fillStyle = "rgba(255,255,255,0.92)";
-      const maxW = cx - 80;
+      const maxW = cx - 80 - cardW;
       if (ev.side === "home") {
         ctx.textAlign = "right";
-        ctx.fillText(fitText(ctx, text, maxW), cx - 32, ry);
+        const shown = fitText(ctx, text, maxW);
+        const tw = ctx.measureText(shown).width;
+        ctx.fillText(shown, cx - 32, ry);
+        if (ev.card) drawCardMark(ctx, ev.card, cx - 32 - tw - cardW, ry);
       } else {
         ctx.textAlign = "left";
-        ctx.fillText(fitText(ctx, text, maxW), cx + 32, ry);
+        const shown = fitText(ctx, text, maxW);
+        ctx.fillText(shown, cx + 32 + cardW, ry);
+        if (ev.card) drawCardMark(ctx, ev.card, cx + 32, ry);
       }
       ry += rowH;
     }

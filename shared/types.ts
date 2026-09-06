@@ -120,6 +120,31 @@ export interface MatchEventRow {
 // 同分决胜链的可用比较项（积分永远第一，种子位永远兜底）
 export type TiebreakerKey = "gd" | "gf" | "h2h";
 
+// ---------- 停赛规则（存 config_json.suspension） ----------
+
+export interface SuspensionConfig {
+  redBan: number; // 直红停赛场数
+  red2yBan: number; // 两黄变一红停赛场数
+  yellowThreshold: number; // 累积黄牌停赛阈值，0 = 不启用黄牌累积停赛
+  yellowResetAt: string | null; // 手动"清零黄牌累计"的时间戳锚点；锚点后录入的黄牌重新计数
+}
+
+// 单个球员的停赛/黄牌累积状态（纯派生，实时计算）
+export interface SuspensionStatusDTO {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  teamName: string;
+  entryId: number;
+  remaining: number; // 剩余停赛场数，> 0 即停赛中
+  yellows: number; // 当前累积黄牌数（清零锚点后口径）
+}
+
+export interface SuspensionsResp {
+  config: SuspensionConfig;
+  players: SuspensionStatusDTO[]; // 只含有红黄牌记录的球员
+}
+
 // ---------- 配置（存 config_json 的形状） ----------
 
 // 非首阶段声明"从上一阶段拿谁"
@@ -311,7 +336,8 @@ export type MatchEventType =
   | "injury_minor"
   | "injury_major"
   | "yellow"
-  | "red";
+  | "red"
+  | "red_2y"; // 两黄变一红：录第二张黄牌时后端自动转存，只由系统生成
 
 // 公开端事件视图：不暴露内部 id，side 标主/客
 export interface PublicMatchEventDTO {
