@@ -1,16 +1,22 @@
 // #13 头版门户：快讯流与周报引擎。
 // 快讯是读时现算的纯派生物——事实成立条目即在，pubCache 控制重算频率（每边缘节点每 60s 至多一次）；
 // 同数据同输出（确定性 item_id + 稳定排序），数据变动自动重算，无陈旧新闻。
-// 时效梯度：红牌(live 即时报) → 战报(终场) → 综述(全轮, Phase 2) → 周报(周末)。
+// 时效梯度：红牌(live 即时报) → 战报(终场) → 综述(全轮) → 周报(周末)。
 import type { D1Database } from "@cloudflare/workers-types";
-import type { FeedItemDTO, WeeklyDTO, WeeklyMatchDTO } from "../../shared/news";
+import type { FeedItemDTO, RecapDTO, WeeklyDTO, WeeklyMatchDTO } from "../../shared/news";
+import type { RawEvent, FinishedMatch } from "./context";
 import {
+  currentStreaks,
   fetchEventRows,
   fetchFinishedWindow,
+  fetchRoundFinished,
   fetchStageMaxRounds,
+  fetchTournamentFinished,
+  rankRowsSimple,
   redCardBanSuffix,
   roundLabel,
-  type FinishedMatch,
+  standingsSnapshot,
+  subtractMatchContribution,
 } from "./context";
 
 // ---------- 周报（自然周，周一起算，UTC 口径；本周空回退最近有比赛的一周） ----------
@@ -117,22 +123,12 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
   // 事件（乌龙数 / 本周射手王）
   const eventsByMatch = await fetchEventRows(db, list.map((m) => m.id));
   let ownGoals = 0;
-  const scorerGoals = new Map<string, { name: string; teamName: string; goals: number }>();
   for (const m of list) {
     for (const e of eventsByMatch.get(m.id) ?? []) {
       if (e.type === "own_goal") ownGoals += 1;
-      if ((e.type === "goal" || e.type === "pen_goal") && e.playerName) {
-        const key = e.playerName;
-        const cur = scorerGoals.get(key) ?? { name: e.playerName, teamName: "", goals: 0 };
-        cur.goals += 1;
-        if (!cur.teamName) {
-          cur.teamName = e.entryId === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
-        }
-        scorerGoals.set(key, cur);
-      }
     }
   }
-  const topScorer = [...scorerGoals.values()].sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, "zh"))[0] ?? null;
+  const topScorer = topScorerOf(eventsByMatch, list);
 
   // 聚合：进球含弃权判负记分（0:3 与积分榜口径一致）；零封/最佳防守不计弃权场
   let goals = 0;
@@ -167,16 +163,7 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
     if (!bestDefense || v.conceded < bestDefense.conceded) bestDefense = { teamName, conceded: v.conceded };
   }
 
-  const matches: WeeklyMatchDTO[] = list.map((m) => ({
-    matchId: m.id,
-    tournamentId: m.tournamentId,
-    tournamentName: m.tournamentName,
-    homeTeamName: m.homeTeamName,
-    awayTeamName: m.awayTeamName,
-    scoreHome: m.scoreHome,
-    scoreAway: m.scoreAway,
-    finishedAt: m.finishedAt,
-  }));
+  const matches: WeeklyMatchDTO[] = list.map(toWeeklyMatch);
 
   return {
     weekStart: weekKey(start),
@@ -191,6 +178,139 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
     bestDefense,
     matches,
   };
+}
+
+// ---------- 轮次聚合（综述快讯条与综述页共用） ----------
+
+function toWeeklyMatch(m: FinishedMatch): WeeklyMatchDTO {
+  return {
+    matchId: m.id,
+    tournamentId: m.tournamentId,
+    tournamentName: m.tournamentName,
+    homeTeamName: m.homeTeamName,
+    awayTeamName: m.awayTeamName,
+    scoreHome: m.scoreHome,
+    scoreAway: m.scoreAway,
+    finishedAt: m.finishedAt,
+  };
+}
+
+function roundAgg(list: FinishedMatch[]) {
+  let goals = 0;
+  let cleanSheets = 0;
+  let bestDiff = 0;
+  let biggestMargin: { matchId: number; label: string; score: string } | null = null;
+  for (const m of list) {
+    goals += m.scoreHome + m.scoreAway; // 弃权判负记分与积分榜口径一致
+    const diff = Math.abs(m.scoreHome - m.scoreAway);
+    if (diff > bestDiff) {
+      bestDiff = diff;
+      biggestMargin = {
+        matchId: m.id,
+        label: `${m.homeTeamName} vs ${m.awayTeamName}`,
+        score: `${m.scoreHome}:${m.scoreAway}`,
+      };
+    }
+    if (m.walkoverSide === "" && (m.scoreHome === 0 || m.scoreAway === 0)) cleanSheets += 1;
+  }
+  return { played: list.length, goals, cleanSheets, biggestMargin };
+}
+
+// 射手王（goal/pen_goal，同人聚合，乌龙不计）：周报与综述共用
+function topScorerOf(
+  eventsByMatch: Map<number, RawEvent[]>,
+  list: FinishedMatch[],
+): { name: string; teamName: string; goals: number } | null {
+  const scorerGoals = new Map<string, { name: string; teamName: string; goals: number }>();
+  for (const m of list) {
+    for (const e of eventsByMatch.get(m.id) ?? []) {
+      if ((e.type !== "goal" && e.type !== "pen_goal") || !e.playerName) continue;
+      const cur = scorerGoals.get(e.playerName) ?? { name: e.playerName, teamName: "", goals: 0 };
+      cur.goals += 1;
+      if (!cur.teamName) {
+        cur.teamName = e.entryId === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
+      }
+      scorerGoals.set(e.playerName, cur);
+    }
+  }
+  return (
+    [...scorerGoals.values()].sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, "zh"))[0] ??
+    null
+  );
+}
+
+// ---------- 叙事事实：按「该场完赛时刻」重放 ----------
+// 积分榜快照/射手榜都是「当前值」，直接给历史窗口比赛贴叙事会张冠李戴（后打的球算进前头的里程碑）。
+// 这里统一重放：射手账本逐场滚动；榜首判定把后续场次的贡献从当前榜里扣回去。
+
+interface ScorerRow {
+  playerId: number;
+  name: string;
+  teamName: string;
+  goals: number;
+}
+
+interface NarrativeFacts {
+  finAsc: FinishedMatch[]; // 该赛事全部完赛场（升序）
+  scorersAt: Map<number, { before: ScorerRow[]; after: ScorerRow[] }>; // 窗口比赛的赛前/赛后射手榜
+}
+
+async function buildNarrativeFacts(
+  db: D1Database,
+  tid: number,
+  wantedMatchIds: Set<number>,
+): Promise<NarrativeFacts> {
+  const finAsc = await fetchTournamentFinished(db, tid);
+  const scorersAt = new Map<number, { before: ScorerRow[]; after: ScorerRow[] }>();
+  if (wantedMatchIds.size === 0) return { finAsc, scorersAt };
+  const evAll = await fetchEventRows(
+    db,
+    finAsc.map((m) => m.id),
+  );
+  const ledger = new Map<number, { name: string; teamName: string; goals: number }>();
+  const sortedLedger = (): ScorerRow[] =>
+    [...ledger.entries()]
+      .map(([playerId, v]) => ({ playerId, ...v }))
+      .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, "zh"));
+  for (const m of finAsc) {
+    const cap = wantedMatchIds.has(m.id) ? { before: sortedLedger(), after: [] as ScorerRow[] } : null;
+    if (cap) scorersAt.set(m.id, cap);
+    for (const e of evAll.get(m.id) ?? []) {
+      if ((e.type !== "goal" && e.type !== "pen_goal") || e.playerId == null) continue;
+      const cur = ledger.get(e.playerId) ?? { name: e.playerName ?? "未知球员", teamName: "", goals: 0 };
+      cur.goals += 1;
+      if (!cur.teamName) {
+        cur.teamName = e.entryId === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
+      }
+      ledger.set(e.playerId, cur);
+    }
+    if (cap) cap.after = sortedLedger();
+  }
+  return { finAsc, scorersAt };
+}
+
+// 某队最近 n 场（从升序列表尾部往前取）的进失/胜负累计，纪录条 body 用
+function entryTail(cutAsc: FinishedMatch[], entryId: number, n: number) {
+  let gf = 0,
+    ga = 0,
+    w = 0,
+    d = 0,
+    taken = 0;
+  for (let i = cutAsc.length - 1; i >= 0 && taken < n; i--) {
+    const m = cutAsc[i];
+    if (m.homeEntryId !== entryId && m.awayEntryId !== entryId) continue;
+    const isHome = m.homeEntryId === entryId;
+    const egf = isHome ? m.scoreHome : m.scoreAway;
+    const ega = isHome ? m.scoreAway : m.scoreHome;
+    gf += egf;
+    ga += ega;
+    if (m.walkoverSide !== "both") {
+      if (egf > ega) w += 1;
+      else if (egf === ega) d += 1;
+    }
+    taken += 1;
+  }
+  return { gf, ga, w, d };
 }
 
 // ---------- 快讯流 ----------
@@ -262,6 +382,149 @@ export async function buildFeed(
     }
   }
 
+  // 1.5) 叙事条：榜首易主 / 纪录 / 里程碑——全部按「该场完赛时刻」口径重放
+  const wantedByTid = new Map<number, Set<number>>();
+  for (const m of window) {
+    const s = wantedByTid.get(m.tournamentId) ?? new Set<number>();
+    s.add(m.id);
+    wantedByTid.set(m.tournamentId, s);
+  }
+  const factsEntries = await Promise.all(
+    [...wantedByTid.entries()].map(
+      async ([tid, wanted]) => [tid, await buildNarrativeFacts(db, tid, wanted)] as const,
+    ),
+  );
+  const factsByTid = new Map(factsEntries);
+  const snapEntries = await Promise.all(
+    [...new Set(window.map((m) => m.stageId))].map(
+      async (sid) => [sid, await standingsSnapshot(db, sid)] as const,
+    ),
+  );
+  const snapMap = new Map(snapEntries);
+
+  for (const m of window) {
+    const facts = factsByTid.get(m.tournamentId);
+    if (!facts) continue;
+    const rl = roundLabel(m, maxRounds.get(m.stageId) ?? m.round);
+    const base = {
+      at: m.finishedAt,
+      tournamentId: m.tournamentId,
+      tournamentName: m.tournamentName,
+      matchId: m.id,
+    };
+    const finAsc = facts.finAsc;
+    const stageFinished = finAsc.filter((f) => f.stageId === m.stageId);
+    const pos = stageFinished.findIndex((f) => f.id === m.id);
+    const cut = pos >= 0 ? finAsc.slice(0, pos + 1) : null;
+
+    // a) 榜首易主：当前榜扣掉「本场之后」完赛的贡献 = 该场完赛时刻的赛后榜；
+    //    多组小组赛跨组排名无意义，不报
+    const snap = snapMap.get(m.stageId) ?? null;
+    if (
+      snap &&
+      cut &&
+      pos >= 0 &&
+      new Set(snap.rows.map((r) => r.groupId ?? 0)).size <= 1
+    ) {
+      const afterRows = snap.rows.map((r) => ({ ...r }));
+      let replayable = true;
+      for (let i = pos + 1; i < stageFinished.length; i++) {
+        if (!subtractMatchContribution(afterRows, stageFinished[i])) {
+          replayable = false;
+          break;
+        }
+      }
+      if (replayable) {
+        rankRowsSimple(afterRows);
+        const beforeRows = afterRows.map((r) => ({ ...r }));
+        if (subtractMatchContribution(beforeRows, m)) {
+          rankRowsSimple(beforeRows);
+          const newL = afterRows[0];
+          const oldL = beforeRows[0];
+          const hB = beforeRows.find((r) => r.entryId === m.homeEntryId);
+          const aB = beforeRows.find((r) => r.entryId === m.awayEntryId);
+          if (
+            newL &&
+            oldL &&
+            newL.entryId !== oldL.entryId &&
+            (newL.entryId === m.homeEntryId || newL.entryId === m.awayEntryId) &&
+            hB &&
+            aB &&
+            hB.played > 0 &&
+            aB.played > 0
+          ) {
+            const gap = afterRows.length > 1 ? newL.pts - afterRows[1].pts : 0;
+            items.push({
+              ...base,
+              id: `leader:${m.id}`,
+              kind: "leader",
+              title: `${newL.teamName} 登顶积分榜`,
+              body: `${rl}过后反超 ${oldL.teamName}${gap > 0 ? `，领先 ${gap} 分` : ""}`,
+            });
+          }
+        }
+      }
+    }
+
+    // b) 纪录：每队每场至多一条（连胜 ≥3 > 不败 ≥5 > 零封 ≥2），该场即延长纪录的那一场
+    if (cut) {
+      for (const entryId of [m.homeEntryId, m.awayEntryId]) {
+        const teamName = entryId === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
+        const st = currentStreaks(cut, entryId);
+        let title = "";
+        let body = "";
+        if (st.win >= 3) {
+          const t = entryTail(cut, entryId, st.win);
+          title = `${teamName} ${st.win} 连胜`;
+          body = `${rl}｜近 ${st.win} 场全胜，进 ${t.gf} 球失 ${t.ga} 球`;
+        } else if (st.unbeaten >= 5) {
+          const t = entryTail(cut, entryId, st.unbeaten);
+          title = `${teamName} 连续 ${st.unbeaten} 场不败`;
+          body = `${rl}｜近 ${st.unbeaten} 场 ${t.w} 胜 ${t.d} 平，进 ${t.gf} 球失 ${t.ga} 球`;
+        } else if (st.cleanSheet >= 2) {
+          const t = entryTail(cut, entryId, st.cleanSheet);
+          title = `${teamName} 连续 ${st.cleanSheet} 场零封`;
+          body = `${rl}｜近 ${st.cleanSheet} 场零封，进 ${t.gf} 球`;
+        }
+        if (title) {
+          items.push({ ...base, id: `streak:${m.id}:${entryId}`, kind: "streak", title, body });
+        }
+      }
+    }
+
+    // c) 里程碑：进球数达成 5 的倍数，或登顶射手榜（≥2 球门槛防开局噪音），每名射手每场至多一条
+    const sc = facts.scorersAt.get(m.id);
+    if (sc) {
+      const seen = new Set<number>();
+      for (const e of eventsByMatch.get(m.id) ?? []) {
+        if ((e.type !== "goal" && e.type !== "pen_goal") || e.playerId == null || seen.has(e.playerId))
+          continue;
+        seen.add(e.playerId);
+        const afterRow = sc.after.find((p) => p.playerId === e.playerId);
+        if (!afterRow) continue;
+        const rankAfter = sc.after.indexOf(afterRow) + 1;
+        const beforeIdx = sc.before.findIndex((p) => p.playerId === e.playerId);
+        if (afterRow.goals % 5 === 0) {
+          items.push({
+            ...base,
+            id: `milestone:${m.id}:${e.playerId}`,
+            kind: "milestone",
+            title: `${afterRow.name} 达成本届第 ${afterRow.goals} 球`,
+            body: `${rl}｜代表 ${afterRow.teamName}，本届进球来到 ${afterRow.goals} 个`,
+          });
+        } else if (rankAfter === 1 && beforeIdx !== 0 && afterRow.goals >= 2) {
+          items.push({
+            ...base,
+            id: `milestone:${m.id}:${e.playerId}`,
+            kind: "milestone",
+            title: `${afterRow.name} 登顶射手榜`,
+            body: `${rl}过后以 ${afterRow.goals} 球升至射手榜首位`,
+          });
+        }
+      }
+    }
+  }
+
   // 2) 红牌即时快讯（live/finished 都算，录入即出条）
   type RedRow = {
     id: number; type: "red" | "red_2y"; created_at: string;
@@ -281,7 +544,7 @@ export async function buildFeed(
        LEFT JOIN player p ON p.id = me.player_id
        WHERE me.type IN ('red', 'red_2y') AND t.status != 'draft'
          ${before ? "AND me.created_at < ?" : ""}
-       ORDER BY me.created_at DESC, me.id DESC LIMIT 10`
+       ORDER BY me.created_at DESC, me.id DESC LIMIT ${cap}`
     )
     .bind(...(before ? [before] : []))
     .all<RedRow>();
@@ -328,7 +591,7 @@ export async function buildFeed(
        JOIN team at ON at.id = ae.team_id
        WHERE a.action = 'match_rescore' AND t.status != 'draft'
          ${before ? "AND a.created_at < ?" : ""}
-       ORDER BY a.id DESC LIMIT 10`
+       ORDER BY a.id DESC LIMIT ${cap}`
     )
     .bind(...(before ? [before] : []))
     .all<AuditRow>();
@@ -357,6 +620,61 @@ export async function buildFeed(
     });
   }
 
+  // 3.5) 轮次综述条：最近完赛的 5 个「全轮完赛」轮次（详情走综述端点）
+  type RecapGroupRow = {
+    stage_id: number;
+    round: number;
+    last_at: string | null;
+    tournament_id: number;
+    tournament_name: string;
+    stage_kind: "elim" | "round_robin" | "group";
+    stage_name: string | null;
+  };
+  const recapRes = await db
+    .prepare(
+      `SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at,
+         s.tournament_id, t.name AS tournament_name,
+         s.kind AS stage_kind, s.name AS stage_name
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id
+       WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
+         AND COALESCE(m.note, '') != '轮空'
+       GROUP BY m.stage_id, m.round
+       HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END)
+         AND MAX(m.finished_at) < COALESCE(?, '9999-12-31')
+       ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT ${cap}`,
+    )
+    .bind(before ?? "9999-12-31")
+    .all<RecapGroupRow>();
+  const recapRows = recapRes.results ?? [];
+  const recapMaxRounds = await fetchStageMaxRounds(db, recapRows.map((r) => r.stage_id));
+  const recapLists = await Promise.all(
+    recapRows.map((r) => fetchRoundFinished(db, r.stage_id, r.round)),
+  );
+  for (let i = 0; i < recapRows.length; i++) {
+    const g = recapRows[i];
+    const agg = roundAgg(recapLists[i]);
+    if (agg.played === 0) continue;
+    const rl = roundLabel(
+      { stageKind: g.stage_kind, stageName: g.stage_name, round: g.round },
+      recapMaxRounds.get(g.stage_id) ?? g.round,
+    );
+    items.push({
+      id: `recap:${g.stage_id}:${g.round}`,
+      kind: "recap",
+      at: g.last_at,
+      tournamentId: g.tournament_id,
+      tournamentName: g.tournament_name,
+      stageId: g.stage_id,
+      round: g.round,
+      title: `${rl}综述｜${agg.played} 场 ${agg.goals} 球`,
+      body: agg.biggestMargin
+        ? `最大分差 ${agg.biggestMargin.score}（${agg.biggestMargin.label}）`
+        : `${agg.played} 场比赛全部完赛`,
+    });
+  }
+
   // 4) 周报条（本周/回退周有比赛才出）
   const weekly = await buildWeekly(db);
   if (weekly.played > 0) {
@@ -381,4 +699,88 @@ export async function buildFeed(
     return a.id < b.id ? -1 : 1;
   });
   return items.slice(0, cap);
+}
+
+// ---------- 轮次综述页（/tournaments/:tid/round/:sid/:round） ----------
+
+export async function buildRoundRecap(
+  db: D1Database,
+  tournamentId: number,
+  stageId: number,
+  round: number,
+): Promise<RecapDTO | null> {
+  const tour = await db
+    .prepare("SELECT name, status FROM tournament WHERE id = ?")
+    .bind(tournamentId)
+    .first<{ name: string; status: string }>();
+  if (!tour || tour.status === "draft") return null;
+  const stage = await db
+    .prepare("SELECT kind, name FROM stage WHERE id = ? AND tournament_id = ?")
+    .bind(stageId, tournamentId)
+    .first<{ kind: "elim" | "round_robin" | "group"; name: string | null }>();
+  if (!stage) return null;
+  // 该轮应赛场数（排除轮空与未定空壳）——「齐轮」以此为准
+  const total = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM match
+       WHERE stage_id = ? AND round = ?
+         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL
+         AND COALESCE(note, '') != '轮空'`,
+    )
+    .bind(stageId, round)
+    .first<{ n: number }>();
+  if (!total || total.n === 0) return null;
+  const finished = await fetchRoundFinished(db, stageId, round);
+  const isComplete = finished.length >= total.n;
+  const maxRounds = await fetchStageMaxRounds(db, [stageId]);
+  const rl = roundLabel(
+    { stageKind: stage.kind, stageName: stage.name, round },
+    maxRounds.get(stageId) ?? round,
+  );
+
+  const agg = roundAgg(finished);
+  const eventsByMatch = await fetchEventRows(
+    db,
+    finished.map((m) => m.id),
+  );
+  const topScorer = topScorerOf(eventsByMatch, finished);
+
+  // 积分榜前 5：读时现算口径=当前榜；多组小组赛跨组排名无意义，整段留空
+  const snap = await standingsSnapshot(db, stageId);
+  const singleGroup = snap ? new Set(snap.rows.map((r) => r.groupId ?? 0)).size <= 1 : false;
+  const standings =
+    snap && singleGroup
+      ? snap.rows
+          .slice(0, 5)
+          .map((r) => ({ rank: r.rank, teamName: r.teamName, played: r.played, pts: r.pts }))
+      : [];
+
+  const paragraphs: string[] = [];
+  let p1 = `${rl}一共 ${agg.played} 场比赛，打进 ${agg.goals} 球`;
+  if (agg.cleanSheets > 0) p1 += `，其中 ${agg.cleanSheets} 场零封`;
+  if (agg.biggestMargin) p1 += `。最大分差出现在 ${agg.biggestMargin.label}（${agg.biggestMargin.score}）`;
+  paragraphs.push(p1);
+  if (topScorer) {
+    paragraphs.push(`射手方面，${topScorer.name}（${topScorer.teamName}）本轮打进 ${topScorer.goals} 球`);
+  }
+  if (standings.length > 0 && isComplete) {
+    paragraphs.push(`积分榜上，${standings[0].teamName} 以 ${standings[0].pts} 分位居榜首`);
+  }
+
+  return {
+    tournamentId,
+    tournamentName: tour.name,
+    stageId,
+    round,
+    roundLabel: rl,
+    isComplete,
+    played: agg.played,
+    goals: agg.goals,
+    cleanSheets: agg.cleanSheets,
+    biggestMargin: agg.biggestMargin,
+    topScorer,
+    standings,
+    paragraphs,
+    matches: finished.map(toWeeklyMatch),
+  };
 }

@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { pubCache } from "../lib/cache";
-import { buildFeed, buildWeekly } from "../lib/feedNews";
+import { buildFeed, buildRoundRecap, buildWeekly } from "../lib/feedNews";
 import { buildMatchReport } from "../lib/report";
 import type { AnnouncementDTO } from "../../shared/news";
 
@@ -46,6 +46,17 @@ app.get("/matches/:mid/report", pubCache(60), async (c) => {
   const report = await buildMatchReport(c.env.DB, mid);
   if (!report) return c.json({ error: "not_found" }, 404);
   return c.json({ report });
+});
+
+// 轮次综述页（该轮完赛即自动成文；未齐轮也可访问，isComplete 标注）
+app.get("/tournaments/:tid/round/:sid/:round", pubCache(300), async (c) => {
+  const tid = Number(c.req.param("tid"));
+  const sid = Number(c.req.param("sid"));
+  const round = Number(c.req.param("round"));
+  if (![tid, sid, round].every(Number.isInteger)) return c.json({ error: "bad_request" }, 400);
+  const recap = await buildRoundRecap(c.env.DB, tid, sid, round);
+  if (!recap) return c.json({ error: "not_found" }, 404);
+  return c.json({ recap });
 });
 
 export default app;

@@ -111,7 +111,7 @@ export async function fetchTournamentFinished(
   const res = await db
     .prepare(
       `${FINISHED_COLS} ${FINISHED_FROM}
-       WHERE s.tournament_id = ? AND m.status = 'finished' AND m.note != '轮空'
+       WHERE s.tournament_id = ? AND m.status = 'finished' AND COALESCE(m.note, '') != '轮空'
        ORDER BY m.finished_at ASC, m.id ASC`
     )
     .bind(tid)
@@ -126,6 +126,23 @@ export async function fetchMatchById(db: D1Database, mid: number): Promise<Finis
     .bind(mid)
     .first<FinishedRow>();
   return row ? toFinished(row) : null;
+}
+
+// 某轮的完赛场（升序）：轮次综述的原料
+export async function fetchRoundFinished(
+  db: D1Database,
+  stageId: number,
+  round: number,
+): Promise<FinishedMatch[]> {
+  const res = await db
+    .prepare(
+      `${FINISHED_COLS} ${FINISHED_FROM}
+       WHERE m.stage_id = ? AND m.round = ? AND m.status = 'finished'
+       ORDER BY m.finished_at ASC, m.id ASC`,
+    )
+    .bind(stageId, round)
+    .all<FinishedRow>();
+  return (res.results ?? []).map(toFinished);
 }
 
 // h2h：两 entry 在本赛事的完赛交锋（升序，不含轮空）
@@ -224,33 +241,8 @@ export async function standingsSnapshot(db: D1Database, stageId: number): Promis
   return { rows, byEntry, leader: rows.find((r) => r.rank === 1) ?? rows[0] };
 }
 
-// 赛前快照：把本场贡献从当前值里减掉再重排。双弃权=各记负 0 分不计球（照 #10 口径）。
-export function standingsBefore(snap: StandingSnap, m: FinishedMatch): StandingSnap | null {
-  if (!snap.byEntry.has(m.homeEntryId) || !snap.byEntry.has(m.awayEntryId)) return null;
-  const rows = snap.rows.map((r) => ({ ...r }));
-  const both = m.walkoverSide === "both";
-  for (const entryId of [m.homeEntryId, m.awayEntryId]) {
-    const r = rows.find((x) => x.entryId === entryId)!;
-    const isHome = entryId === m.homeEntryId;
-    const gf = isHome ? m.scoreHome : m.scoreAway;
-    const ga = isHome ? m.scoreAway : m.scoreHome;
-    r.played -= 1;
-    if (both) {
-      r.lost -= 1;
-    } else if (gf > ga) {
-      r.won -= 1;
-      r.pts -= 3;
-    } else if (gf === ga) {
-      r.drawn -= 1;
-      r.pts -= 1;
-    } else {
-      r.lost -= 1;
-    }
-    if (!both) {
-      r.goalsFor -= gf;
-      r.goalsAgainst -= ga;
-    }
-  }
+// 简化决胜链排序（积分→净胜→进球→种子位）并赋 rank；叙事口径专用（不承担 h2h 链与扣分）
+export function rankRowsSimple(rows: StandRow[]): void {
   rows.sort(
     (a, b) =>
       b.pts - a.pts ||
@@ -261,6 +253,62 @@ export function standingsBefore(snap: StandingSnap, m: FinishedMatch): StandingS
   rows.forEach((r, i) => {
     r.rank = i + 1;
   });
+}
+
+// 从行集中就地扣除一场比赛的贡献。与 buildStandingsStmts 的加法严格互逆：
+// 双弃权各记负不计球；平分点球决胜 = 点胜 2 分/点负 1 分且不动胜负平计数。
+// 任一队不在行集中时返回 false，调用方视为无法回溯。
+export function subtractMatchContribution(rows: StandRow[], m: FinishedMatch): boolean {
+  const home = rows.find((r) => r.entryId === m.homeEntryId);
+  const away = rows.find((r) => r.entryId === m.awayEntryId);
+  if (!home || !away) return false;
+  const sh = m.scoreHome;
+  const sa = m.scoreAway;
+  home.played -= 1;
+  away.played -= 1;
+  if (m.walkoverSide === "both") {
+    home.lost -= 1;
+    away.lost -= 1;
+    return true;
+  }
+  home.goalsFor -= sh;
+  home.goalsAgainst -= sa;
+  away.goalsFor -= sa;
+  away.goalsAgainst -= sh;
+  if (sh > sa) {
+    home.won -= 1;
+    home.pts -= 3;
+    away.lost -= 1;
+  } else if (sh < sa) {
+    away.won -= 1;
+    away.pts -= 3;
+    home.lost -= 1;
+  } else if (m.penHome != null && m.penAway != null && m.penHome !== m.penAway) {
+    if (m.penHome > m.penAway) {
+      home.pts -= 2;
+      home.penWon -= 1;
+      away.pts -= 1;
+      away.penLost -= 1;
+    } else {
+      away.pts -= 2;
+      away.penWon -= 1;
+      home.pts -= 1;
+      home.penLost -= 1;
+    }
+  } else {
+    home.drawn -= 1;
+    home.pts -= 1;
+    away.drawn -= 1;
+    away.pts -= 1;
+  }
+  return true;
+}
+
+// 赛前快照：把本场贡献从当前值里减掉再重排。双弃权=各记负 0 分不计球（照 #10 口径）。
+export function standingsBefore(snap: StandingSnap, m: FinishedMatch): StandingSnap | null {
+  const rows = snap.rows.map((r) => ({ ...r }));
+  if (!subtractMatchContribution(rows, m)) return null;
+  rankRowsSimple(rows);
   const byEntry = new Map(rows.map((r) => [r.entryId, r]));
   return { rows, byEntry, leader: rows[0] };
 }
@@ -290,7 +338,8 @@ export function currentStreaks(matchesAsc: FinishedMatch[], entryId: number): Te
       else winBroken = true;
     }
     if (!csBroken) {
-      if (!both && ga === 0) cs += 1;
+      // 弃权场不奖励零封（与周报聚合口径一致）：无论谁弃权都打断连续零封
+      if (m.walkoverSide === "" && ga === 0) cs += 1;
       else csBroken = true;
     }
     if (!ubBroken) {

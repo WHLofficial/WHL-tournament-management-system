@@ -406,7 +406,7 @@ export async function readStandings(
     .prepare(
       `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side
        FROM match WHERE stage_id = ? AND status = 'finished'
-         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND note != '轮空'`
+         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'`
     )
     .bind(stageId)
     .all<FinishedMatchRow>();

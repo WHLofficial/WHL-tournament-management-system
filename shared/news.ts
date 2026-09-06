@@ -86,6 +86,24 @@ export interface ReportCardDTO {
   teamName: string;
 }
 
+// 轮次综述（某轮全部完赛后自动生成的赛事级叙事页）
+export interface RecapDTO {
+  tournamentId: number;
+  tournamentName: string;
+  stageId: number;
+  round: number;
+  roundLabel: string;
+  isComplete: boolean; // 该轮是否已全部完赛（未完赛也可访问，标注后仍显示当前统计）
+  played: number;
+  goals: number;
+  cleanSheets: number;
+  biggestMargin: { matchId: number; label: string; score: string } | null;
+  topScorer: { name: string; teamName: string; goals: number } | null;
+  standings: { rank: number; teamName: string; played: number; pts: number }[]; // 单表联赛阶段前 5；淘汰赛/多组小组赛为空
+  paragraphs: string[]; // 概述句
+  matches: WeeklyMatchDTO[];
+}
+
 export interface MatchReportDTO {
   matchId: number;
   tournamentId: number;
