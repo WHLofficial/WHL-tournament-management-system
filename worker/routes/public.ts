@@ -257,6 +257,7 @@ type PubMatchRow = {
   score_home: number | null; score_away: number | null;
   pen_home: number | null; pen_away: number | null;
   status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
+  walkover_side: string | null;
   stage_kind: MatchDTO["stageKind"];
   stage_name: string | null; stage_order: number;
 };
@@ -265,7 +266,7 @@ const MATCH_COLS = `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
    ht.name AS home_team_name, at.name AS away_team_name,
    ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
    m.score_home, m.score_away, m.pen_home, m.pen_away,
-   m.status, m.winner_entry_id, m.note, s.kind AS stage_kind,
+   m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind,
    s.name AS stage_name, s.sort_order AS stage_order`;
 const MATCH_FROM = `FROM match m
    JOIN stage s ON s.id = m.stage_id
@@ -297,6 +298,7 @@ const toPubMatch = (
     status: r.status,
     winnerEntryId: r.winner_entry_id,
     note: r.note,
+    walkoverSide: (r.walkover_side || null) as MatchDTO["walkoverSide"],
     events: eventsByMatch.get(r.id) ?? [],
     stageKind: r.stage_kind,
     stageName: r.stage_name,
@@ -474,7 +476,7 @@ app.get("/tournaments/:id/matches/:mid", pubCache(10), async (c) => {
        ht.name AS home_team_name, at.name AS away_team_name,
        ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
-       m.status, m.winner_entry_id, m.note, s.kind AS stage_kind
+       m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      LEFT JOIN entry he ON he.id = m.home_entry_id
@@ -492,6 +494,7 @@ app.get("/tournaments/:id/matches/:mid", pubCache(10), async (c) => {
       score_home: number | null; score_away: number | null;
       pen_home: number | null; pen_away: number | null;
       status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
+      walkover_side: string | null;
       stage_kind: MatchDTO["stageKind"];
     }>();
   if (!row) return c.json({ message: "比赛不存在" }, 404);
@@ -500,12 +503,19 @@ app.get("/tournaments/:id/matches/:mid", pubCache(10), async (c) => {
   if (row.home_entry_id !== null) sideByEvent.set(`${row.id}:${row.home_entry_id}`, "home");
   if (row.away_entry_id !== null) sideByEvent.set(`${row.id}:${row.away_entry_id}`, "away");
 
-  // live 比分与事件查询互不依赖，并行发
-  const [liveScores, eventsByMatch] = await Promise.all([
+  // live 比分、事件、改判标记互不依赖，并行发
+  const [liveScores, eventsByMatch, rescored] = await Promise.all([
     row.status === "live"
       ? fetchLiveScores(c.env.DB, tid, sideByEvent)
       : Promise.resolve(new Map<number, { home: number; away: number }>()),
     fetchPublicEvents(c.env.DB, [row]),
+    c.env.DB
+      .prepare(
+        `SELECT COUNT(*) AS n FROM audit_log
+         WHERE target_type = 'match' AND target_id = ? AND action = 'match_rescore'`
+      )
+      .bind(row.id)
+      .first<{ n: number }>(),
   ]);
   const live = liveScores.get(row.id);
   const match: MatchDTO = {
@@ -525,6 +535,8 @@ app.get("/tournaments/:id/matches/:mid", pubCache(10), async (c) => {
     status: row.status,
     winnerEntryId: row.winner_entry_id,
     note: row.note,
+    walkoverSide: (row.walkover_side || null) as MatchDTO["walkoverSide"],
+    rescored: (rescored?.n ?? 0) > 0,
     events: eventsByMatch.get(row.id) ?? [],
     stageKind: row.stage_kind,
     homeLogoUrl: mediaUrl(row.home_logo_key),

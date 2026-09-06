@@ -156,7 +156,12 @@ export default function PublicMatchDetail() {
                 )}
               </span>
               {m.status === "live" && <span className="m-badge ms-live">进行中</span>}
+              {m.walkoverSide && <span className="m-badge ms-wo">弃权</span>}
+              {m.rescored && <span className="m-badge ms-rescored">比分经改判</span>}
             </div>
+            {m.walkoverSide && m.note && m.note !== "轮空" && (
+              <p className="muted md-wo-note">{m.note}</p>
+            )}
             <EventTimeline events={m.events ?? []} showAll />
             {(m.events ?? []).length === 0 && m.note !== "轮空" && (
               <p className="muted md-empty">还没有事件记录。</p>

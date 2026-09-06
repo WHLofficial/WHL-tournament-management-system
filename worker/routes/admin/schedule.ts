@@ -803,6 +803,8 @@ app.get("/:id/matches", async (c) => {
     score_home: number | null; score_away: number | null;
     pen_home: number | null; pen_away: number | null;
     status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
+    walkover_side: string | null;
+    stage_kind: MatchDTO["stageKind"];
   };
   const rows = await c.env.DB.prepare(
     `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
@@ -810,7 +812,7 @@ app.get("/:id/matches", async (c) => {
        ht.name AS home_team_name, at.name AS away_team_name,
        ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
-       m.status, m.winner_entry_id, m.note
+       m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      LEFT JOIN entry he ON he.id = m.home_entry_id
@@ -859,6 +861,8 @@ app.get("/:id/matches", async (c) => {
     status: r.status,
     winnerEntryId: r.winner_entry_id,
     note: r.note,
+    walkoverSide: (r.walkover_side || null) as MatchDTO["walkoverSide"],
+    stageKind: r.stage_kind,
   }));
   return c.json({ matches });
 });

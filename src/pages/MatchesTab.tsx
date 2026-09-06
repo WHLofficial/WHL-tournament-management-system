@@ -5,6 +5,7 @@ import { TeamLogo } from "../components/TeamLogo";
 import { EventDot } from "../components/Cards";
 import { LineupGrid } from "../components/LineupView";
 import type {
+  AuditEntryDTO,
   EntryDTO,
   MatchDTO,
   MatchEventDTO,
@@ -75,6 +76,8 @@ export default function MatchesTab({
   // 停赛状态（纯派生，事件增删后随 tick 重拉）
   const [susp, setSusp] = useState<Map<number, SuspensionStatusDTO>>(new Map());
   const [suspCfg, setSuspCfg] = useState<SuspensionConfig | null>(null);
+  // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 第一个轮）
+  const [selRoundRaw, setSelRoundRaw] = useState<string | null>(null);
 
   const entryById = new Map<number, EntryDTO>(
     detail.entries.map((e) => [e.id, e]),
@@ -168,83 +171,126 @@ export default function MatchesTab({
 
   if (matches === null) return <p className="muted card">加载中…</p>;
 
-  const stagesWithMatches = detail.stages.filter((s) =>
-    matches.some((m) => m.stageId === s.id),
+  // 轮次分页（对齐公开页）：从全量比赛派生轮次 chips，一次只渲染一个轮；孤儿比赛仍走底部「其他比赛」
+  const stageById = new Map(detail.stages.map((s) => [s.id, s]));
+  const matchesByRoundKey = new Map<string, MatchDTO[]>();
+  const stageMaxRound = new Map<number, number>();
+  for (const m of matches) {
+    if (!stageById.has(m.stageId)) continue;
+    const key = `${m.stageId}:${m.round}`;
+    const list = matchesByRoundKey.get(key);
+    if (list) list.push(m);
+    else matchesByRoundKey.set(key, [m]);
+    stageMaxRound.set(m.stageId, Math.max(stageMaxRound.get(m.stageId) ?? 0, m.round));
+  }
+  const stageOrder = new Map(detail.stages.map((s, i) => [s.id, i]));
+  const orphan = matches.filter((m) => !stageById.has(m.stageId));
+  const roundChips = [...matchesByRoundKey.entries()]
+    .map(([key, list]) => {
+      const stage = stageById.get(list[0].stageId)!;
+      const roundLabel =
+        stage.kind === "elim"
+          ? elimRoundName(list[0].round, stageMaxRound.get(stage.id) ?? list[0].round)
+          : `第 ${list[0].round} 轮`;
+      return {
+        key,
+        stageId: stage.id,
+        round: list[0].round,
+        stageName: stage.name?.trim() || stageTitle[stage.kind],
+        roundLabel,
+        live: list.filter((m) => m.status === "live").length,
+      };
+    })
+    .sort(
+      (a, b) =>
+        (stageOrder.get(a.stageId) ?? 0) - (stageOrder.get(b.stageId) ?? 0) ||
+        a.round - b.round,
+    );
+
+  // 当前选中轮：点选 > 记住的轮仍存在 > live 轮 > 第一个轮（赛程重建后自动回退，无需 effect）
+  const fallbackChip = roundChips.find((c) => c.live > 0) ?? roundChips[0];
+  const selRound =
+    selRoundRaw && matchesByRoundKey.has(selRoundRaw)
+      ? selRoundRaw
+      : (fallbackChip?.key ?? null);
+  const selMatches = selRound ? (matchesByRoundKey.get(selRound) ?? null) : null;
+  const selStage = selMatches ? (stageById.get(selMatches[0].stageId) ?? null) : null;
+  const selChip = roundChips.find((c) => c.key === selRound);
+  // 其他轮的 live 比赛聚合展示（公开页同款「进行中」区）
+  const liveElsewhere = matches.filter(
+    (m) =>
+      m.status === "live" &&
+      stageById.has(m.stageId) &&
+      `${m.stageId}:${m.round}` !== selRound,
   );
-  const orphan = matches.filter((m) => !detail.stages.some((s) => s.id === m.stageId));
+
+  const renderRow = (m: MatchDTO, roundList: MatchDTO[] | null) => (
+    <MatchRow
+      key={m.id}
+      match={m}
+      tid={detail.tournament.id}
+      agg={roundList ? computeAgg(m, roundList) : null}
+      entryById={entryById}
+      homePlayers={playersOf(m.homeEntryId)}
+      awayPlayers={playersOf(m.awayEntryId)}
+      playerById={playerById}
+      susp={susp}
+      suspThreshold={suspCfg?.yellowThreshold ?? 0}
+      busy={busy}
+      act={act}
+      tick={tick}
+      panelOpen={openPanel === m.id}
+      togglePanel={() => setOpenPanel(openPanel === m.id ? null : m.id)}
+    />
+  );
 
   return (
     <div className="matches-tab">
       {message && <p className="banner">{message}</p>}
-      {stagesWithMatches.length === 0 && orphan.length === 0 && (
+      {roundChips.length === 0 && orphan.length === 0 && (
         <p className="muted card">还没有赛程。先到「编排」页生成比赛。</p>
       )}
 
-      {stagesWithMatches.map((stage) => {
-        const list = matches.filter((m) => m.stageId === stage.id);
-        const rounds = [...new Set(list.map((m) => m.round))].sort((a, b) => a - b);
-        return (
-          <section key={stage.id} className="stage-block">
-            <h3 className="stage-head">
-              {stageTitle[stage.kind]}
-            </h3>
-            {rounds.map((round) => {
-              const roundList = list.filter((m) => m.round === round);
-              const label =
-                stage.kind === "elim"
-                  ? elimRoundName(round, Math.max(...list.map((m) => m.round)))
-                  : `第 ${round} 轮`;
-              return (
-                <div key={round} className="round-block">
-                  <h4 className="round-head">{label}</h4>
-                  {roundList.map((m) => (
-                    <MatchRow
-                      key={m.id}
-                      match={m}
-                      agg={computeAgg(m, roundList)}
-                      entryById={entryById}
-                      homePlayers={playersOf(m.homeEntryId)}
-                      awayPlayers={playersOf(m.awayEntryId)}
-                      playerById={playerById}
-                      susp={susp}
-                      suspThreshold={suspCfg?.yellowThreshold ?? 0}
-                      busy={busy}
-                      act={act}
-                      tick={tick}
-                      panelOpen={openPanel === m.id}
-                      togglePanel={() =>
-                        setOpenPanel(openPanel === m.id ? null : m.id)
-                      }
-                    />
-                  ))}
-                </div>
-              );
-            })}
-          </section>
-        );
-      })}
+      {roundChips.length > 0 && (
+        <div className="round-tabs">
+          {roundChips.map((c) => (
+            <button
+              key={c.key}
+              className={`rt-chip${c.key === selRound ? " rt-active" : ""}`}
+              onClick={() => setSelRoundRaw(c.key)}
+            >
+              {c.live > 0 && <span className="rt-dot" />}
+              {c.stageName} · {c.roundLabel}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {liveElsewhere.length > 0 && (
+        <section className="stage-block">
+          <h3 className="stage-head">进行中</h3>
+          {liveElsewhere.map((m) =>
+            renderRow(m, matchesByRoundKey.get(`${m.stageId}:${m.round}`) ?? null),
+          )}
+        </section>
+      )}
+
+      {selStage && selMatches && selChip && (
+        <section key={selStage.id} className="stage-block">
+          <h3 className="stage-head">
+            {selStage.name?.trim() || stageTitle[selStage.kind]}
+          </h3>
+          <div className="round-block">
+            <h4 className="round-head">{selChip.roundLabel}</h4>
+            {selMatches.map((m) => renderRow(m, selMatches))}
+          </div>
+        </section>
+      )}
 
       {orphan.length > 0 && (
         <section className="stage-block">
           <h3 className="stage-head">其他比赛</h3>
-          {orphan.map((m) => (
-            <MatchRow
-              key={m.id}
-              match={m}
-              agg={null}
-              entryById={entryById}
-              homePlayers={playersOf(m.homeEntryId)}
-              awayPlayers={playersOf(m.awayEntryId)}
-              playerById={playerById}
-              susp={susp}
-              suspThreshold={suspCfg?.yellowThreshold ?? 0}
-              busy={busy}
-              act={act}
-              tick={tick}
-              panelOpen={openPanel === m.id}
-              togglePanel={() => setOpenPanel(openPanel === m.id ? null : m.id)}
-            />
-          ))}
+          {orphan.map((m) => renderRow(m, null))}
         </section>
       )}
     </div>
@@ -255,6 +301,7 @@ type Act = (fn: () => Promise<string | null>) => Promise<void>;
 
 function MatchRow({
   match: m,
+  tid,
   agg,
   entryById,
   homePlayers,
@@ -269,6 +316,7 @@ function MatchRow({
   togglePanel,
 }: {
   match: MatchDTO;
+  tid: number;
   agg: [number, number] | null;
   entryById: Map<number, EntryDTO>;
   homePlayers: PlayerDTO[];
@@ -310,6 +358,7 @@ function MatchRow({
           )}
         </span>
         <span className={`m-badge ms-${m.status}`}>{MATCH_STATUS[m.status]}</span>
+        {m.walkoverSide && <span className="m-badge ms-wo">弃权</span>}
         <span className="mr-actions">
           {!bye && m.homeEntryId !== null && m.awayEntryId !== null && (
             <MatchActions match={m} busy={busy} act={act} panelOpen={panelOpen} togglePanel={togglePanel} />
@@ -324,6 +373,7 @@ function MatchRow({
       {!bye && panelOpen && m.homeEntryId !== null && m.awayEntryId !== null && (
         <MatchPanel
           match={m}
+          tid={tid}
           entryById={entryById}
           homePlayers={homePlayers}
           awayPlayers={awayPlayers}
@@ -394,6 +444,7 @@ function MatchActions({
 
 function MatchPanel({
   match: m,
+  tid,
   entryById,
   homePlayers,
   awayPlayers,
@@ -406,6 +457,7 @@ function MatchPanel({
   togglePanel,
 }: {
   match: MatchDTO;
+  tid: number;
   entryById: Map<number, EntryDTO>;
   homePlayers: PlayerDTO[];
   awayPlayers: PlayerDTO[];
@@ -487,6 +539,9 @@ function MatchPanel({
       {m.status === "live" && (
         <ScoreForm match={m} busy={busy} act={act} onDone={togglePanel} live />
       )}
+      {(m.status === "live" || m.status === "finished") && (
+        <AuditPanel tid={tid} matchId={m.id} playerById={playerById} />
+      )}
     </div>
   );
 }
@@ -510,13 +565,20 @@ function ScoreForm({
   const [ph, setPh] = useState(m.penHome?.toString() ?? "");
   const [pa, setPa] = useState(m.penAway?.toString() ?? "");
   const [err, setErr] = useState<string | null>(null);
-  // 两击确认防误触：首击进入待确认态，3 秒内再击才真正提交；改动输入即复位
+  // 两击确认防误触：首击进入待确认态，3 秒内再击才真正提交；改动输入即复位。
+  // 报分与判弃权各持一个 arm，互不复用——避免报分待确认时点弃权直接提交
   const [arm, setArm] = useState(false);
   const armTimer = useRef<number | null>(null);
+  const [woSide, setWoSide] = useState<"" | "home" | "away" | "both">("");
+  const [woNote, setWoNote] = useState("");
+  const [woWinner, setWoWinner] = useState<"" | "home" | "away">("");
+  const [woArm, setWoArm] = useState(false);
+  const woTimer = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
       if (armTimer.current) window.clearTimeout(armTimer.current);
+      if (woTimer.current) window.clearTimeout(woTimer.current);
     };
   }, []);
 
@@ -526,13 +588,58 @@ function ScoreForm({
     (v: string) => {
       setter(v);
       setArm(false);
+      setWoArm(false);
       if (armTimer.current) window.clearTimeout(armTimer.current);
+      if (woTimer.current) window.clearTimeout(woTimer.current);
     };
+
+  const armBoth = () => {
+    setArm(false);
+    if (armTimer.current) window.clearTimeout(armTimer.current);
+    setWoArm(true);
+    if (woTimer.current) window.clearTimeout(woTimer.current);
+    woTimer.current = window.setTimeout(() => setWoArm(false), 3000);
+  };
+
+  const submitWo = () => {
+    if (!woSide) return;
+    if (!woArm) {
+      armBoth();
+      return;
+    }
+    setWoArm(false);
+    if (woTimer.current) window.clearTimeout(woTimer.current);
+    act(async () => {
+      setErr(null);
+      // 淘汰赛双弃权必须指定晋级方（两回合对局晋级由总比分/点球决定，后端不收）
+      const needWinner = m.stageKind === "elim" && m.leg == null && woSide === "both";
+      if (needWinner && !woWinner) throw new Error("请先选择晋级方");
+      const b = await api<{ ok: boolean; regenerated?: boolean }>(
+        `/api/admin/matches/${m.id}/finish`,
+        {
+          method: "POST",
+          body: {
+            walkoverSide: woSide,
+            ...(woNote.trim() ? { walkoverNote: woNote.trim() } : {}),
+            ...(needWinner && woWinner
+              ? { winnerEntryId: woWinner === "home" ? m.homeEntryId : m.awayEntryId }
+              : {}),
+          },
+        },
+      );
+      onDone();
+      return b.regenerated ? "淘汰赛对阵已自动生成" : null;
+    }).then(() => undefined, (e: unknown) => {
+      setErr(e instanceof Error ? e.message : "提交失败");
+    });
+  };
 
   const submit = () => {
     if (!arm) {
       setArm(true);
+      setWoArm(false);
       if (armTimer.current) window.clearTimeout(armTimer.current);
+      if (woTimer.current) window.clearTimeout(woTimer.current);
       armTimer.current = window.setTimeout(() => setArm(false), 3000);
       return;
     }
@@ -557,6 +664,21 @@ function ScoreForm({
 
   const equal = sh !== "" && sa !== "" && Number(sh) === Number(sa);
 
+  // 弃权三选一 / 晋级方二选一（值是受限联合，不走 change 的 string setter）
+  const changeWo = (v: "" | "home" | "away" | "both") => {
+    setWoSide(v);
+    setWoWinner("");
+    setArm(false);
+    setWoArm(false);
+    if (armTimer.current) window.clearTimeout(armTimer.current);
+    if (woTimer.current) window.clearTimeout(woTimer.current);
+  };
+  const changeWinner = (v: "" | "home" | "away") => {
+    setWoWinner(v);
+    setWoArm(false);
+    if (woTimer.current) window.clearTimeout(woTimer.current);
+  };
+
   return (
     <form
       className="inline-form score-form"
@@ -572,6 +694,7 @@ function ScoreForm({
           type="number"
           min="0"
           value={sh}
+          disabled={!!woSide}
           onChange={(e) => change(setSh)(e.target.value)}
           placeholder={live ? String(m.scoreHome ?? 0) : "主"}
           style={{ width: "4.5em" }}
@@ -582,6 +705,7 @@ function ScoreForm({
           type="number"
           min="0"
           value={sa}
+          disabled={!!woSide}
           onChange={(e) => change(setSa)(e.target.value)}
           placeholder={live ? String(m.scoreAway ?? 0) : "客"}
           style={{ width: "4.5em" }}
@@ -594,6 +718,7 @@ function ScoreForm({
           type="number"
           min="0"
           value={ph}
+          disabled={!!woSide}
           onChange={(e) => change(setPh)(e.target.value)}
           placeholder="主"
           style={{ width: "4.5em" }}
@@ -604,15 +729,71 @@ function ScoreForm({
           type="number"
           min="0"
           value={pa}
+          disabled={!!woSide}
           onChange={(e) => change(setPa)(e.target.value)}
           placeholder="客"
           style={{ width: "4.5em" }}
         />
       </label>
+      <div className="wo-block">
+        <div className="ev-side-seg" role="group" aria-label="判弃权">
+          <button type="button" aria-pressed={woSide === "home"} onClick={() => changeWo("home")}>
+            {m.homeTeamName ?? "主队"} 弃权
+          </button>
+          <button type="button" aria-pressed={woSide === "away"} onClick={() => changeWo("away")}>
+            {m.awayTeamName ?? "客队"} 弃权
+          </button>
+          <button type="button" aria-pressed={woSide === "both"} onClick={() => changeWo("both")}>
+            双方弃权
+          </button>
+        </div>
+        {woSide !== "" && (
+          <>
+            <input
+              className="input"
+              value={woNote}
+              maxLength={50}
+              placeholder="备注（选填，公开显示）"
+              onChange={(e) => change(setWoNote)(e.target.value)}
+            />
+            {woSide === "both" && m.stageKind === "elim" && m.leg == null && (
+              <div className="ev-side-seg" role="group" aria-label="晋级方">
+                <button
+                  type="button"
+                  aria-pressed={woWinner === "home"}
+                  onClick={() => changeWinner("home")}
+                >
+                  {m.homeTeamName ?? "主队"} 晋级
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={woWinner === "away"}
+                  onClick={() => changeWinner("away")}
+                >
+                  {m.awayTeamName ?? "客队"} 晋级
+                </button>
+              </div>
+            )}
+            <span className="muted">
+              {woSide === "both"
+                ? "记 0:0，双方各算一场负（淘汰赛需指定晋级方）"
+                : "记 0:3，对方胜出；弃权方停赛不消耗，对方照常消耗"}
+            </span>
+            <button
+              className={woArm ? "btn btn-sm btn-danger" : "btn btn-sm"}
+              type="button"
+              disabled={busy}
+              onClick={submitWo}
+            >
+              {woArm ? "再点一次确认弃权" : "判弃权并完赛"}
+            </button>
+          </>
+        )}
+      </div>
       <button
         className={arm ? "btn btn-sm btn-danger" : "btn btn-sm"}
         type="submit"
-        disabled={busy}
+        disabled={busy || !!woSide}
       >
         {arm
           ? "再点一次确认"
@@ -627,6 +808,125 @@ function ScoreForm({
       {equal && <span className="muted">平局且是淘汰赛时必须填点球比分</span>}
       {err && <span className="error-text">{err}</span>}
     </form>
+  );
+}
+
+// 改动记录（audit_log）：live/finished 场可展开查看本场的开赛/报分/改判/弃权/事件增删留痕
+const AUDIT_ACTION: Record<string, string> = {
+  match_start: "开赛",
+  match_finish: "终场报分",
+  match_rescore: "改判",
+  match_walkover: "判弃权",
+  event_create: "录事件",
+  event_delete: "删事件",
+};
+
+function auditScoreText(d: {
+  scoreHome?: number | null;
+  scoreAway?: number | null;
+  penHome?: number | null;
+  penAway?: number | null;
+  walkoverSide?: string | null;
+}): string {
+  const base = `${d.scoreHome ?? 0}:${d.scoreAway ?? 0}`;
+  const pen =
+    d.penHome != null && d.penAway != null ? `（点球 ${d.penHome}:${d.penAway}）` : "";
+  return d.walkoverSide ? `${base}（弃权）` : `${base}${pen}`;
+}
+
+// audit_log.created_at 是 UTC ISO，列表里按本地时区显示到分
+const fmtAuditTime = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(5, 16).replace("T", " ");
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+function AuditPanel({
+  tid,
+  matchId,
+  playerById,
+}: {
+  tid: number;
+  matchId: number;
+  playerById: Map<number, string>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<AuditEntryDTO[] | null>(null);
+
+  useEffect(() => {
+    if (!open || rows) return;
+    let on = true;
+    api<{ entries: AuditEntryDTO[] }>(
+      `/api/admin/tournaments/${tid}/audit?matchId=${matchId}`,
+    )
+      .then((b) => {
+        if (on) setRows(b.entries);
+      })
+      .catch(() => {
+        if (on) setRows([]);
+      });
+    return () => {
+      on = false;
+    };
+  }, [open, rows, tid, matchId]);
+
+  if (!open)
+    return (
+      <button className="btn btn-sm" onClick={() => setOpen(true)}>
+        改动记录
+      </button>
+    );
+
+  const line = (a: AuditEntryDTO): string => {
+    let d: Record<string, unknown> | null = null;
+    try {
+      d = a.detailJson ? (JSON.parse(a.detailJson) as Record<string, unknown>) : null;
+    } catch {
+      d = null;
+    }
+    if (!d) return "";
+    const pname = (id: unknown) =>
+      typeof id === "number" ? (playerById.get(id) ?? `#${id}`) : "";
+    if (a.action === "event_create" || a.action === "event_delete") {
+      const label = EVENT_NAME[d.type as MatchEventType] ?? ((d.type as string) ?? "");
+      const who = pname(d.playerId);
+      const min = d.minute != null ? ` ${d.minute}'` : "";
+      const extra = d.red2y ? "（第 2 黄自动转红）" : "";
+      return `${label}${who ? ` ${who}` : ""}${min}${extra}`;
+    }
+    if (a.action === "match_start") return "";
+    const o = (d.old ?? {}) as Record<string, unknown>;
+    const n = (d.new ?? {}) as Record<string, unknown>;
+    const from =
+      o.status === "pending"
+        ? "未开打"
+        : auditScoreText(o as Parameters<typeof auditScoreText>[0]);
+    const to = auditScoreText(n as Parameters<typeof auditScoreText>[0]);
+    const note = typeof n.note === "string" && n.note ? `（${n.note}）` : "";
+    return `${from} → ${to}${note}`;
+  };
+
+  return (
+    <div className="audit-block">
+      <button className="btn btn-sm" onClick={() => setOpen(false)}>
+        收起记录
+      </button>
+      {rows === null && <p className="muted">加载中…</p>}
+      {rows !== null && rows.length === 0 && <p className="muted">本场还没有改动记录。</p>}
+      {rows !== null && rows.length > 0 && (
+        <ul className="audit-list">
+          {rows.map((a) => (
+            <li key={a.id}>
+              <span className="audit-time">{fmtAuditTime(a.createdAt)}</span>
+              <span className="audit-actor">{a.actorName ?? "—"}</span>
+              <span className="audit-action">{AUDIT_ACTION[a.action] ?? a.action}</span>
+              <span className="audit-detail">{line(a)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -765,19 +1065,21 @@ function EventForm({
               ))}
           </select>
         )}
-        <input
-          className="input"
-          type="number"
-          min="0"
-          max="300"
-          value={minute}
-          onChange={(e) => setMinute(e.target.value)}
-          placeholder="分钟"
-          style={{ width: "5em" }}
-        />
-        <button className="btn btn-sm" type="submit" disabled={busy}>
-          记录事件
-        </button>
+        <div className="ev-tail">
+          <input
+            className="input"
+            type="number"
+            min="0"
+            max="300"
+            value={minute}
+            onChange={(e) => setMinute(e.target.value)}
+            placeholder="分钟"
+            style={{ width: "5em" }}
+          />
+          <button className="btn btn-sm" type="submit" disabled={busy}>
+            记录事件
+          </button>
+        </div>
         {sel && suspWarn && (
           <span className="warn-line susp-warn">
             ⚠ {sel.playerName} 停赛中（剩 {sel.remaining} 场）——软约束不拦截，请确认该球员是否合规出场

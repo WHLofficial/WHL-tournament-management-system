@@ -16,6 +16,7 @@ type FinishedMatchRow = {
   score_away: number | null;
   pen_home: number | null;
   pen_away: number | null;
+  walkover_side: string | null;
 };
 
 // ---------- 积分：全量重建某 stage 的 standing ----------
@@ -51,7 +52,7 @@ export async function buildStandingsStmts(
 
   const finished = await db
     .prepare(
-      `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away
+      `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side
        FROM match WHERE stage_id = ? AND status = 'finished'`
     )
     .bind(stageId)
@@ -96,6 +97,12 @@ export async function buildStandingsStmts(
     const sa = m.score_away ?? 0;
     home.played++;
     away.played++;
+    // 双弃权：双方各记一场负、0 分，进失球不计（不给第三方刷净胜球空间）
+    if (m.walkover_side === "both") {
+      home.lost++;
+      away.lost++;
+      continue;
+    }
     home.gf += sh;
     home.ga += sa;
     away.gf += sa;
@@ -397,7 +404,7 @@ export async function readStandings(
   // 相互战绩数据：该 stage 全部完赛场次（块内小循环重排时用）
   const finished = await db
     .prepare(
-      `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away
+      `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side
        FROM match WHERE stage_id = ? AND status = 'finished'
          AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND note != '轮空'`
     )
@@ -492,6 +499,12 @@ export function sortStandRows(
         for (const m of finishedRows) {
           if (m.home_entry_id == null || m.away_entry_id == null) continue;
           if (!ids.has(m.home_entry_id) || !ids.has(m.away_entry_id)) continue;
+          // 双弃权：双方各记负、无分无净胜（等效跳过，但不给平局分）
+          if (m.walkover_side === "both") {
+            bump(m.home_entry_id, 0, 0);
+            bump(m.away_entry_id, 0, 0);
+            continue;
+          }
           const hs = m.score_home ?? 0;
           const as = m.score_away ?? 0;
           if (hs > as) {

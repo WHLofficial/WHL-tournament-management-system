@@ -3,7 +3,7 @@
 // 停赛剩余场次与黄牌累积；删事件、改判、补录后下次计算自动生效，无反冲逻辑。
 // 口径：直红停 redBan 场；两黄变一红停 red2yBan 场；累积 yellowThreshold 张黄牌停 1 场
 // 并重新计数；红牌与黄牌停赛并行叠加；pending 场不消耗停赛（live/finished 消耗）；
-// 轮空场不算比赛；有 yellowResetAt 清零锚点时按事件时间拆两段重放：
+// 轮空场不算比赛；弃权场只消耗非弃权方的停赛（弃权方照挂，双弃权双方都不消耗）；有 yellowResetAt 清零锚点时按事件时间拆两段重放：
 // 锚点前完整重放（清零前已生效停赛继续执行），锚点后黄牌从零重计，补录按 created_at 归段。
 import type { SuspensionConfig, SuspensionStatusDTO } from "../../shared/types";
 import { buildToplists, type Toplists } from "./topstats";
@@ -70,6 +70,7 @@ interface MatchSeqRow {
   away_entry_id: number | null;
   status: "pending" | "live" | "finished";
   note: string | null;
+  walkover_side: string | null;
   stage_order: number;
   round: number;
   slot: number;
@@ -116,8 +117,12 @@ function replay(
   let yellowCount = 0;
   for (let i = 0; i < seq.length; i++) {
     const m = seq[i];
-    // 先消耗后触发：同一场既可以是旧处罚的消耗场，也可以是新处罚的触发场
-    if (m.status !== "pending") {
+    // 先消耗后触发：同一场既可以是旧处罚的消耗场，也可以是新处罚的触发场。
+    // 弃权场：弃权方不消耗停赛（双弃权双方都不消耗），非弃权方照常消耗。
+    const wo = m.walkover_side || "";
+    const isWoSide =
+      wo === "both" || wo === (info.entryId === m.home_entry_id ? "home" : "away");
+    if (m.status !== "pending" && !isWoSide) {
       for (const b of bans) {
         if ((b.fresh || consumeIn) && b.from <= i && b.remaining > 0) b.remaining -= 1;
       }
@@ -156,7 +161,7 @@ export async function computeSuspensions(
   const [matches, events] = await Promise.all([
     db
       .prepare(
-        `SELECT m.id, m.home_entry_id, m.away_entry_id, m.status, m.note,
+        `SELECT m.id, m.home_entry_id, m.away_entry_id, m.status, m.note, m.walkover_side,
                 s.sort_order AS stage_order, m.round, m.slot, m.leg
          FROM match m
          JOIN stage s ON s.id = m.stage_id

@@ -433,9 +433,12 @@ function MatchRow({
         {match.note === "轮空" ? (
           <span className="badge">轮空</span>
         ) : (
-          <span className={`muted st-${match.status}`}>
-            {MATCH_STATUS[match.status]}
-          </span>
+          <>
+            <span className={`muted st-${match.status}`}>
+              {MATCH_STATUS[match.status]}
+            </span>
+            {match.walkoverSide && <span className="badge badge-wo">弃权</span>}
+          </>
         )}
       </td>
       <td>

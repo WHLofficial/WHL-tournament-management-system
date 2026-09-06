@@ -410,6 +410,7 @@ function PublicMatchRow({
             )}
           </span>
           {m.status === "live" && <span className="m-badge ms-live">进行中</span>}
+          {m.walkoverSide && <span className="m-badge ms-wo">弃权</span>}
         </div>
       </Link>
       <EventTimeline events={m.events ?? []} />

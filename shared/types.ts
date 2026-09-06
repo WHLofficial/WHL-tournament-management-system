@@ -299,12 +299,26 @@ export interface MatchDTO {
   status: "pending" | "live" | "finished";
   winnerEntryId: number | null;
   note: string | null;
+  /** 弃权方：home / away / both；普通场为空 */
+  walkoverSide?: "home" | "away" | "both" | null;
+  /** 比分曾改判过（公开单场页提示用，不给明细） */
+  rescored?: boolean;
   events?: PublicMatchEventDTO[];
   stageKind?: "elim" | "round_robin" | "group";
   /** 所属阶段显示名，单轮查询时前端直接用作阶段头 */
   stageName?: string | null;
   homeLogoUrl?: string | null;
   awayLogoUrl?: string | null;
+}
+
+// 审计留痕（audit_log，排期 #10）：比赛域操作记录，管理端查看
+export interface AuditEntryDTO {
+  id: number;
+  action: string;
+  targetMatchId: number;
+  actorName: string | null;
+  detailJson: string | null;
+  createdAt: string;
 }
 
 // ---------- 战术阵容提交（tactic_submission，migration 0009/0011） ----------

@@ -5,6 +5,7 @@ import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib
 import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig } from "../../lib/suspension";
 import { fetchMatchLineup, LineupError } from "../../lib/lineup";
+import { auditStmt } from "../../lib/audit";
 import type { MatchEventDTO, MatchEventType } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
@@ -36,6 +37,7 @@ type MatchRow = {
   status: "pending" | "live" | "finished";
   winner_entry_id: number | null;
   note: string | null;
+  walkover_side: string | null;
 };
 
 async function loadMatch(db: D1Database, matchId: number): Promise<MatchRow> {
@@ -96,7 +98,10 @@ app.post("/:id/start", async (c) => {
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法开赛");
     if (m.status !== "pending") return fail(c, 400, "仅待开打的比赛可以开赛");
-    await c.env.DB.prepare("UPDATE match SET status = 'live' WHERE id = ?").bind(id).run();
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE match SET status = 'live' WHERE id = ?").bind(id),
+      auditStmt(c.env.DB, c.get("user")!.id, "match_start", id, null),
+    ]);
     return c.json({ ok: true });
   } catch (e) {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
@@ -105,8 +110,8 @@ app.post("/:id/start", async (c) => {
 });
 
 // POST /finish：终场确认（唯一的比分收敛点）。
-// pending 可快速报分；live 确认终场（比分取事件累计或传入覆盖）；finished 重报即改判。
-// 一个 db.batch 原子完成：写比分与胜者 → 全量重算积分 → 晋级器填下一轮/下一阶段。
+// pending 可快速报分；live 确认终场（比分取事件累计或传入覆盖）；finished 重报即改判；
+// 传 walkoverSide 即弃权判负（单方 0:3 / 双方 0:0，可带备注；改判回普通比分自动清弃权）。
 app.post("/:id/finish", async (c) => {
   const id = Number(c.req.param("id"));
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -114,6 +119,9 @@ app.post("/:id/finish", async (c) => {
     scoreAway?: number;
     penHome?: number;
     penAway?: number;
+    walkoverSide?: string;
+    walkoverNote?: string;
+    winnerEntryId?: number;
   };
   try {
     const m = await loadMatch(c.env.DB, id);
@@ -122,60 +130,132 @@ app.post("/:id/finish", async (c) => {
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法报分");
 
-    let scoreHome = body.scoreHome;
-    let scoreAway = body.scoreAway;
-    if (scoreHome == null || scoreAway == null) {
-      if (m.status === "finished")
-        return fail(c, 400, "改判请传入完整终场比分");
-      const events = await liveScore(c.env.DB, m);
-      scoreHome ??= events.home;
-      scoreAway ??= events.away;
-    }
-    const penHome = body.penHome ?? null;
-    const penAway = body.penAway ?? null;
-
-    // 淘汰赛平局必须有非平的点球比分（legs=2 的单回合平局除外）
-    if (scoreHome === scoreAway) {
-      if (penHome != null && penAway != null && penHome === penAway)
-        return fail(c, 400, "点球比分不能相同");
-      if (penHome == null || penAway == null) {
-        const stageKind = await c.env.DB.prepare("SELECT kind FROM stage WHERE id = ?")
-          .bind(m.stage_id)
-          .first<{ kind: string }>();
-        const slotRows = await c.env.DB.prepare(
-          "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND round = ? AND slot = ?"
-        )
-          .bind(m.stage_id, m.round, m.slot)
-          .first<{ n: number }>();
-        if (stageKind?.kind === "elim" && (slotRows?.n ?? 0) === 1) {
-          return fail(c, 400, "淘汰赛平局需录入点球比分才能定晋级");
-        }
-      }
-    }
-    const winner =
-      scoreHome > scoreAway
-        ? m.home_entry_id
-        : scoreAway > scoreHome
-          ? m.away_entry_id
-          : penHome != null && penAway != null && penHome !== penAway
-            ? penHome > penAway
-              ? m.home_entry_id
-              : m.away_entry_id
-            : null;
-
-    const stmts: D1PreparedStatement[] = [
-      c.env.DB.prepare(
-        `UPDATE match SET score_home = ?, score_away = ?, pen_home = ?, pen_away = ?,
-         status = 'finished', winner_entry_id = ?,
-         finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
-        ).bind(scoreHome, scoreAway, penHome, penAway, winner, id),
-    ];
+    const woRaw = body.walkoverSide ?? "";
+    const walkoverSide =
+      woRaw === "home" || woRaw === "away" || woRaw === "both" ? woRaw : null;
+    if (woRaw && !walkoverSide) return fail(c, 400, "弃权方必须是 home / away / both");
 
     const stage = await c.env.DB.prepare(
       "SELECT id, kind, tournament_id, sort_order FROM stage WHERE id = ?"
     )
       .bind(m.stage_id)
       .first<{ id: number; kind: string; tournament_id: number; sort_order: number }>();
+
+    let scoreHome: number;
+    let scoreAway: number;
+    let penHome: number | null = null;
+    let penAway: number | null = null;
+    let winner: number | null = null;
+    let nextNote: string | null = null;
+
+    if (walkoverSide) {
+      // 弃权：比分固定（单方 0:3 / 双方 0:0）、不录点球，跳过淘汰赛平局点球校验
+      const woNote = body.walkoverNote?.trim().slice(0, 60) || null;
+      if (walkoverSide === "both") {
+        scoreHome = 0;
+        scoreAway = 0;
+        nextNote = woNote ?? "双方弃权";
+      } else {
+        scoreHome = walkoverSide === "home" ? 0 : 3;
+        scoreAway = walkoverSide === "home" ? 3 : 0;
+        nextNote = woNote ?? (walkoverSide === "home" ? "主队弃权" : "客队弃权");
+      }
+      // 淘汰赛双弃权必须指定晋级方（两回合对局晋级由总比分/点球决定，不在此指定）
+      if (walkoverSide === "both" && stage?.kind === "elim") {
+        const slotRows = await c.env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND round = ? AND slot = ?"
+        )
+          .bind(m.stage_id, m.round, m.slot)
+          .first<{ n: number }>();
+        if ((slotRows?.n ?? 0) === 1) {
+          const wid = body.winnerEntryId;
+          if (wid !== m.home_entry_id && wid !== m.away_entry_id)
+            return fail(c, 400, "双方弃权的淘汰赛必须指定晋级方");
+          winner = wid;
+        }
+      }
+      if (walkoverSide === "home") winner = m.away_entry_id;
+      else if (walkoverSide === "away") winner = m.home_entry_id;
+    } else {
+      let sh = body.scoreHome;
+      let sa = body.scoreAway;
+      if (sh == null || sa == null) {
+        if (m.status === "finished")
+          return fail(c, 400, "改判请传入完整终场比分");
+        const events = await liveScore(c.env.DB, m);
+        sh = events.home;
+        sa = events.away;
+      }
+      scoreHome = sh;
+      scoreAway = sa;
+      penHome = body.penHome ?? null;
+      penAway = body.penAway ?? null;
+
+      // 淘汰赛平局必须有非平的点球比分（legs=2 的单回合平局除外）
+      if (scoreHome === scoreAway) {
+        if (penHome != null && penAway != null && penHome === penAway)
+          return fail(c, 400, "点球比分不能相同");
+        if (penHome == null || penAway == null) {
+          if (stage?.kind === "elim") {
+            const slotRows = await c.env.DB.prepare(
+              "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND round = ? AND slot = ?"
+            )
+              .bind(m.stage_id, m.round, m.slot)
+              .first<{ n: number }>();
+            if ((slotRows?.n ?? 0) === 1) {
+              return fail(c, 400, "淘汰赛平局需录入点球比分才能定晋级");
+            }
+          }
+        }
+      }
+      winner =
+        scoreHome > scoreAway
+          ? m.home_entry_id
+          : scoreAway > scoreHome
+            ? m.away_entry_id
+            : penHome != null && penAway != null && penHome !== penAway
+              ? penHome > penAway
+                ? m.home_entry_id
+                : m.away_entry_id
+              : null;
+      // 普通报分/改判落在弃权场上即清除弃权标记与备注
+      nextNote = m.walkover_side ? null : m.note;
+    }
+
+    const action =
+      walkoverSide
+        ? "match_walkover"
+        : m.status === "finished"
+          ? "match_rescore"
+          : "match_finish";
+    const auditDetail = {
+      old: {
+        status: m.status,
+        scoreHome: m.score_home,
+        scoreAway: m.score_away,
+        penHome: m.pen_home,
+        penAway: m.pen_away,
+        walkoverSide: m.walkover_side || null,
+      },
+      new: {
+        scoreHome,
+        scoreAway,
+        penHome,
+        penAway,
+        walkoverSide,
+        note: nextNote,
+        winnerEntryId: winner,
+      },
+    };
+
+    const stmts: D1PreparedStatement[] = [
+      c.env.DB.prepare(
+        `UPDATE match SET score_home = ?, score_away = ?, pen_home = ?, pen_away = ?,
+         status = 'finished', winner_entry_id = ?, walkover_side = ?, note = ?,
+         finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+        ).bind(scoreHome, scoreAway, penHome, penAway, winner, walkoverSide ?? "", nextNote, id),
+    ];
+
     let regenerated = false;
 
     // 1) 先提交终场写入（D1 无跨语句交互式事务；重算/晋级语句必须在
@@ -196,13 +276,15 @@ app.post("/:id/finish", async (c) => {
         followUp.push(...autoStmts);
         if (autoStmts.length > 0) regenerated = true;
       }
-      if (followUp.length > 0) await c.env.DB.batch(followUp);
+      // 审计随重算/晋级批次提交（batch 恒非空）；晋级冲突 409 回滚时审计一并落空
+      followUp.push(auditStmt(c.env.DB, c.get("user")!.id, action, id, auditDetail));
+      await c.env.DB.batch(followUp);
     } catch (e) {
       if (e instanceof AdvancerError) {
         // 回滚终场写入，保持一致性
         await c.env.DB.prepare(
           `UPDATE match SET score_home = ?, score_away = ?, pen_home = ?, pen_away = ?,
-           status = ?, winner_entry_id = ? WHERE id = ?`
+           status = ?, winner_entry_id = ?, walkover_side = ?, note = ? WHERE id = ?`
         ).bind(
           m.score_home,
           m.score_away,
@@ -210,6 +292,8 @@ app.post("/:id/finish", async (c) => {
           m.pen_away,
           m.status,
           m.winner_entry_id,
+          m.walkover_side ?? "",
+          m.note,
           id
         ).run();
         return fail(c, 409, e.message);
@@ -317,11 +401,11 @@ app.post("/:id/events", async (c) => {
       }
     }
 
-    await c.env.DB.prepare(
-      `INSERT INTO match_event (match_id, entry_id, player_id, assist_player_id, type, minute, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO match_event (match_id, entry_id, player_id, assist_player_id, type, minute, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
         id,
         body.entryId,
         body.playerId ?? null,
@@ -329,8 +413,16 @@ app.post("/:id/events", async (c) => {
         eventType,
         body.minute ?? null,
         c.get("user")!.id,
-      )
-      .run();
+      ),
+      auditStmt(c.env.DB, c.get("user")!.id, "event_create", id, {
+        type: eventType,
+        entryId: body.entryId,
+        playerId: body.playerId ?? null,
+        assistPlayerId: body.assistPlayerId ?? null,
+        minute: body.minute ?? null,
+        ...(eventType !== body.type ? { red2y: true } : {}),
+      }),
+    ]);
     const extras: Record<string, string> = {};
     if (notice) extras.notice = notice;
     if (m.status === "live") {
@@ -357,11 +449,28 @@ app.delete("/:id/events/:eventId", async (c) => {
   try {
     const m = await loadMatch(c.env.DB, id);
     await assertNotArchived(c.env.DB, id);
-    const ev = await c.env.DB.prepare("SELECT id FROM match_event WHERE id = ? AND match_id = ?")
+    const ev = await c.env.DB.prepare(
+      "SELECT id, entry_id, player_id, type, minute FROM match_event WHERE id = ? AND match_id = ?"
+    )
       .bind(eventId, id)
-      .first<{ id: number }>();
+      .first<{
+        id: number;
+        entry_id: number;
+        player_id: number | null;
+        type: string;
+        minute: number | null;
+      }>();
     if (!ev) return fail(c, 404, "事件不存在");
-    await c.env.DB.prepare("DELETE FROM match_event WHERE id = ?").bind(eventId).run();
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM match_event WHERE id = ?").bind(eventId),
+      auditStmt(c.env.DB, c.get("user")!.id, "event_delete", id, {
+        eventId: ev.id,
+        type: ev.type,
+        entryId: ev.entry_id,
+        playerId: ev.player_id,
+        minute: ev.minute,
+      }),
+    ]);
     const score = await liveScore(c.env.DB, m);
     return c.json({
       ok: true,

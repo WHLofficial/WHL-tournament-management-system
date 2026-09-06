@@ -741,6 +741,44 @@ app.post(
   }
 );
 
+// GET /:id/audit?matchId=：比赛域审计留痕（开赛/终场/改判/弃权/事件增删），倒序最多 100 条；
+// 传 matchId 只看单场（争议场核查的主要用法），不传看整届
+app.get(
+  "/:id/audit",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ id: number }>();
+    if (!t) return c.json({ message: "赛事不存在" }, 404);
+    const matchId = Number(c.req.query("matchId")) || null;
+    const rows = await c.env.DB.prepare(
+      `SELECT a.id, a.action, a.target_id, a.detail_json, a.created_at, u.name AS actor_name
+       FROM audit_log a
+       JOIN match m ON m.id = a.target_id
+       JOIN stage s ON s.id = m.stage_id
+       LEFT JOIN user u ON u.id = a.actor_user_id
+       WHERE a.target_type = 'match' AND s.tournament_id = ? ${matchId ? "AND a.target_id = ?" : ""}
+       ORDER BY a.id DESC
+       LIMIT 100`
+    )
+      .bind(...(matchId ? [id, matchId] : [id]))
+      .all<{
+        id: number; action: string; target_id: number; detail_json: string | null;
+        created_at: string; actor_name: string | null;
+      }>();
+    const entries = (rows.results ?? []).map((r) => ({
+      id: r.id,
+      action: r.action,
+      targetMatchId: r.target_id,
+      actorName: r.actor_name,
+      detailJson: r.detail_json,
+      createdAt: r.created_at,
+    }));
+    return c.json({ entries });
+  }
+);
+
 app.get(
   "/:id/stats",
   async (c) => {
