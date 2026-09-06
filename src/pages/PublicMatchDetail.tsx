@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
 import { MatchScore } from "../components/MatchScore";
@@ -32,15 +32,19 @@ export default function PublicMatchDetail() {
       .catch(() => setTInfo(null));
   }, [tid]);
 
+  // 弱网韧性：轮询失败保留旧数据静默重试，只有一次都没成功过才显示错误——
+  // 不能让一次网络抖动把整页比分替换成报错
+  const gotData = useRef(false);
   const refetch = useCallback(async () => {
     try {
       const b = await api<{ match: MatchDTO }>(
         `/api/public/tournaments/${tid}/matches/${matchId}`,
       );
+      gotData.current = true;
       setM(b.match);
       setErr(null);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "加载失败");
+      if (!gotData.current) setErr(e instanceof Error ? e.message : "加载失败");
     }
   }, [tid, matchId]);
 
@@ -49,11 +53,13 @@ export default function PublicMatchDetail() {
   }, [refetch]);
 
   useEffect(() => {
+    // 完赛场停止自动轮询（省电省流量）；改判/补录后观众刷新页面即可
+    if (m?.status === "finished") return;
     const t = setInterval(() => {
       if (!document.hidden) void refetch();
     }, 30000);
     return () => clearInterval(t);
-  }, [refetch]);
+  }, [refetch, m?.status]);
 
   // 提交阵容：开赛（live/finished）后公开接口才有数据，pending 不拉
   useEffect(() => {

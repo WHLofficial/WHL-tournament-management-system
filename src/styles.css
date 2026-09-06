@@ -1928,3 +1928,118 @@ button.add-stage {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- #9 移动端打磨：微信观赛 + 现场报分 ---------- */
+/* 赛事页 tab 条与轮次 chip 条同款横滚；触摸目标统一加高到 ≥36px */
+.tabs {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 640px) {
+  /* 表格横滚兜底：表格自身成为滚动容器，内容超宽只滚表格、不再撑爆整页
+     （积分榜/榜单/数据页/管理端通用表全覆盖） */
+  .table,
+  .standings-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* 顶栏链接换行，不再横向溢出 */
+  .nav-links {
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-left: 0;
+  }
+  .tab {
+    padding: 10px 14px;
+    white-space: nowrap;
+  }
+  .rt-chip {
+    padding: 9px 14px;
+  }
+  .share-btn {
+    padding: 8px 16px;
+  }
+  button.btn-ghost {
+    padding: 8px 12px;
+  }
+  .share-close {
+    padding: 10px 12px;
+    font-size: 18px;
+  }
+  /* 积分榜窄屏瘦身：压缩后 10 列可塞进 360px 屏；队名过长仍靠上面的表格横滚兜底 */
+  .standings-grid {
+    grid-template-columns: 1fr;
+  }
+  .standings-table th,
+  .standings-table td {
+    padding: 5px 4px;
+    font-size: 12px;
+  }
+  .standings-table .num {
+    width: 1.7em;
+  }
+  .standings-table .team-col {
+    min-width: 4em;
+  }
+  /* 赛程卡与时间线：收窄间距，事件块允许折行，避免撑爆时间轴轨道 */
+  .mr-line {
+    gap: 6px;
+    padding: 8px;
+  }
+  .mr-team {
+    min-width: 64px;
+  }
+  .mr-scorebox {
+    min-width: 54px;
+  }
+  .evt-info {
+    flex-wrap: wrap;
+    gap: 3px 4px;
+    padding: 2px 4px;
+    font-size: 12px;
+    max-width: 100%;
+  }
+  /* 现场报分：比分/事件表单纵排（grid），比分框保留并排窄框好按；select 靠 grid 拉伸自然全宽 */
+  .match-panel .inline-form {
+    display: grid;
+    gap: 8px;
+  }
+  .match-panel .inline-form .btn-sm {
+    width: 100%;
+    padding: 10px 16px;
+  }
+  .ev-side-seg {
+    display: flex;
+    width: 100%;
+  }
+  .ev-side-seg button {
+    flex: 1;
+    padding: 9px 12px;
+  }
+  /* 管理页头：标题与操作钮纵排；编排页小组小按钮加大可点 */
+  .page-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .btn-col {
+    flex-direction: row;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .gteam-g {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .gteam-x {
+    padding: 6px 4px;
+    font-size: 15px;
+  }
+  /* 分享弹窗：按钮平铺全宽 */
+  .share-actions {
+    flex-wrap: wrap;
+  }
+  .share-actions .btn {
+    flex: 1 1 auto;
+  }
+}
