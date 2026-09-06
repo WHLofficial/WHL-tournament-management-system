@@ -264,3 +264,24 @@
   .art-title { font-size: 21px; }
   .rp-scorebox .num { font-size: 34px; min-width: 84px; }
 }
+
+/* ---------- 管理端公告卡 ---------- */
+.field textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+.field textarea:focus { outline: 2px solid rgba(14, 122, 70, .35); border-color: var(--pitch); }
+.ann-list { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.ann-item { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.ann-item:last-child { border-bottom: none; }
+.ann-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ann-item-head .status-badge { flex: none; }
+.ann-time { margin-left: auto; font-size: 12px; font-family: var(--mono); }
+.ann-body { margin: 6px 0 8px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }

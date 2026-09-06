@@ -12,6 +12,7 @@ import { Toplists } from "../components/Toplists";
 import { StatsDashboard } from "../components/StatsDashboard";
 import { ShareButton } from "../components/ShareButton";
 import { drawTournamentCard, drawRoundCard, matchToShare } from "../lib/share";
+import type { AnnouncementDTO } from "../../shared/news";
 import type {
   EntryDTO,
   MatchDTO,
@@ -49,6 +50,13 @@ export default function PublicTournament() {
     setSearchParams(t === "schedule" ? {} : { tab: t }, { replace: true });
   };
   const [err, setErr] = useState<string | null>(null);
+  // 头版官方公告（同源 banner，至多一条）
+  const [announcement, setAnnouncement] = useState<AnnouncementDTO | null>(null);
+  useEffect(() => {
+    api<{ announcement: AnnouncementDTO | null }>("/api/public/announcement")
+      .then((d) => setAnnouncement(d.announcement))
+      .catch(() => {});
+  }, []);
   // 切轮次时页面内容会先清空再填充（未缓存轮次要现拉），高度塌缩会把滚动位置挤到顶上；
   // 记下点击时的滚动位置，等新轮数据渲染完成后恢复。
   const lockScrollY = useRef<number | null>(null);
@@ -241,6 +249,15 @@ export default function PublicTournament() {
           />
         </span>
       </header>
+      {announcement && (
+        <div className="whl-banner" role="note">
+          <span className="whl-banner-icon" aria-hidden>📢</span>
+          <div>
+            <div className="whl-banner-title">{announcement.title}</div>
+            {announcement.body && <p className="whl-banner-body">{announcement.body}</p>}
+          </div>
+        </div>
+      )}
       <p className="muted">
         {FORMAT_LABEL[t.format]} · {t.entryCount} 支球队
         {t.description ? ` · ${t.description}` : ""}

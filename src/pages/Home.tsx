@@ -8,7 +8,7 @@ import "./portal.css";
 import type { AnnouncementDTO, FeedItemDTO, FeedKind } from "../../shared/news";
 import type { LiveDTO, TournamentDTO, UpcomingDTO } from "../../shared/types";
 
-const KIND_LABEL: Record<FeedKind, string> = {
+export const KIND_LABEL: Record<FeedKind, string> = {
   match: "战报",
   walkover: "弃权",
   recap: "综述",
@@ -20,7 +20,7 @@ const KIND_LABEL: Record<FeedKind, string> = {
   weekly: "周报",
 };
 // 暖色徽标的非常规条目（改判/红牌/弃权）
-const KIND_HOT: Partial<Record<FeedKind, boolean>> = { walkover: true, rescore: true, discipline: true };
+export const KIND_HOT: Partial<Record<FeedKind, boolean>> = { walkover: true, rescore: true, discipline: true };
 
 const EMOJIS: { key: "fire" | "thumb" | "mind" | "cry"; label: string }[] = [
   { key: "fire", label: "🔥" },
@@ -31,7 +31,7 @@ const EMOJIS: { key: "fire" | "thumb" | "mind" | "cry"; label: string }[] = [
 const REACT_LS = (itemId: string) => `whl.react.${itemId}`;
 
 // 条目点击去向：战报/弃权→战报文章页；综述→综述页；周报→周报页；榜首/纪录→积分榜；里程碑→榜单；红牌/更正→单场
-function itemHref(i: FeedItemDTO): string {
+export function itemHref(i: FeedItemDTO): string {
   switch (i.kind) {
     case "match":
     case "walkover":
@@ -51,7 +51,7 @@ function itemHref(i: FeedItemDTO): string {
   }
 }
 
-function fmtTime(iso: string | null): string {
+export function fmtTime(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -59,10 +59,10 @@ function fmtTime(iso: string | null): string {
   return `${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-type ReactionCounts = Partial<Record<"fire" | "thumb" | "mind" | "cry", number>>;
+export type ReactionCounts = Partial<Record<"fire" | "thumb" | "mind" | "cry", number>>;
 
 // 表态按钮组：匿名去重靠 localStorage，点过的一键置亮且不再发请求
-function ReactionBar({
+export function ReactionBar({
   itemId,
   counts,
   mine,

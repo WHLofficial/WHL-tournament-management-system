@@ -37,6 +37,7 @@ const ChangePassword = lazy(() =>
 const ReportPage = lazy(() => import("./pages/ReportPage"));
 const WeeklyPage = lazy(() => import("./pages/WeeklyPage"));
 const RecapPage = lazy(() => import("./pages/RecapPage"));
+const NewsPage = lazy(() => import("./pages/NewsPage"));
 
 export default function App() {
   return (
@@ -76,6 +77,7 @@ function AppShell() {
           <Route path="/report/:mid" element={<ReportPage />} />
           <Route path="/weekly" element={<WeeklyPage />} />
           <Route path="/recap/:tid/:sid/:round" element={<RecapPage />} />
+          <Route path="/news" element={<NewsPage />} />
           <Route
             path="/my-team"
             element={
