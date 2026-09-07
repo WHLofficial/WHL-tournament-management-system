@@ -46,7 +46,7 @@ app.get("/feed", pubCache(60), async (c) => {
     return c.json({ items: cached.items });
   }
   const items = await buildFeed(c.env.DB, { limit, before });
-  store(items);
+  if (!before) store(items); // 翻页冷路径不进 SWR：读取端不查缓存，写只会白烧 KV 配额
   return c.json({ items });
 });
 
