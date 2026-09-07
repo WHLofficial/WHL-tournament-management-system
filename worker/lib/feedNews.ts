@@ -5,6 +5,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { FeedItemDTO, RecapDTO, WeeklyDTO, WeeklyMatchDTO } from "../../shared/news";
 import type { RawEvent, FinishedMatch } from "./context";
+import { pickText } from "../../shared/textpick";
 import {
   currentStreaks,
   fetchEventRows,
@@ -315,18 +316,31 @@ function entryTail(cutAsc: FinishedMatch[], entryId: number, n: number) {
 
 // ---------- 快讯流 ----------
 
-// 进球摘要（share 卡 eventSummaries 口径：同人×n 聚合、乌龙标 OG、点球不特殊标注）
-function goalSummary(events: { type: string; playerName: string | null }[]): string {
-  const per = new Map<string, { minutes: string[]; og: boolean }>();
+// 进球摘要：同人聚合、乌龙标 OG、点球不特殊标注；返回三种句式（名单 / 带球数 / 带分钟），由快讯条按种子选一
+function goalSummaries(events: RawEvent[]): string[] {
+  const per = new Map<string, { n: number; mins: (number | null)[]; og: boolean }>();
   for (const e of events) {
     if (e.type !== "goal" && e.type !== "pen_goal" && e.type !== "own_goal") continue;
     const name = e.playerName ?? "未知球员";
-    const cur = per.get(name) ?? { minutes: [], og: false };
+    const cur = per.get(name) ?? { n: 0, mins: [], og: false };
+    cur.n += 1;
+    cur.mins.push(e.minute ?? null);
     if (e.type === "own_goal") cur.og = true;
     per.set(name, cur);
   }
-  if (per.size === 0) return "";
-  return [...per.entries()].map(([name, v]) => `${name}${v.og ? "(OG)" : ""}`).join(" · ");
+  if (per.size === 0) return [];
+  const list = [...per.entries()];
+  return [
+    list.map(([name, v]) => `${name}${v.og ? "(OG)" : ""}`).join(" · "),
+    list.map(([name, v]) => `${name}${v.og ? "(OG)" : ""}${v.n > 1 ? `（${v.n} 球）` : ""}`).join(" · "),
+    list
+      .map(([name, v]) =>
+        v.mins.some((m) => m === null)
+          ? `${name}${v.og ? "(OG)" : ""}`
+          : `${name}${v.og ? "(OG)" : ""} ${v.mins.map((m) => `${m}'`).join("、")}`,
+      )
+      .join(" · "),
+  ];
 }
 
 export async function buildFeed(
@@ -368,16 +382,24 @@ export async function buildFeed(
           m.walkoverSide === "both"
             ? `${m.homeTeamName} 与 ${m.awayTeamName} 双双弃权`
             : `${loser} 弃权，${winner} 不战而胜`,
-        body: `${rl}｜比分记 ${m.scoreHome}:${m.scoreAway}${m.note ? `（${m.note}）` : ""}`,
+        body: pickText(`wo:${m.id}`, [
+          `${rl}｜比分记 ${m.scoreHome}:${m.scoreAway}${m.note ? `（${m.note}）` : ""}`,
+          `${rl}｜判定比分 ${m.scoreHome}:${m.scoreAway}${m.note ? `，${m.note}` : ""}`,
+        ]),
       });
     } else {
-      const summary = goalSummary(eventsByMatch.get(m.id) ?? []);
+      const summaries = goalSummaries(eventsByMatch.get(m.id) ?? []);
+      const goalless = m.scoreHome === 0 && m.scoreAway === 0;
       items.push({
         ...base,
         id: `match:${m.id}`,
         kind: "match",
         title: `${rl}｜${m.homeTeamName} ${m.scoreHome}:${m.scoreAway} ${m.awayTeamName}`,
-        body: summary || "双方均无进球入账",
+        body: summaries.length
+          ? pickText(`mb:${m.id}`, summaries)
+          : goalless
+            ? pickText(`ng:${m.id}`, ["双方均无进球入账", "两队都没能敲开对方球门", "互交白卷，比分没有改写"])
+            : `比分 ${m.scoreHome}:${m.scoreAway}，进球明细未录入`,
       });
     }
   }
@@ -458,8 +480,11 @@ export async function buildFeed(
               ...base,
               id: `leader:${m.id}`,
               kind: "leader",
-              title: `${newL.teamName} 登顶积分榜`,
-              body: `${rl}过后反超 ${oldL.teamName}${gap > 0 ? `，领先 ${gap} 分` : ""}`,
+              title: pickText(`ld:${m.id}`, [`${newL.teamName} 登顶积分榜`, `积分榜易主，${newL.teamName} 登上头名`]),
+              body: pickText(`ldb:${m.id}`, [
+                `${rl}过后反超 ${oldL.teamName}${gap > 0 ? `，领先 ${gap} 分` : ""}`,
+                `把 ${oldL.teamName} 挤下头名（${rl}）${gap > 0 ? `，领先 ${gap} 分` : ""}`,
+              ]),
             });
           }
         }
@@ -475,16 +500,31 @@ export async function buildFeed(
         let body = "";
         if (st.win >= 3) {
           const t = entryTail(cut, entryId, st.win);
-          title = `${teamName} ${st.win} 连胜`;
-          body = `${rl}｜近 ${st.win} 场全胜，进 ${t.gf} 球失 ${t.ga} 球`;
+          title = pickText(`sw:${m.id}:${entryId}`, [`${teamName} ${st.win} 连胜`, `${teamName} 斩获${st.win}连胜`]);
+          body = pickText(`swb:${m.id}:${entryId}`, [
+            `${rl}｜近 ${st.win} 场全胜，进 ${t.gf} 球失 ${t.ga} 球`,
+            `${rl}｜${st.win} 连胜期间进 ${t.gf} 球失 ${t.ga} 球`,
+          ]);
         } else if (st.unbeaten >= 5) {
           const t = entryTail(cut, entryId, st.unbeaten);
-          title = `${teamName} 连续 ${st.unbeaten} 场不败`;
-          body = `${rl}｜近 ${st.unbeaten} 场 ${t.w} 胜 ${t.d} 平，进 ${t.gf} 球失 ${t.ga} 球`;
+          title = pickText(`su:${m.id}:${entryId}`, [
+            `${teamName} 连续 ${st.unbeaten} 场不败`,
+            `${teamName} 已连续 ${st.unbeaten} 场不败`,
+          ]);
+          body = pickText(`sub:${m.id}:${entryId}`, [
+            `${rl}｜近 ${st.unbeaten} 场 ${t.w} 胜 ${t.d} 平，进 ${t.gf} 球失 ${t.ga} 球`,
+            `${rl}｜${st.unbeaten} 场 ${t.w} 胜 ${t.d} 平，还未尝败绩`,
+          ]);
         } else if (st.cleanSheet >= 2) {
           const t = entryTail(cut, entryId, st.cleanSheet);
-          title = `${teamName} 连续 ${st.cleanSheet} 场零封`;
-          body = `${rl}｜近 ${st.cleanSheet} 场零封，进 ${t.gf} 球`;
+          title = pickText(`sc:${m.id}:${entryId}`, [
+            `${teamName} 连续 ${st.cleanSheet} 场零封`,
+            `${teamName} 的球门连续 ${st.cleanSheet} 场未被攻破`,
+          ]);
+          body = pickText(`scb:${m.id}:${entryId}`, [
+            `${rl}｜近 ${st.cleanSheet} 场零封，进 ${t.gf} 球`,
+            `${rl}｜连续 ${st.cleanSheet} 场零封，期间打进 ${t.gf} 球`,
+          ]);
         }
         if (title) {
           items.push({ ...base, id: `streak:${m.id}:${entryId}`, kind: "streak", title, body });
@@ -509,16 +549,28 @@ export async function buildFeed(
             ...base,
             id: `milestone:${m.id}:${e.playerId}`,
             kind: "milestone",
-            title: `${afterRow.name} 达成本届第 ${afterRow.goals} 球`,
-            body: `${rl}｜代表 ${afterRow.teamName}，本届进球来到 ${afterRow.goals} 个`,
+            title: pickText(`mg:${m.id}:${e.playerId}`, [
+              `${afterRow.name} 达成本届第 ${afterRow.goals} 球`,
+              `${afterRow.name} 攻入本届第 ${afterRow.goals} 球`,
+            ]),
+            body: pickText(`mgb:${m.id}:${e.playerId}`, [
+              `${rl}｜代表 ${afterRow.teamName}，本届进球来到 ${afterRow.goals} 个`,
+              `${rl}｜为 ${afterRow.teamName} 出战，本届进球数来到 ${afterRow.goals}`,
+            ]),
           });
         } else if (rankAfter === 1 && beforeIdx !== 0 && afterRow.goals >= 2) {
           items.push({
             ...base,
             id: `milestone:${m.id}:${e.playerId}`,
             kind: "milestone",
-            title: `${afterRow.name} 登顶射手榜`,
-            body: `${rl}过后以 ${afterRow.goals} 球升至射手榜首位`,
+            title: pickText(`mt:${m.id}:${e.playerId}`, [
+              `${afterRow.name} 登顶射手榜`,
+              `${afterRow.name} 升至射手榜头名`,
+            ]),
+            body: pickText(`mtb:${m.id}:${e.playerId}`, [
+              `${rl}过后以 ${afterRow.goals} 球升至射手榜首位`,
+              `${rl}｜${afterRow.goals} 球，抢下射手榜第一`,
+            ]),
           });
         }
       }
@@ -560,7 +612,10 @@ export async function buildFeed(
       tournamentId: r.tournament_id,
       tournamentName: r.tournament_name,
       matchId: r.match_id,
-      title: `${r.player_name ?? "球员"} ${r.type === "red" ? "直红" : "两黄变一红"}被罚下`,
+      title: pickText(`dp:${r.id}`, [
+        `${r.player_name ?? "球员"} ${r.type === "red" ? "直红" : "两黄变一红"}被罚下`,
+        r.type === "red" ? `${r.player_name ?? "球员"} 吃到红牌` : `${r.player_name ?? "球员"} 两黄变红离场`,
+      ]),
       body: `${roundLabel(
         { stageKind: r.stage_kind, stageName: r.stage_name, round: r.round },
         redMaxRounds.get(r.stage_id) ?? r.round,
@@ -596,14 +651,17 @@ export async function buildFeed(
     .bind(...(before ? [before] : []))
     .all<AuditRow>();
   for (const a of auditRes.results ?? []) {
-    let body = `比分经复核更正`;
+    let body = pickText(`ra:${a.id}`, ["比分经复核更正", "赛后比分复核有变"]);
     try {
       const d = JSON.parse(a.detail_json ?? "{}") as {
         old?: { scoreHome?: number | null; scoreAway?: number | null };
         new?: { scoreHome?: number | null; scoreAway?: number | null };
       };
       if (d.old && d.new) {
-        body = `比分由 ${d.old.scoreHome}:${d.old.scoreAway} 更正为 ${d.new.scoreHome}:${d.new.scoreAway}`;
+        body = pickText(`rr:${a.id}`, [
+          `比分由 ${d.old.scoreHome}:${d.old.scoreAway} 更正为 ${d.new.scoreHome}:${d.new.scoreAway}`,
+          `经复核，比分从 ${d.old.scoreHome}:${d.old.scoreAway} 改为 ${d.new.scoreHome}:${d.new.scoreAway}`,
+        ]);
       }
     } catch {
       // detail 解析失败退化为通用文案
@@ -670,8 +728,14 @@ export async function buildFeed(
       round: g.round,
       title: `${rl}综述｜${agg.played} 场 ${agg.goals} 球`,
       body: agg.biggestMargin
-        ? `最大分差 ${agg.biggestMargin.score}（${agg.biggestMargin.label}）`
-        : `${agg.played} 场比赛全部完赛`,
+        ? pickText(`rb:${g.stage_id}:${g.round}`, [
+            `最大分差 ${agg.biggestMargin.score}（${agg.biggestMargin.label}）`,
+            `单场最悬殊：${agg.biggestMargin.label} 打出 ${agg.biggestMargin.score}`,
+          ])
+        : pickText(`rb0:${g.stage_id}:${g.round}`, [
+            `${agg.played} 场比赛全部完赛`,
+            `${agg.played} 场比赛已全部打完`,
+          ]),
     });
   }
 
@@ -686,7 +750,10 @@ export async function buildFeed(
         at: weeklyAt,
         weekStart: weekly.weekStart,
         title: `WHL 周报 · ${weekly.label}${weekly.isFallback ? "（上周）" : ""}`,
-        body: `${weekly.played} 场 ${weekly.goals} 球${weekly.topScorer ? `，射手王 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
+        body: pickText(`wk:${weekly.weekStart}`, [
+          `${weekly.played} 场 ${weekly.goals} 球${weekly.topScorer ? `，射手王 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
+          `本周 ${weekly.played} 战共打进 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑` : ""}`,
+        ]),
       });
     }
   }
@@ -755,16 +822,43 @@ export async function buildRoundRecap(
           .map((r) => ({ rank: r.rank, teamName: r.teamName, played: r.played, pts: r.pts }))
       : [];
 
+  // 段落句库：开头/过渡各有变体，按「阶段+轮次」种子确定性选一（同一轮综述永远同一份，不同轮散开）
+  const rSeed = `${stageId}:${round}`;
   const paragraphs: string[] = [];
-  let p1 = `${rl}一共 ${agg.played} 场比赛，打进 ${agg.goals} 球`;
-  if (agg.cleanSheets > 0) p1 += `，其中 ${agg.cleanSheets} 场零封`;
-  if (agg.biggestMargin) p1 += `。最大分差出现在 ${agg.biggestMargin.label}（${agg.biggestMargin.score}）`;
+  let p1 = pickText(`${rSeed}:p1`, [
+    `${rl}一共 ${agg.played} 场比赛，打进 ${agg.goals} 球`,
+    `${rl}战罢，${agg.played} 场比赛合计打进 ${agg.goals} 球`,
+    `${agg.played} 场比赛，${agg.goals} 粒进球，这是${rl}交出的答卷`,
+    `${rl}的 ${agg.played} 场较量，总共产生 ${agg.goals} 粒进球`,
+    `进球数停在 ${agg.goals}，${rl}目前完赛 ${agg.played} 场`,
+    `${rl}暂时完赛 ${agg.played} 场，进球 ${agg.goals} 个`,
+    `${rl}的比分牌，有人欢喜有人愁`,
+  ]);
+  if (agg.cleanSheets > 0)
+    p1 += pickText(`${rSeed}:cs`, [`，其中 ${agg.cleanSheets} 场零封`, `，零封的有 ${agg.cleanSheets} 场`]);
+  if (agg.biggestMargin)
+    p1 += pickText(`${rSeed}:bm`, [
+      `。最大分差出现在 ${agg.biggestMargin.label}（${agg.biggestMargin.score}）`,
+      `。最悬殊的一场是 ${agg.biggestMargin.label}（${agg.biggestMargin.score}）`,
+    ]);
   paragraphs.push(p1);
   if (topScorer) {
-    paragraphs.push(`射手方面，${topScorer.name}（${topScorer.teamName}）本轮打进 ${topScorer.goals} 球`);
+    paragraphs.push(
+      pickText(`${rSeed}:p2`, [
+        `射手方面，${topScorer.name}（${topScorer.teamName}）本轮打进 ${topScorer.goals} 球`,
+        `进球最多的是${topScorer.name}（${topScorer.teamName}），打进 ${topScorer.goals} 球`,
+        `射手这轮的头条属于${topScorer.name}（${topScorer.teamName}），打进 ${topScorer.goals} 球`,
+      ]),
+    );
   }
   if (standings.length > 0 && isComplete) {
-    paragraphs.push(`积分榜上，${standings[0].teamName} 以 ${standings[0].pts} 分位居榜首`);
+    paragraphs.push(
+      pickText(`${rSeed}:p3`, [
+        `积分榜上，${standings[0].teamName} 以 ${standings[0].pts} 分位居榜首`,
+        `${standings[0].teamName} 以 ${standings[0].pts} 分继续待在积分榜首的位置`,
+        `榜首属于${standings[0].teamName}，${standings[0].pts} 分`,
+      ]),
+    );
   }
 
   return {

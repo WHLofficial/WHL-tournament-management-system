@@ -6,6 +6,7 @@ import { EventTimeline } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
 import "./portal.css";
 import type { AnnouncementDTO, FeedItemDTO, FeedKind } from "../../shared/news";
+import { pickText } from "../../shared/textpick";
 import type { LiveDTO, TournamentDTO, UpcomingDTO } from "../../shared/types";
 
 export const KIND_LABEL: Record<FeedKind, string> = {
@@ -168,9 +169,9 @@ export function Home() {
     }
   }, []);
 
-  // 头条 = 最新一条战报/弃权条目；橱窗 = 其余条目前 15
+  // 头条 = 最新一条战报/弃权条目；橱窗 = 其余条目前 3
   const headline = feed?.find((i) => (i.kind === "match" || i.kind === "walkover") && i.homeTeamName) ?? null;
-  const shelf = (feed ?? []).filter((i) => i !== headline).slice(0, 15);
+  const shelf = (feed ?? []).filter((i) => i !== headline).slice(0, 3);
   const tickerItems = (feed ?? []).slice(0, 12);
 
   return (
@@ -280,21 +281,21 @@ export function Home() {
             </div>
 
             {headline && (
-              <article className="whl-headline">
+              <article className={`whl-headline whl-headline--${pickText(headline.id, ["v0", "v1", "v2", "v3"])}`}>
                 <Link className="whl-headline-link" to={itemHref(headline)}>
                   <span className="whl-headline-kicker">
                     头条 · {headline.roundLabel ?? KIND_LABEL[headline.kind]}
                   </span>
                   <div className="whl-headline-vs">
                     <span className="whl-headline-side">
-                      <TeamLogo name={headline.homeTeamName ?? ""} url={headline.homeLogoUrl} size={56} />
+                      <TeamLogo name={headline.homeTeamName ?? ""} url={headline.homeLogoUrl} size={80} />
                       <span className="tname">{headline.homeTeamName}</span>
                     </span>
                     <span className="whl-headline-score">
                       {headline.scoreHome}:{headline.scoreAway}
                     </span>
                     <span className="whl-headline-side">
-                      <TeamLogo name={headline.awayTeamName ?? ""} url={headline.awayLogoUrl} size={56} />
+                      <TeamLogo name={headline.awayTeamName ?? ""} url={headline.awayLogoUrl} size={80} />
                       <span className="tname">{headline.awayTeamName}</span>
                     </span>
                   </div>

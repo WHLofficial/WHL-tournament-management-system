@@ -2,6 +2,7 @@
 // 标题（结果导向）→ 导语（谁/何时/结果/意义）→ 过程（比分状态机选句）→ 赛事背景段 → 数据框。
 // 全部句子由比赛事实模板化生成：数据不动文章一字不动，数据变了自动重写（纯派生，无撤稿概念）。
 import type { MatchReportDTO, ReportCardDTO, ReportGoalDTO } from "../../shared/news";
+import { pickText } from "../../shared/textpick";
 import {
   cnDate,
   cnum,
@@ -42,6 +43,9 @@ function buildNarrative(
   let away = 0;
   const minutePre = (minute: number | null) => (minute === null ? "比赛中，" : `第 ${minute} 分钟，`);
   let firstGoalDone = false;
+  // 呼吸句：纯叙述、不带占位符的短句，只在对应事件真实发生时插入，每场至多一次
+  let breathRed = false;
+  let breathPenMiss = false;
 
   for (const e of events) {
     const side = e.entryId !== null ? (e.entryId === m.homeEntryId ? "home" : e.entryId === m.awayEntryId ? "away" : null) : null;
@@ -60,32 +64,41 @@ function buildNarrative(
 
       const pre = minutePre(e.minute);
       const who = e.playerName ?? scoringTeam; // 无球员名退化：球队口径
+      // 进球动词句库：同一事实多种说法，按「比赛+事件」种子确定性选一条（重复请求不变，不同场散开）
+      const evSeed = `${m.id}:${e.minute ?? "x"}:${e.playerId ?? e.playerName ?? "?"}:${e.type}`;
+      const isFirst = !firstGoalDone;
       let verb: string;
       if (!firstGoalDone) {
         verb =
           e.type === "own_goal"
-            ? `不慎自摆乌龙，场上僵局就此打破`
+            ? pickText(evSeed, ["不慎自摆乌龙，场上僵局就此打破", "自摆乌龙，送出本场第一球"])
             : e.type === "pen_goal"
-              ? `点球命中，率先打破僵局`
-              : `率先打破僵局`;
+              ? pickText(evSeed, ["点球命中，率先打破僵局", "顶住压力罚进点球，首开纪录", "主罚点球稳稳命中，拔得头筹"])
+              : pickText(evSeed, ["率先打破僵局", "首开纪录", "拔得头筹", "打进本场第一球"]);
         firstGoalDone = true;
       } else if (wasBehind && home !== away && (scoring === "home" ? home > away : away > home)) {
-        verb = e.type === "pen_goal" ? `点球命中，帮助${scoringTeam}再度超出` : `帮助${scoringTeam}再度超出`;
+        verb = e.type === "pen_goal"
+          ? pickText(evSeed, [`点球命中，帮助${scoringTeam}再度超出`, `点球罚进，${scoringTeam}反超了比分`])
+          : pickText(evSeed, [`帮助${scoringTeam}再度超出`, `帮${scoringTeam}重新取得领先`, `让${scoringTeam}反超了比分`]);
       } else if (wasBehind && home === away) {
         verb =
           e.type === "own_goal"
-            ? `不慎自摆乌龙，${scoringTeam} 得以扳平`
+            ? pickText(evSeed, [`不慎自摆乌龙，${scoringTeam} 得以扳平`, `自摆乌龙，${scoringTeam} 将比分追平`])
             : e.type === "pen_goal"
-              ? `点球命中，为${scoringTeam}扳平比分`
-              : `为${scoringTeam}扳平比分`;
+              ? pickText(evSeed, [`点球命中，为${scoringTeam}扳平比分`, `顶住压力罚进点球，扳平比分`, `点球稳稳罚进，双方回到同一起跑线`])
+              : pickText(evSeed, [`为${scoringTeam}扳平比分`, `把比分追成平手`, `帮${scoringTeam}追平`]);
       } else if (beforeLevel) {
         // 平局僵持中超出（非首球）：重新领先
-        verb = e.type === "pen_goal" ? `点球命中，${scoringTeam}再度领先` : `帮助${scoringTeam}再度领先`;
+        verb = e.type === "pen_goal"
+          ? pickText(evSeed, [`点球命中，${scoringTeam}再度领先`, `点球罚进，${scoringTeam}再次超出`])
+          : pickText(evSeed, [`帮助${scoringTeam}再度领先`, `让${scoringTeam}再次超出`, `帮${scoringTeam}重新取得领先`]);
       } else if (wasAhead) {
-        // 领先方扩大优势（是否锁定胜局在下方按「此后对方是否再进球」回填）
-        verb = e.type === "pen_goal" ? `点球再下一城` : `再下一城`;
+        // 领先方扩大优势（是否锁定胜局在下方按「此后对方是否再进球」回填；动词须含下方回填替换词表中的词）
+        verb = e.type === "pen_goal"
+          ? pickText(evSeed, ["点球再下一城", "点球命中，扩大战果", "点球再进一球"])
+          : pickText(evSeed, ["再下一城", "扩大战果", "再入一球"]);
       } else {
-        verb = `为${scoringTeam}扳回一城`;
+        verb = pickText(evSeed, [`为${scoringTeam}扳回一城`, `帮${scoringTeam}追回一球`]);
       }
       const assist = e.assistName && e.type !== "own_goal" ? `，${e.assistName} 送出助攻` : "";
       const s = `${pre}${who} ${verb}${assist}。`;
@@ -99,16 +112,36 @@ function buildNarrative(
         sentenceIdx: sentences.length - 1,
         playerKey: e.playerId === null ? `team:${scoringTeam}` : `p:${e.playerId}`,
       });
+      if (isFirst && e.minute !== null && e.minute <= 10) {
+        sentences.push(pickText(`${m.id}:bref`, ["开场才几分钟，比分就被改写了。", "比赛刚开始不久，僵局就被破了。"]));
+      }
       continue;
     }
     if (e.type === "pen_miss") {
-      sentences.push(`${minutePre(e.minute)}${e.playerName ?? "球员"}主罚点球未能命中。`);
+      sentences.push(
+        `${minutePre(e.minute)}${e.playerName ?? "球员"}${pickText(`${m.id}:${e.minute ?? "x"}:pm:${e.playerId ?? e.playerName ?? "?"}`, [
+          "主罚点球未能命中。",
+          "点球罚失。",
+          "没能把点球罚进。",
+        ])}`,
+      );
+      if (!breathPenMiss) {
+        breathPenMiss = true;
+        sentences.push(pickText(`${m.id}:brpm`, ["点球点上的机会，就这样溜走了。", "十二码前的机会，没能变成进球。"]));
+      }
       continue;
     }
     if (e.type === "red" || e.type === "red_2y") {
-      sentences.push(
-        `${minutePre(e.minute)}${e.playerName ?? "球员"} ${e.type === "red" ? "直接红牌" : "两黄变一红"}被罚下。`,
-      );
+      const redSeed = `${m.id}:${e.minute ?? "x"}:red:${e.playerId ?? e.playerName ?? "?"}`;
+      const redPhrase =
+        e.type === "red"
+          ? pickText(redSeed, ["直接红牌被罚下", "吃到红牌，提前回了更衣室", "被主裁直接出示红牌"])
+          : pickText(redSeed, ["两黄变一红被罚下", "领到第二张黄牌，两黄变一红", "累积两黄，被红牌罚下"]);
+      sentences.push(`${minutePre(e.minute)}${e.playerName ?? "球员"} ${redPhrase}。`);
+      if (!breathRed) {
+        breathRed = true;
+        sentences.push(pickText(`${m.id}:brred`, ["少一人，此后每一步都更难。", "红牌之后，场上的平衡被打破了。"]));
+      }
       cards.push({
         type: "red",
         minute: e.minute,
@@ -119,7 +152,13 @@ function buildNarrative(
       continue;
     }
     if (e.type === "injury_major") {
-      sentences.push(`${minutePre(e.minute)}${e.playerName ?? "球员"}伤退离场。`);
+      sentences.push(
+        `${minutePre(e.minute)}${e.playerName ?? "球员"}${pickText(`${m.id}:${e.minute ?? "x"}:inj:${e.playerId ?? e.playerName ?? "?"}`, [
+          "伤退离场。",
+          "因伤离场。",
+          "无法坚持比赛，伤退下场。",
+        ])}`,
+      );
       continue;
     }
     if (e.type === "yellow") {
@@ -134,8 +173,13 @@ function buildNarrative(
     // injury_minor 不进叙事（小伤无碍）
   }
 
+  // 收尾呼吸句：大胜场的静态总结（纯叙述、不带数据）
+  if (home !== away && Math.abs(home - away) >= 3) {
+    sentences.push("这是一场一边倒的较量。");
+  }
+
   // 「锁定胜局」回填：最后一个进球句若是 eventual winner 打进且此后对方无进球（即它本身就是最后一粒），
-  // 且比分非平——把「再下一城/扳回一城」句改写为锁定胜局
+  // 且比分非平——把「扩大优势类」动词句改写为锁定胜局（词表须覆盖领先方扩大/落后方追回两支句库的全部动词）
   const lastGoal = goalFacts[goalFacts.length - 1];
   if (lastGoal && home !== away) {
     const winnerSide = home > away ? "home" : "away";
@@ -143,7 +187,11 @@ function buildNarrative(
       const s = sentences[lastGoal.sentenceIdx];
       sentences[lastGoal.sentenceIdx] = s
         .replace("再下一城", "锁定胜局")
-        .replace("扳回一城", "锁定胜局");
+        .replace("再进一球", "锁定胜局")
+        .replace("扩大战果", "锁定胜局")
+        .replace("再入一球", "锁定胜局")
+        .replace("扳回一城", "锁定胜局")
+        .replace("扳回一球", "锁定胜局");
     }
   }
 
@@ -189,13 +237,27 @@ function resultPhrases(m: FinishedMatch, events: RawEvent[]) {
 
   let title: string;
   if (winner && shootout) {
-    title = `${winner} ${h}:${a}（点 ${m.penHome}:${m.penAway}）淘汰 ${loser}`;
+    title = pickText(`t1:${m.id}`, [
+      `${winner} ${h}:${a}（点 ${m.penHome}:${m.penAway}）淘汰 ${loser}`,
+      `${winner} 点球 ${m.penHome}:${m.penAway} 淘汰 ${loser}`,
+    ]);
   } else if (h > a) {
-    title = `${m.homeTeamName} ${h}:${a} 击败 ${m.awayTeamName}`;
+    title = pickText(`t2:${m.id}`, [
+      `${m.homeTeamName} ${h}:${a} 击败 ${m.awayTeamName}`,
+      `${m.homeTeamName} 主场 ${h}:${a} 拿下 ${m.awayTeamName}`,
+      `${m.homeTeamName} ${h}:${a} 战胜 ${m.awayTeamName}`,
+    ]);
   } else if (a > h) {
-    title = `${m.awayTeamName} 客场 ${a}:${h} 击败 ${m.homeTeamName}`;
+    title = pickText(`t3:${m.id}`, [
+      `${m.awayTeamName} 客场 ${a}:${h} 击败 ${m.homeTeamName}`,
+      `${m.awayTeamName} ${a}:${h} 战胜 ${m.homeTeamName}`,
+      `${m.homeTeamName} 主场 ${h}:${a} 不敌 ${m.awayTeamName}`,
+    ]);
   } else {
-    title = `${m.homeTeamName} ${h}:${a} 战平 ${m.awayTeamName}`;
+    title = pickText(`t4:${m.id}`, [
+      `${m.homeTeamName} ${h}:${a} 战平 ${m.awayTeamName}`,
+      `${m.homeTeamName} 与 ${m.awayTeamName} ${h}:${a} 言和`,
+    ]);
   }
 
   // 功臣后缀（≥2 球）
@@ -271,12 +333,63 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
   const { sentences, goalFacts, cards } = buildNarrative(m, events);
   const { title, outcome, hero } = resultPhrases(m, events);
   const dateStr = cnDate(m.finishedAt);
-  const lede = `${rl}（${dateStr}），${m.homeTeamName} 与 ${m.awayTeamName} ${m.scoreHome}:${m.scoreAway} 战罢，${outcome}${hero && hero.goals >= 2 ? `，${hero.name} 凭 ${hero.goals} 粒进球当选本场焦点` : ""}。`;
+  // 导语按「点球 / 大胜(净胜≥3) / 常规胜负 / 平局」分档，档内 6 个结构变体按比赛种子确定性选一
+  const shootout = m.penHome !== null && m.penAway !== null;
+  const regWinner = m.scoreHome > m.scoreAway ? m.homeTeamName : m.scoreAway > m.scoreHome ? m.awayTeamName : null;
+  const loserName = regWinner ? (regWinner === m.homeTeamName ? m.awayTeamName : m.homeTeamName) : null;
+  const margin = Math.abs(m.scoreHome - m.scoreAway);
+  const sw = m.scoreHome >= m.scoreAway ? `${m.scoreHome}:${m.scoreAway}` : `${m.scoreAway}:${m.scoreHome}`;
+  const heroTail = hero && hero.goals >= 2 ? `，${hero.name} 凭 ${hero.goals} 粒进球当选本场焦点` : "";
+  const ledeSeed = `lede:${m.id}`;
+  let lede: string;
+  if (shootout) {
+    lede = pickText(ledeSeed, [
+      `${rl}（${dateStr}），${m.homeTeamName} 与 ${m.awayTeamName} ${m.scoreHome}:${m.scoreAway} 战罢难分高下，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}）被拖入点球大战，常规时间 ${m.homeTeamName} 与 ${m.awayTeamName} 战成 ${m.scoreHome}:${m.scoreAway}，${outcome}${heroTail}。`,
+      `十二码决出胜负：${rl}（${dateStr}），${m.homeTeamName} 与 ${m.awayTeamName} ${m.scoreHome}:${m.scoreAway} 之后仍未分高下，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}），${m.scoreHome}:${m.scoreAway} 之后双方走上点球点，${outcome}${heroTail}。`,
+    ]);
+  } else if (regWinner && margin >= 3) {
+    lede = pickText(ledeSeed, [
+      `${rl}（${dateStr}），${regWinner} ${sw} 大胜 ${loserName}，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}）呈现一边倒，${regWinner} 以 ${sw} 击溃 ${loserName}，${outcome}${heroTail}。`,
+      `${dateStr}的${rl}，${regWinner} 打出 ${sw}，轻取 ${loserName}，${outcome}${heroTail}。`,
+      `比分定格在 ${sw}：${rl}（${dateStr}），${regWinner} 完胜 ${loserName}，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}），${regWinner} 收获一场 ${sw} 的大胜，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}），${loserName} 挡不住 ${regWinner} 的攻势，以 ${sw} 败下阵来，${outcome}${heroTail}。`,
+    ]);
+  } else if (regWinner) {
+    lede = pickText(ledeSeed, [
+      `${rl}（${dateStr}），${m.homeTeamName} 与 ${m.awayTeamName} ${m.scoreHome}:${m.scoreAway} 战罢，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}），${regWinner} 凭 ${sw} 击败 ${loserName}，${outcome}${heroTail}。`,
+      `${dateStr}，${rl}：${m.homeTeamName} ${m.scoreHome}:${m.scoreAway} ${m.awayTeamName}，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}）战罢，记分牌停在 ${m.scoreHome}:${m.scoreAway}，胜者是 ${regWinner}，${outcome}${heroTail}。`,
+      `终场哨响，${rl}（${dateStr}）的比分是 ${m.scoreHome}:${m.scoreAway}，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}），比分 ${m.scoreHome}:${m.scoreAway}，${regWinner} 带走胜利，${outcome}${heroTail}。`,
+    ]);
+  } else {
+    lede = pickText(ledeSeed, [
+      `${rl}（${dateStr}），${m.homeTeamName} 与 ${m.awayTeamName} ${m.scoreHome}:${m.scoreAway} 战罢，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}），${m.homeTeamName} 与 ${m.awayTeamName} ${m.scoreHome}:${m.scoreAway} 握手言和，${outcome}${heroTail}。`,
+      `谁也没能带走胜利：${rl}（${dateStr}），${m.homeTeamName} 与 ${m.awayTeamName} 战成 ${m.scoreHome}:${m.scoreAway}，${outcome}${heroTail}。`,
+      `${dateStr}，${rl}：${m.homeTeamName} ${m.scoreHome}:${m.scoreAway} ${m.awayTeamName}，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}）的比分最终停在 ${m.scoreHome}:${m.scoreAway}，${outcome}${heroTail}。`,
+      `${rl}（${dateStr}）打成平手，${m.homeTeamName} 与 ${m.awayTeamName} ${m.scoreHome}:${m.scoreAway}，${outcome}${heroTail}。`,
+    ]);
+  }
 
   // 过程分节：句多时拆两段，保持「可扫描结构」
   const paragraphs: string[] = [];
   if (sentences.length === 0) {
-    paragraphs.push("全场比赛，双方均无进球入账。");
+    paragraphs.push(
+      m.scoreHome === 0 && m.scoreAway === 0
+        ? pickText(`z:${m.id}`, [
+            "全场比赛，双方均无进球入账。",
+            "终场哨响，双方都没能找到进球的办法。",
+            "谁也没能敲开对方的球门，比分就此定格。",
+          ])
+        : `比分 ${m.scoreHome}:${m.scoreAway}，进球明细未录入。`,
+    );
   } else if (sentences.length <= 5) {
     paragraphs.push(sentences.join(""));
   } else {
@@ -308,10 +421,23 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
           const topTwo = [hb, ab].every((r) => r.rank <= 2);
           if (topTwo && Math.abs(hb.pts - ab.pts) <= 2) {
             const leader = hb.pts >= ab.pts ? hb : ab;
-            context.push(`赛前 ${leader.teamName} 以 ${leader.pts} 分领跑积分榜，本场是榜首大战。`);
+            context.push(
+              pickText(`${m.id}:ctxA`, [
+                `赛前 ${leader.teamName} 以 ${leader.pts} 分领跑积分榜，本场是榜首大战。`,
+                `榜首大战：两队赛前分列积分榜前两位，${leader.teamName} 以 ${leader.pts} 分居首。`,
+                `本场是名副其实的榜首大战，赛前两队积分只差 ${Math.abs(hb.pts - ab.pts)} 分。`,
+              ]),
+            );
           } else {
             const best = hb.rank <= ab.rank ? hb : ab;
-            if (best.rank <= 3) context.push(`赛前 ${best.teamName} 以 ${best.pts} 分位列积分榜第 ${best.rank} 位。`);
+            if (best.rank <= 3)
+              context.push(
+                pickText(`${m.id}:ctxB`, [
+                  `赛前 ${best.teamName} 以 ${best.pts} 分位列积分榜第 ${best.rank} 位。`,
+                  `进入本场时，${best.teamName} 以 ${best.pts} 分排在积分榜第 ${best.rank} 位。`,
+                  `积分榜上，${best.teamName} 赛前位居第 ${best.rank} 位（${best.pts} 分）。`,
+                ]),
+              );
           }
         }
       }
@@ -326,7 +452,10 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
         const oldLeader = before.leader;
         if (oldLeader && oldLeader.entryId !== winnerAfter.entryId && snap.leader?.entryId === winnerAfter.entryId) {
           context.push(
-            `${winnerAfter.teamName} 反超 ${oldLeader.teamName} 登顶积分榜，目前以 ${winnerAfter.pts} 分居首。`,
+            pickText(`${m.id}:ctxC`, [
+              `${winnerAfter.teamName} 反超 ${oldLeader.teamName} 登顶积分榜，目前以 ${winnerAfter.pts} 分居首。`,
+              `积分榜易主：${winnerAfter.teamName} 以 ${winnerAfter.pts} 分超越 ${oldLeader.teamName}，登上头名。`,
+            ]),
           );
         } else if (snap.leader?.entryId === winnerAfter.entryId && oldLeader?.entryId === winnerAfter.entryId) {
           const second = snap.rows.find((r) => r.rank === 2);
@@ -335,11 +464,22 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
           const gapBefore = secondBefore ? winnerAfter.pts + 3 - secondBefore.pts : 0;
           context.push(
             gap > gapBefore
-              ? `${winnerAfter.teamName} 将领先优势扩大到 ${gap} 分。`
-              : `${winnerAfter.teamName} 继续领跑积分榜。`,
+              ? pickText(`${m.id}:ctxD`, [
+                  `${winnerAfter.teamName} 将领先优势扩大到 ${gap} 分。`,
+                  `${winnerAfter.teamName} 的领跑优势扩大到 ${gap} 分。`,
+                ])
+              : pickText(`${m.id}:ctxE`, [
+                  `${winnerAfter.teamName} 继续领跑积分榜。`,
+                  `积分榜上，${winnerAfter.teamName} 依旧排在头名。`,
+                ]),
           );
         } else {
-          context.push(`${winnerAfter.teamName} 目前以 ${winnerAfter.pts} 分位列积分榜第 ${winnerAfter.rank} 位。`);
+          context.push(
+            pickText(`${m.id}:ctxF`, [
+              `${winnerAfter.teamName} 目前以 ${winnerAfter.pts} 分位列积分榜第 ${winnerAfter.rank} 位。`,
+              `积分榜上，${winnerAfter.teamName} 以 ${winnerAfter.pts} 分排名第 ${winnerAfter.rank} 位。`,
+            ]),
+          );
         }
       }
     }
@@ -353,17 +493,62 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
     if (wEntry && lEntry) {
       const wAfter = currentStreaks(afterList, wEntry);
       const lBefore = currentStreaks(beforeList, lEntry);
-      if (lBefore.win >= 2) streakLines.push(`${wName} 终结了 ${lName} 的${cnum(lBefore.win)}连胜。`);
-      if (wAfter.win >= 3) streakLines.push(`${wName} 收获${cnum(wAfter.win)}连胜。`);
-      if (lBefore.unbeaten >= 3) streakLines.push(`${lName} ${cnum(lBefore.unbeaten)}场不败遭终结。`);
-      if (wAfter.cleanSheet >= 2) streakLines.push(`${wName} 连续${cnum(wAfter.cleanSheet)}场零封。`);
-      if (wAfter.unbeaten >= 5) streakLines.push(`${wName} 已${cnum(wAfter.unbeaten)}轮不败。`);
+      if (lBefore.win >= 2)
+        streakLines.push(
+          pickText(`${m.id}:rec1`, [
+            `${wName} 终结了 ${lName} 的${cnum(lBefore.win)}连胜。`,
+            `${lName} 的${cnum(lBefore.win)}连胜，被 ${wName} 挡停。`,
+            `${lName} 的${cnum(lBefore.win)}连胜，就此作古。`,
+          ]),
+        );
+      if (wAfter.win >= 3)
+        streakLines.push(
+          pickText(`${m.id}:rec2`, [
+            `${wName} 收获${cnum(wAfter.win)}连胜。`,
+            `${wName} 的连胜来到${cnum(wAfter.win)}场。`,
+            `赢下本场，${wName} 已经连赢${cnum(wAfter.win)}场。`,
+          ]),
+        );
+      if (lBefore.unbeaten >= 3)
+        streakLines.push(
+          pickText(`${m.id}:rec3`, [
+            `${lName} ${cnum(lBefore.unbeaten)}场不败遭终结。`,
+            `${wName} 终结了 ${lName} ${cnum(lBefore.unbeaten)} 场不败的纪录。`,
+            `${lName} ${cnum(lBefore.unbeaten)} 场不败的纪录，就此作古。`,
+          ]),
+        );
+      if (wAfter.cleanSheet >= 2)
+        streakLines.push(
+          pickText(`${m.id}:rec4`, [
+            `${wName} 连续${cnum(wAfter.cleanSheet)}场零封。`,
+            `${wName} 的球门已经连续${cnum(wAfter.cleanSheet)}场没有被攻破。`,
+          ]),
+        );
+      if (wAfter.unbeaten >= 5)
+        streakLines.push(
+          pickText(`${m.id}:rec5`, [
+            `${wName} 已${cnum(wAfter.unbeaten)}轮不败。`,
+            `${wName} 已经${cnum(wAfter.unbeaten)}轮没输过球。`,
+          ]),
+        );
     } else {
       // 平局：不败/零封延续仍值得一提
       const hAfter = currentStreaks(afterList, m.homeEntryId);
       const aAfter = currentStreaks(afterList, m.awayEntryId);
-      if (hAfter.unbeaten >= 5) streakLines.push(`${m.homeTeamName} 已${cnum(hAfter.unbeaten)}轮不败。`);
-      if (aAfter.unbeaten >= 5) streakLines.push(`${m.awayTeamName} 已${cnum(aAfter.unbeaten)}轮不败。`);
+      if (hAfter.unbeaten >= 5)
+        streakLines.push(
+          pickText(`${m.id}:rec6h`, [
+            `${m.homeTeamName} 已${cnum(hAfter.unbeaten)}轮不败。`,
+            `近${cnum(hAfter.unbeaten)}轮，${m.homeTeamName} 仍未尝败绩。`,
+          ]),
+        );
+      if (aAfter.unbeaten >= 5)
+        streakLines.push(
+          pickText(`${m.id}:rec6a`, [
+            `${m.awayTeamName} 已${cnum(aAfter.unbeaten)}轮不败。`,
+            `近${cnum(aAfter.unbeaten)}轮，${m.awayTeamName} 仍未尝败绩。`,
+          ]),
+        );
     }
     context.push(...streakLines.slice(0, 2));
 
@@ -388,7 +573,13 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
         m.scoreHome > m.scoreAway ? m.homeTeamName : m.scoreAway > m.scoreHome ? m.awayTeamName : null;
       if (nowWinner && prevWinner === nowWinner) {
         if (h2h.length === 1) {
-          context.push(`双方本赛季首回合 ${nowWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场完成双杀。`);
+          const opp = nowWinner === m.homeTeamName ? m.awayTeamName : m.homeTeamName;
+          context.push(
+            pickText(`${m.id}:h2h1`, [
+              `双方本赛季首回合 ${nowWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场完成双杀。`,
+              `加上首回合的 ${prev.scoreHome}:${prev.scoreAway}，${nowWinner} 本赛季对 ${opp} 完成双杀。`,
+            ]),
+          );
         } else {
           // 连胜场数 = 本场 + 此前连续取胜的交锋（中断即停）
           const opp = nowWinner === m.homeTeamName ? m.awayTeamName : m.homeTeamName;
@@ -406,14 +597,34 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
             if (xw === nowWinner) run += 1;
             else break;
           }
-          context.push(`${nowWinner} 对 ${opp} 已连续 ${cnum(run)} 场交锋取胜。`);
+          context.push(
+            pickText(`${m.id}:h2h2`, [
+              `${nowWinner} 对 ${opp} 已连续 ${cnum(run)} 场交锋取胜。`,
+              `近 ${cnum(run)} 次碰面，赢的都是 ${nowWinner}。`,
+            ]),
+          );
         }
       } else if (nowWinner && prevWinner && prevWinner !== nowWinner) {
-        context.push(`本赛季首回合 ${prevWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场 ${nowWinner} 完成复仇。`);
+        context.push(
+          pickText(`${m.id}:h2h3`, [
+            `本赛季首回合 ${prevWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场 ${nowWinner} 完成复仇。`,
+            `首回合 ${prevWinner} 曾以 ${prev.scoreHome}:${prev.scoreAway} 取胜，这次 ${nowWinner} 复仇成功。`,
+          ]),
+        );
       } else if (nowWinner && !prevWinner) {
-        context.push(`双方本赛季首回合 ${prev.scoreHome}:${prev.scoreAway} 战平。`);
+        context.push(
+          pickText(`${m.id}:h2h4`, [
+            `双方本赛季首回合 ${prev.scoreHome}:${prev.scoreAway} 战平。`,
+            `两队首回合就战成 ${prev.scoreHome}:${prev.scoreAway}。`,
+          ]),
+        );
       } else if (!nowWinner && prevWinner) {
-        context.push(`本赛季首回合 ${prevWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场双方握手言和。`);
+        context.push(
+          pickText(`${m.id}:h2h5`, [
+            `本赛季首回合 ${prevWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场双方握手言和。`,
+            `首回合 ${prevWinner} 曾以 ${prev.scoreHome}:${prev.scoreAway} 取胜，这次谁也没能再赢。`,
+          ]),
+        );
       }
     }
 
@@ -434,20 +645,36 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
         const rankAfter = rankOf(scorerTotals, pid.playerId);
         const rankBefore = rankOf(beforeScorers, pid.playerId);
         if (rankAfter === 1 && rankBefore !== 1 && after.goals >= 2) {
-          lines.push(`${after.name} 以 ${after.goals} 球登顶射手榜。`);
+          lines.push(
+            pickText(`${m.id}:top1`, [
+              `${after.name} 以 ${after.goals} 球登顶射手榜。`,
+              `射手榜随之改写：${after.name} 凭 ${after.goals} 球升至头名。`,
+            ]),
+          );
         } else if (rankAfter === 1 && rankBefore === 1 && after.goals >= 2) {
           const second = scorerTotals[1];
           const gap = second ? after.goals - second.goals : 0;
           lines.push(
             gap > 0
-              ? `${after.name} 以 ${after.goals} 球继续领跑射手榜（领先第 2 名 ${gap} 球）。`
-              : `${after.name} 以 ${after.goals} 球继续领跑射手榜。`,
+              ? pickText(`${m.id}:top2`, [
+                  `${after.name} 以 ${after.goals} 球继续领跑射手榜（领先第 2 名 ${gap} 球）。`,
+                  `射手榜上 ${after.name} 依旧第一，${after.goals} 球，比第二名多 ${gap} 球。`,
+                ])
+              : pickText(`${m.id}:top3`, [
+                  `${after.name} 以 ${after.goals} 球继续领跑射手榜。`,
+                  `${after.name} 仍以 ${after.goals} 球占据射手榜头名。`,
+                ]),
           );
         } else if (rankAfter >= 2 && rankAfter <= 3) {
           const leader = scorerTotals[0];
           const gap = leader ? leader.goals - after.goals : 0;
           if (gap > 0 && gap <= 2 && rankAfter < rankBefore) {
-            lines.push(`${after.name} 以 ${after.goals} 球追至射手榜第 ${rankAfter} 位，仅差 ${gap} 球。`);
+            lines.push(
+              pickText(`${m.id}:top4`, [
+                `${after.name} 以 ${after.goals} 球追至射手榜第 ${rankAfter} 位，仅差 ${gap} 球。`,
+                `${after.name} 的本届进球来到 ${after.goals}，距射手榜第 ${rankAfter} 位只差 ${gap} 球。`,
+              ]),
+            );
           }
         }
         if (lines.length >= 2) break;
