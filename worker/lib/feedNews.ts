@@ -316,30 +316,78 @@ function entryTail(cutAsc: FinishedMatch[], entryId: number, n: number) {
 
 // ---------- 快讯流 ----------
 
-// 进球摘要：同人聚合、乌龙标 OG、点球不特殊标注；返回三种句式（名单 / 带球数 / 带分钟），由快讯条按种子选一
-function goalSummaries(events: RawEvent[]): string[] {
-  const per = new Map<string, { n: number; mins: (number | null)[]; og: boolean }>();
-  for (const e of events) {
-    if (e.type !== "goal" && e.type !== "pen_goal" && e.type !== "own_goal") continue;
-    const name = e.playerName ?? "未知球员";
-    const cur = per.get(name) ?? { n: 0, mins: [], og: false };
-    cur.n += 1;
-    cur.mins.push(e.minute ?? null);
-    if (e.type === "own_goal") cur.og = true;
-    per.set(name, cur);
+// match 条目 body：把进球事件流写成一句有走向的新闻句（首球—过程—收尾），按条目种子选写法。
+// 只写事件里的事实（人/分钟/类型），不推断半场归属；同人多球挂梅开二度/帽子戏法
+function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
+  const goals = events.filter((e) => e.type === "goal" || e.type === "pen_goal" || e.type === "own_goal");
+  if (goals.length === 0) return [];
+  const winnerSide = m.scoreHome > m.scoreAway ? "home" : m.scoreAway > m.scoreHome ? "away" : null;
+  const nameOf = (e: RawEvent) => e.playerName ?? "球员";
+  const scoringSide = (e: RawEvent) => (e.entryId === m.homeEntryId ? "home" : "away");
+  const ogBeneficiary = (e: RawEvent) => (e.entryId === m.homeEntryId ? m.awayTeamName : m.homeTeamName);
+  const counts = new Map<string, number>();
+  const lastIdx = new Map<string, number>();
+  goals.forEach((g, i) => {
+    if (g.type === "own_goal") return;
+    const n = nameOf(g);
+    counts.set(n, (counts.get(n) ?? 0) + 1);
+    lastIdx.set(n, i);
+  });
+
+  const phrase = (e: RawEvent, i: number, withTime: boolean, used: Set<string>) => {
+    const n = nameOf(e);
+    const first = i === 0;
+    const closing =
+      i === goals.length - 1 && winnerSide !== null && scoringSide(e) === winnerSide && e.type !== "own_goal";
+    const seed = `mbp:${m.id}:${i}`;
+    let pool: string[];
+    if (e.type === "own_goal") {
+      pool = first
+        ? [`自摆乌龙，为 ${ogBeneficiary(e)} 送出开门礼`, `不慎自摆乌龙，${ogBeneficiary(e)} 白捡一球`]
+        : [`再送一记乌龙，${ogBeneficiary(e)} 笑纳`, "又摆了一道乌龙"];
+    } else if (closing) {
+      pool = e.type === "pen_goal"
+        ? ["点球锁定胜局", "点球奠定胜局"]
+        : ["锁定胜局", "奠定胜局", "完成致命一击"];
+    } else if (first) {
+      pool = e.type === "pen_goal"
+        ? ["点球首开纪录", "点球率先破门"]
+        : ["率先破门", "首开纪录", "打开局面"];
+    } else {
+      pool = e.type === "pen_goal"
+        ? ["点球再下一城", "再度主罚点球命中"]
+        : ["再入一球", "接着破门", "也为球队建功"];
+    }
+    // 句内不重复用词：首选已被前面进球用过时，按种子换一个，再不行取池中第一个未用的
+    let p = pickText(seed, pool);
+    if (used.has(p)) p = pickText(`${seed}:r`, pool);
+    if (used.has(p)) p = pool.find((x) => !used.has(x)) ?? p;
+    used.add(p);
+    const c = counts.get(n) ?? 0;
+    const hero = c >= 2 && lastIdx.get(n) === i ? (c === 2 ? "梅开二度" : "上演帽子戏法") : null;
+    const tail = hero ? `（${hero}）` : "";
+    if (withTime && e.minute !== null) return `${n} 第 ${e.minute} 分钟${p}${tail}`;
+    return `${n} ${p}${tail}`;
+  };
+
+  if (goals.length === 1) {
+    const e = goals[0];
+    if (e.type === "own_goal") return [phrase(e, 0, false, new Set())];
+    return [
+      phrase(e, 0, true, new Set()),
+      pickText(`mbs:${m.id}`, [
+        `${nameOf(e)} 打进全场唯一进球`,
+        `全场唯一进球来自 ${nameOf(e)}${e.type === "pen_goal" ? "的点球" : ""}`,
+      ]),
+    ];
   }
-  if (per.size === 0) return [];
-  const list = [...per.entries()];
+  const cap = goals.length > 4 ? 3 : goals.length;
+  const tail = goals.length > 4 ? `，双方合计打进 ${goals.length} 球` : "";
+  const usedT = new Set<string>();
+  const usedN = new Set<string>();
   return [
-    list.map(([name, v]) => `${name}${v.og ? "(OG)" : ""}`).join(" · "),
-    list.map(([name, v]) => `${name}${v.og ? "(OG)" : ""}${v.n > 1 ? `（${v.n} 球）` : ""}`).join(" · "),
-    list
-      .map(([name, v]) =>
-        v.mins.some((m) => m === null)
-          ? `${name}${v.og ? "(OG)" : ""}`
-          : `${name}${v.og ? "(OG)" : ""} ${v.mins.map((m) => `${m}'`).join("、")}`,
-      )
-      .join(" · "),
+    goals.slice(0, cap).map((e, i) => phrase(e, i, true, usedT)).join("，") + tail,
+    goals.slice(0, cap).map((e, i) => phrase(e, i, false, usedN)).join("，") + tail,
   ];
 }
 
@@ -388,15 +436,15 @@ export async function buildFeed(
         ]),
       });
     } else {
-      const summaries = goalSummaries(eventsByMatch.get(m.id) ?? []);
+      const bodyLines = matchBodyLines(m, eventsByMatch.get(m.id) ?? []);
       const goalless = m.scoreHome === 0 && m.scoreAway === 0;
       items.push({
         ...base,
         id: `match:${m.id}`,
         kind: "match",
         title: `${rl}｜${m.homeTeamName} ${m.scoreHome}:${m.scoreAway} ${m.awayTeamName}`,
-        body: summaries.length
-          ? pickText(`mb:${m.id}`, summaries)
+        body: bodyLines.length
+          ? pickText(`mb:${m.id}`, bodyLines)
           : goalless
             ? pickText(`ng:${m.id}`, ["双方均无进球入账", "两队都没能敲开对方球门", "互交白卷，比分没有改写"])
             : `比分 ${m.scoreHome}:${m.scoreAway}，进球明细未录入`,
@@ -751,8 +799,8 @@ export async function buildFeed(
         weekStart: weekly.weekStart,
         title: `WHL 周报 · ${weekly.label}${weekly.isFallback ? "（上周）" : ""}`,
         body: pickText(`wk:${weekly.weekStart}`, [
-          `${weekly.played} 场 ${weekly.goals} 球${weekly.topScorer ? `，射手王 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
-          `本周 ${weekly.played} 战共打进 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑` : ""}`,
+          `${weekly.played} 场比赛共打进 ${weekly.goals} 球${weekly.topScorer ? `，射手王是 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
+          `本周 ${weekly.played} 战收获 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑射手榜` : ""}`,
         ]),
       });
     }
@@ -841,9 +889,17 @@ export async function buildRoundRecap(
       `。最大分差出现在 ${agg.biggestMargin.label}（${agg.biggestMargin.score}）`,
       `。最悬殊的一场是 ${agg.biggestMargin.label}（${agg.biggestMargin.score}）`,
     ]);
+  // 场均 3 球以上才配气氛句（纯叙述、不带数据、条件门控）；接在从句后先补句号
+  if (agg.played > 0 && agg.goals >= agg.played * 3) {
+    if (!p1.endsWith("。")) p1 += "。";
+    p1 += pickText(`${rSeed}:air`, ["这一轮的门将们日子不太好过。", "进攻端的账单拉得很长。"]);
+  }
+  if (!p1.endsWith("。")) p1 += "。";
   paragraphs.push(p1);
+  // 次段：射手与榜首织成一段（段内 2-3 句成文）
+  const p2: string[] = [];
   if (topScorer) {
-    paragraphs.push(
+    p2.push(
       pickText(`${rSeed}:p2`, [
         `射手方面，${topScorer.name}（${topScorer.teamName}）本轮打进 ${topScorer.goals} 球`,
         `进球最多的是${topScorer.name}（${topScorer.teamName}），打进 ${topScorer.goals} 球`,
@@ -852,7 +908,7 @@ export async function buildRoundRecap(
     );
   }
   if (standings.length > 0 && isComplete) {
-    paragraphs.push(
+    p2.push(
       pickText(`${rSeed}:p3`, [
         `积分榜上，${standings[0].teamName} 以 ${standings[0].pts} 分位居榜首`,
         `${standings[0].teamName} 以 ${standings[0].pts} 分继续待在积分榜首的位置`,
@@ -860,6 +916,7 @@ export async function buildRoundRecap(
       ]),
     );
   }
+  if (p2.length > 0) paragraphs.push(p2.join("。") + (p2.length > 1 ? "。" : ""));
 
   return {
     tournamentId,

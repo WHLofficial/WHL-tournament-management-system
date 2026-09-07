@@ -106,6 +106,7 @@ export function Home() {
   const [reactions, setReactions] = useState<Record<string, ReactionCounts>>({});
   const [mine, setMine] = useState<Record<string, Set<string>>>({});
   const [err, setErr] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   // 轮询节流闸：有无进行中比赛决定快慢刷（ref 避免 load 闭包重建）
   const liveRef = useRef(0);
 
@@ -173,6 +174,23 @@ export function Home() {
   const headline = feed?.find((i) => (i.kind === "match" || i.kind === "walkover") && i.homeTeamName) ?? null;
   const shelf = (feed ?? []).filter((i) => i !== headline).slice(0, 3);
   const tickerItems = (feed ?? []).slice(0, 12);
+  // 已归档赛事不进主列表，收进底部折叠条（后端列表照常返回，前端拆）
+  const activeList = list ? list.filter((t) => t.status !== "archived") : [];
+  const archivedList = list ? list.filter((t) => t.status === "archived") : [];
+
+  const card = (t: TournamentDTO) => (
+    <Link to={`/t/${t.id}`} key={t.id} className="home-card">
+      {t.coverUrl && <img className="home-card-cover" src={t.coverUrl} alt={`${t.name} 封面`} />}
+      <div className="home-card-head">
+        <strong>{t.name}</strong>
+        <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
+      </div>
+      {t.description && <p className="home-card-desc">{t.description}</p>}
+      <p className="home-card-meta">
+        {FORMAT_LABEL[t.format]} · {t.entryCount} 支球队
+      </p>
+    </Link>
+  );
 
   return (
     <>
@@ -184,26 +202,21 @@ export function Home() {
         </Link>
         {err && <p className="error-msg">{err}</p>}
         {list === null && !err && <p className="muted">加载中…</p>}
-        {list !== null && list.length === 0 && (
-          <p className="muted card">还没有赛事。管理员登录后可以创建。</p>
+        {list !== null && activeList.length === 0 && (
+          <p className="muted card">
+            {archivedList.length > 0 ? "赛事均已归档，可在下方展开查看。" : "还没有赛事。管理员登录后可以创建。"}
+          </p>
         )}
-        <div className="home-list">
-          {list?.map((t) => (
-            <Link to={`/t/${t.id}`} key={t.id} className="home-card">
-              {t.coverUrl && (
-                <img className="home-card-cover" src={t.coverUrl} alt={`${t.name} 封面`} />
-              )}
-              <div className="home-card-head">
-                <strong>{t.name}</strong>
-                <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
-              </div>
-              {t.description && <p className="home-card-desc">{t.description}</p>}
-              <p className="home-card-meta">
-                {FORMAT_LABEL[t.format]} · {t.entryCount} 支球队
-              </p>
-            </Link>
-          ))}
-        </div>
+        <div className="home-list">{activeList.map((t) => card(t))}</div>
+
+        {archivedList.length > 0 && (
+          <div className="archive-sec">
+            <button type="button" className="archive-toggle" onClick={() => setShowArchived((v) => !v)}>
+              已归档赛事（{archivedList.length}）{showArchived ? "▲" : "▼"}
+            </button>
+            {showArchived && <div className="home-list">{archivedList.map((t) => card(t))}</div>}
+          </div>
+        )}
 
         {announcement && (
           <div className="whl-banner" role="note">
@@ -333,6 +346,9 @@ export function Home() {
                 </div>
               ))}
             </div>
+            <Link className="whl-more" to="/news">
+              阅读更多快讯 →
+            </Link>
           </section>
         )}
 

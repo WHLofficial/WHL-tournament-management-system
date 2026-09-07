@@ -398,8 +398,9 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
     paragraphs.push(sentences.slice(half).join(""));
   }
 
-  // ---------- 赛事背景段（数据齐才写；凑不齐整段省略，不硬凑） ----------
+  // ---------- 背景与影响（倒金字塔：赛前事实留「赛事背景」块；本场之后才成立的事进正文收尾段） ----------
   const context: string[] = [];
+  const aftermath: string[] = [];
   if (m.walkoverSide === "") {
     const [snap, tFinished, scorerTotals] = await Promise.all([
       m.stageKind === "elim" ? Promise.resolve(null) : standingsSnapshot(db, m.stageId),
@@ -451,7 +452,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
       if (winnerAfter) {
         const oldLeader = before.leader;
         if (oldLeader && oldLeader.entryId !== winnerAfter.entryId && snap.leader?.entryId === winnerAfter.entryId) {
-          context.push(
+          aftermath.push(
             pickText(`${m.id}:ctxC`, [
               `${winnerAfter.teamName} 反超 ${oldLeader.teamName} 登顶积分榜，目前以 ${winnerAfter.pts} 分居首。`,
               `积分榜易主：${winnerAfter.teamName} 以 ${winnerAfter.pts} 分超越 ${oldLeader.teamName}，登上头名。`,
@@ -462,7 +463,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
           const gap = second ? winnerAfter.pts - second.pts : 0;
           const secondBefore = before.rows.find((r) => r.rank === 2);
           const gapBefore = secondBefore ? winnerAfter.pts + 3 - secondBefore.pts : 0;
-          context.push(
+          aftermath.push(
             gap > gapBefore
               ? pickText(`${m.id}:ctxD`, [
                   `${winnerAfter.teamName} 将领先优势扩大到 ${gap} 分。`,
@@ -474,7 +475,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
                 ]),
           );
         } else {
-          context.push(
+          aftermath.push(
             pickText(`${m.id}:ctxF`, [
               `${winnerAfter.teamName} 目前以 ${winnerAfter.pts} 分位列积分榜第 ${winnerAfter.rank} 位。`,
               `积分榜上，${winnerAfter.teamName} 以 ${winnerAfter.pts} 分排名第 ${winnerAfter.rank} 位。`,
@@ -550,7 +551,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
           ]),
         );
     }
-    context.push(...streakLines.slice(0, 2));
+    aftermath.push(...streakLines.slice(0, 2));
 
     // 4) 赛季交锋（h2h，仅第二次及以后交手才写）
     const h2h = tFinished.filter(
@@ -574,7 +575,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
       if (nowWinner && prevWinner === nowWinner) {
         if (h2h.length === 1) {
           const opp = nowWinner === m.homeTeamName ? m.awayTeamName : m.homeTeamName;
-          context.push(
+          aftermath.push(
             pickText(`${m.id}:h2h1`, [
               `双方本赛季首回合 ${nowWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场完成双杀。`,
               `加上首回合的 ${prev.scoreHome}:${prev.scoreAway}，${nowWinner} 本赛季对 ${opp} 完成双杀。`,
@@ -597,7 +598,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
             if (xw === nowWinner) run += 1;
             else break;
           }
-          context.push(
+          aftermath.push(
             pickText(`${m.id}:h2h2`, [
               `${nowWinner} 对 ${opp} 已连续 ${cnum(run)} 场交锋取胜。`,
               `近 ${cnum(run)} 次碰面，赢的都是 ${nowWinner}。`,
@@ -605,7 +606,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
           );
         }
       } else if (nowWinner && prevWinner && prevWinner !== nowWinner) {
-        context.push(
+        aftermath.push(
           pickText(`${m.id}:h2h3`, [
             `本赛季首回合 ${prevWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场 ${nowWinner} 完成复仇。`,
             `首回合 ${prevWinner} 曾以 ${prev.scoreHome}:${prev.scoreAway} 取胜，这次 ${nowWinner} 复仇成功。`,
@@ -619,7 +620,7 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
           ]),
         );
       } else if (!nowWinner && prevWinner) {
-        context.push(
+        aftermath.push(
           pickText(`${m.id}:h2h5`, [
             `本赛季首回合 ${prevWinner} 曾 ${prev.scoreHome}:${prev.scoreAway} 取胜，本场双方握手言和。`,
             `首回合 ${prevWinner} 曾以 ${prev.scoreHome}:${prev.scoreAway} 取胜，这次谁也没能再赢。`,
@@ -679,8 +680,11 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
         }
         if (lines.length >= 2) break;
       }
-      context.push(...lines);
+      aftermath.push(...lines);
     }
+
+    // 影响收尾段：本场之后才成立的事织进正文（倒金字塔结尾层），最多 3 句
+    if (aftermath.length > 0) paragraphs.push(aftermath.slice(0, 3).join(""));
   }
 
   // 数据框
