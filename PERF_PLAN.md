@@ -82,3 +82,55 @@
 | 管理端 suspensions | 4（含 2 次全量重放） | MatchesTab 每次挂载调 |
 | **管理端录事件** | **~10（含全量重放）** | 每点一下都跑 |
 | 教练 lineup GET/PUT | 5 串行 | |
+
+## 第二轮：录入事件速度专项整治（2026-09-07 已实施，随下次 deploy 生效；无新迁移）
+
+> 起因：用户反馈「录入事件时处理时间过长」。第一轮只砍掉了录事件路径里的全量停赛重放，
+> 本轮把剩下的串行瀑布和前端阻塞刷新一起清掉。
+
+### 病根（两段叠加）
+
+1. **后端 POST /events 串行瀑布**（admin/scoring.ts）：最多 ~10 个串行往返（1 KV 会话 +
+   9 条 D1：loadMatch、assertNotArchived、射手/助攻归属各 1、stage→停赛配置 2 跳、
+   罚下 COUNT、黄牌 COUNT、写入 batch、liveScore）。按 0.2s/往返 ≈ 2s。
+2. **前端 act() 解锁太晚**（MatchesTab.tsx）：POST 返回后还要 await 全赛事赛程 GET
+   （后端对每个 live 场另有 N+1）+ 全赛事详情 GET 才解锁下一条录入；busy 全局单 state
+   跨比赛串行；提交中无任何反馈 → 单条体感 4~6s。
+
+### 改动
+
+**后端**（admin/scoring.ts + admin/schedule.ts）：
+- `loadMatchCtx`：loadMatch + assertNotArchived + stage 类型/赛事 id 一条 JOIN 拿全，
+  start/finish/events/delete 四个 handler 共用（finish 里单独的 stage 查询随之消掉）。
+- POST /events 读波并行：比赛上下文、球员归属（射手+助攻合成一条 IN）、红黄牌计数
+  （罚下+黄牌合成一条条件聚合）三查询 `Promise.all`，JS 按原优先级裁决 → 读往返 7→1 波。
+- 停赛配置懒取：只在真触发两黄变一红时才查（拼提示文案），常规事件零开销。
+- liveScore 折进写入/删除 batch 尾随 SELECT（D1 batch 同事务顺序执行，能读到本批写入）；
+  DELETE 修掉完赛场白算 liveScore（350bf39 遗留）。往返：POST ~10→**4**，DELETE ~8→4。
+- 管理端 matches GET：live 比分逐场 N+1 → 单条 GROUP BY（match_id IN）；
+  **顺带修口径 bug**：原只数 `goal`，现与 liveScore 对齐（goal+pen_goal 计分、own_goal 记对方）。
+
+**前端**（MatchesTab.tsx）：
+- **解锁先行**：act() 操作一返回即放行（本地实测 ~40ms 可点下一条），refetch/reload/tick
+  全部转后台；refetch 加自增序号守卫防快速连点乱序回写。
+- 事件增删走轻刷新（跳过整届 detail reload）；停赛接口在影响停赛账本的操作后重拉
+  （牌类事件=新 ban、开赛/终场=消耗/落账；进球不拉——请求日志核实：进球后仅
+  matches+events，黄牌后才追加 suspensions）。
+- entryById/playerById useMemo 化（修「每渲染重建索引 + 名单拉失败后每状态变化重发请求」
+  的风暴隐患）；提交按钮 busy 显示「记录中…」。
+
+### 验证（本地 8791 隔离实例）
+
+curl 矩阵：live 进球/点球/乌龙比分、黄×2→red_2y 提示（懒取配置生效）、罚下后再吃牌 400、
+归属错误 400、pending 400、404、完赛补录不动比分列、删事件比分回退（2:2→2:1→2:0 逐笔对）、
+改判 3:1 全过。浏览器 E2E：快速连录两粒进球不打架、表单状态保留、删除回退、无错误横幅。
+
+### 明确不做（本轮）
+
+会话 KV/D1 缓存（每请求省 1~2 往返，但角色变更/封禁将延迟生效，安全语义不合算，deploy 后
+实测仍慢再议）；事件列表乐观插入；finish 重算/晋级逻辑深改。
+
+### 附注
+
+停赛引擎按「该队比赛序」重放消耗 ban，乱序打轮（先打 R3 后补 R2）会把新 ban 记到已打完的
+后续场次头上——本次测试踩到的既有边角，与本轮改动无关，记录在案。

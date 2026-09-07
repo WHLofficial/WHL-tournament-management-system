@@ -824,18 +824,33 @@ app.get("/:id/matches", async (c) => {
   )
     .bind(tid)
     .all<MatchRow>();
-  // live 场的比分以 goal 事件实时累计为准（score 列终场确认才落）
+  // live 场的比分以事件实时累计为准（score 列终场确认才落）：一条 GROUP BY 全拿
+  // （原逐场一条 N+1）；口径与终场引擎 liveScore 一致——goal/pen_goal 计进球，
+  // own_goal 记到对方头上
   const liveIds = (rows.results ?? []).filter((r) => r.status === "live").map((r) => r.id);
-  const liveGoals = new Map<string, number>();
-  for (const mid of liveIds) {
+  const liveCells = new Map<string, { scored: number; og: number }>();
+  if (liveIds.length > 0) {
     const g = await c.env.DB.prepare(
-      `SELECT entry_id, COUNT(*) AS n FROM match_event
-       WHERE match_id = ? AND type = 'goal' GROUP BY entry_id`
+      `SELECT match_id, entry_id,
+              SUM(CASE WHEN type IN ('goal', 'pen_goal') THEN 1 ELSE 0 END) AS scored,
+              SUM(CASE WHEN type = 'own_goal' THEN 1 ELSE 0 END) AS og
+       FROM match_event
+       WHERE match_id IN (${liveIds.map(() => "?").join(",")})
+       GROUP BY match_id, entry_id`
     )
-      .bind(mid)
-      .all<{ entry_id: number; n: number }>();
-    for (const row of g.results ?? []) liveGoals.set(`${mid}:${row.entry_id}`, row.n);
+      .bind(...liveIds)
+      .all<{ match_id: number; entry_id: number; scored: number | null; og: number | null }>();
+    for (const row of g.results ?? [])
+      liveCells.set(`${row.match_id}:${row.entry_id}`, {
+        scored: row.scored ?? 0,
+        og: row.og ?? 0,
+      });
   }
+  const liveCell = (mid: number, eid: number | null, oppEid: number | null): number =>
+    eid == null
+      ? 0
+      : (liveCells.get(`${mid}:${eid}`)?.scored ?? 0) +
+        (oppEid != null ? (liveCells.get(`${mid}:${oppEid}`)?.og ?? 0) : 0);
   const matches: MatchDTO[] = (rows.results ?? []).map((r) => ({
     id: r.id,
     stageId: r.stage_id,
@@ -850,11 +865,11 @@ app.get("/:id/matches", async (c) => {
     awayLogoUrl: mediaUrl(r.away_logo_key),
     scoreHome:
       r.status === "live"
-        ? liveGoals.get(`${r.id}:${r.home_entry_id}`) ?? 0
+        ? liveCell(r.id, r.home_entry_id, r.away_entry_id)
         : r.score_home,
     scoreAway:
       r.status === "live"
-        ? liveGoals.get(`${r.id}:${r.away_entry_id}`) ?? 0
+        ? liveCell(r.id, r.away_entry_id, r.home_entry_id)
         : r.score_away,
     penHome: r.pen_home,
     penAway: r.pen_away,

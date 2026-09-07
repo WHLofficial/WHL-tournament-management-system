@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { MatchScore, computeAgg } from "../components/MatchScore";
 import { TeamLogo } from "../components/TeamLogo";
@@ -62,6 +62,8 @@ export default function MatchesTab({
   const [message, setMessage] = useState<string | null>(null);
   const [openPanel, setOpenPanel] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
+  // 停赛重拉专用信号：影响停赛账本的操作（牌类事件、开赛/终场）后 bump，进球不必拉
+  const [suspTick, setSuspTick] = useState(0);
   // 参赛队名单缓存：tab 打开即并行预取全部队，面板展开零等待
   const [playersCache, setPlayersCache] = useState<Map<number, PlayerDTO[]>>(
     new Map(),
@@ -72,18 +74,23 @@ export default function MatchesTab({
   // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 第一个轮）
   const [selRoundRaw, setSelRoundRaw] = useState<string | null>(null);
 
-  const entryById = new Map<number, EntryDTO>(
-    detail.entries.map((e) => [e.id, e]),
+  const entryById = useMemo(
+    () => new Map<number, EntryDTO>(detail.entries.map((e) => [e.id, e])),
+    [detail.entries],
   );
 
+  const refetchSeq = useRef(0);
   const refetch = useCallback(async () => {
+    const seq = ++refetchSeq.current;
     try {
       const b = await api<{ matches: MatchDTO[] }>(
         `/api/admin/tournaments/${detail.tournament.id}/matches`,
       );
-      setMatches(b.matches);
+      // 序号守卫：解锁先行后允许快速连点，旧响应不得覆盖新状态
+      if (seq === refetchSeq.current) setMatches(b.matches);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "加载赛程失败");
+      if (seq === refetchSeq.current)
+        setMessage(e instanceof Error ? e.message : "加载赛程失败");
     }
   }, [detail.tournament.id]);
 
@@ -106,7 +113,7 @@ export default function MatchesTab({
     return () => {
       on = false;
     };
-  }, [panelActive, detail.tournament.id, tick]);
+  }, [panelActive, detail.tournament.id, suspTick]);
 
   // 自驱动补拉缺失的队名单（拉完缓存更新，触发重试直至补齐）
   useEffect(() => {
@@ -142,24 +149,38 @@ export default function MatchesTab({
     entryId == null
       ? []
       : (playersCache.get(entryById.get(entryId)?.teamId ?? -1) ?? []);
-  const playerById = new Map<number, string>();
-  for (const list of playersCache.values())
-    for (const p of list) playerById.set(p.id, p.name);
+  const playerById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const list of playersCache.values())
+      for (const p of list) m.set(p.id, p.name);
+    return m;
+  }, [playersCache]);
 
-  const act = async (fn: () => Promise<string | null>) => {
+  const act = async (
+    fn: () => Promise<string | null>,
+    opts?: { light?: boolean; resusp?: boolean },
+  ) => {
     setBusy(true);
     setMessage(null);
+    let ok = false;
     try {
       const note = await fn();
-      // 操作后的全量刷新改并行：赛程与赛事详情同时重取，停赛数据随 tick 跟进
-      await Promise.all([refetch(), reload()]);
-      setTick((t) => t + 1);
+      // 解锁先行：操作一返回就放行下一次录入，提示即时给出
       if (note) setMessage(note);
+      ok = true;
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "操作失败");
     } finally {
       setBusy(false);
     }
+    if (!ok) return;
+    // 后台刷新不阻塞下一次操作：赛程必刷（live 比分在列）；事件增删走轻刷新
+    // （跳过整届详情，entries/stages 不因事件改变）；停赛在「影响停赛账本」的操作后
+    // 重拉——牌类事件（新 ban）与开赛/终场（live 消耗/落账），进球不必拉
+    void refetch();
+    if (!opts?.light) void reload();
+    setTick((t) => t + 1);
+    if (!opts?.light || opts.resusp) setSuspTick((t) => t + 1);
   };
 
   if (matches === null) return <p className="muted card">加载中…</p>;
@@ -290,7 +311,10 @@ export default function MatchesTab({
   );
 }
 
-type Act = (fn: () => Promise<string | null>) => Promise<void>;
+type Act = (
+  fn: () => Promise<string | null>,
+  opts?: { light?: boolean; resusp?: boolean },
+) => Promise<void>;
 
 function MatchRow({
   match: m,
@@ -483,7 +507,7 @@ function MatchPanel({
                   },
                 );
                 return `进球！当前比分 ${b.scoreHome} : ${b.scoreAway}`;
-              })
+              }, { light: true })
             }
           >
             {homeName} 进球
@@ -501,7 +525,7 @@ function MatchPanel({
                   },
                 );
                 return `进球！当前比分 ${b.scoreHome} : ${b.scoreAway}`;
-              })
+              }, { light: true })
             }
           >
             {awayName} 进球
@@ -997,7 +1021,7 @@ function EventForm({
               },
             });
             return [b.notice, b.warning].filter(Boolean).join("；") || null;
-          });
+          }, { light: true, resusp: type === "yellow" || type === "red" });
         }}
       >
         <div className="ev-side-seg" role="group" aria-label="所属球队">
@@ -1070,7 +1094,7 @@ function EventForm({
             style={{ width: "5em" }}
           />
           <button className="btn btn-sm" type="submit" disabled={busy}>
-            记录事件
+            {busy ? "记录中…" : "记录事件"}
           </button>
         </div>
         {sel && suspWarn && (
@@ -1144,6 +1168,9 @@ function EventList({
                     method: "DELETE",
                   });
                   return null;
+                }, {
+                  light: true,
+                  resusp: ev.type === "yellow" || ev.type === "red" || ev.type === "red_2y",
                 })
               }
             >
