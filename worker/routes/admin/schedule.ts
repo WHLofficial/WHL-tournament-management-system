@@ -805,6 +805,7 @@ app.get("/:id/matches", async (c) => {
     status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
     walkover_side: string | null;
     stage_kind: MatchDTO["stageKind"];
+    home_sub: number; away_sub: number;
   };
   const rows = await c.env.DB.prepare(
     `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
@@ -812,13 +813,16 @@ app.get("/:id/matches", async (c) => {
        ht.name AS home_team_name, at.name AS away_team_name,
        ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
-       m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind
+       m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind,
+       th.team_id IS NOT NULL AS home_sub, ta.team_id IS NOT NULL AS away_sub
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      LEFT JOIN entry he ON he.id = m.home_entry_id
      LEFT JOIN team ht ON ht.id = he.team_id
      LEFT JOIN entry ae ON ae.id = m.away_entry_id
      LEFT JOIN team at ON at.id = ae.team_id
+     LEFT JOIN tactic_submission th ON th.match_id = m.id AND th.team_id = he.team_id
+     LEFT JOIN tactic_submission ta ON ta.match_id = m.id AND ta.team_id = ae.team_id
      WHERE s.tournament_id = ?
      ORDER BY s.sort_order, m.round, m.slot, m.leg`
   )
@@ -878,6 +882,8 @@ app.get("/:id/matches", async (c) => {
     note: r.note,
     walkoverSide: (r.walkover_side || null) as MatchDTO["walkoverSide"],
     stageKind: r.stage_kind,
+    homeLineupSubmitted: r.home_sub === 1,
+    awayLineupSubmitted: r.away_sub === 1,
   }));
   return c.json({ matches });
 });

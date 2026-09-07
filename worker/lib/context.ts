@@ -171,6 +171,7 @@ export interface RawEvent {
   entryId: number | null;
   playerId: number | null;
   playerName: string | null;
+  assistPlayerId: number | null;
   assistName: string | null;
   createdAt: string;
 }
@@ -186,7 +187,7 @@ export async function fetchEventRows(
   type Row = {
     id: number; match_id: number; type: MatchEventType; minute: number | null;
     entry_id: number | null; player_id: number | null;
-    player_name: string | null; assist_name: string | null; created_at: string;
+    player_name: string | null; assist_player_id: number | null; assist_name: string | null; created_at: string;
   };
   const queries: Promise<D1Result<Row>>[] = [];
   for (let i = 0; i < ids.length; i += 90) {
@@ -195,7 +196,7 @@ export async function fetchEventRows(
       db
         .prepare(
           `SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id,
-             p.name AS player_name, ap.name AS assist_name, me.created_at
+             p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at
            FROM match_event me
            LEFT JOIN player p ON p.id = me.player_id
            LEFT JOIN player ap ON ap.id = me.assist_player_id
@@ -217,6 +218,7 @@ export async function fetchEventRows(
         entryId: r.entry_id,
         playerId: r.player_id,
         playerName: r.player_name,
+        assistPlayerId: r.assist_player_id,
         assistName: r.assist_name,
         createdAt: r.created_at,
       });

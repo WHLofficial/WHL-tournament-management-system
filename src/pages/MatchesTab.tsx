@@ -10,7 +10,7 @@ import type {
   MatchDTO,
   MatchEventDTO,
   MatchEventType,
-  MatchLineupDTO,
+  AdminMatchLineupDTO,
   PlayerDTO,
   StageDTO,
   SuspensionConfig,
@@ -376,6 +376,11 @@ function MatchRow({
         </span>
         <span className={`m-badge ms-${m.status}`}>{MATCH_STATUS[m.status]}</span>
         {m.walkoverSide && <span className="m-badge ms-wo">弃权</span>}
+        {m.status === "pending" && (m.homeLineupSubmitted || m.awayLineupSubmitted) && (
+          <span className="m-badge">
+            阵容 {(m.homeLineupSubmitted ? 1 : 0) + (m.awayLineupSubmitted ? 1 : 0)}/2
+          </span>
+        )}
         <span className="mr-actions">
           {!bye && m.homeEntryId !== null && m.awayEntryId !== null && (
             <MatchActions match={m} busy={busy} act={act} panelOpen={panelOpen} togglePanel={togglePanel} />
@@ -421,20 +426,34 @@ function MatchActions({
   panelOpen: boolean;
   togglePanel: () => void;
 }) {
+  // 开赛与完赛同样两段式确认：误触开赛后阵容即锁定亮牌，回退要进 console
+  const [startArm, setStartArm] = useState(false);
+  const startTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (startTimer.current) window.clearTimeout(startTimer.current);
+  }, []);
   if (m.status === "pending") {
     return (
       <>
         <button
-          className="btn btn-sm"
+          className={startArm ? "btn btn-sm btn-danger" : "btn btn-sm"}
           disabled={busy}
-          onClick={() =>
-            act(async () => {
+          onClick={() => {
+            if (!startArm) {
+              setStartArm(true);
+              if (startTimer.current) window.clearTimeout(startTimer.current);
+              startTimer.current = window.setTimeout(() => setStartArm(false), 3000);
+              return;
+            }
+            if (startTimer.current) window.clearTimeout(startTimer.current);
+            setStartArm(false);
+            void act(async () => {
               await api(`/api/admin/matches/${m.id}/start`, { method: "POST" });
               return null;
-            })
-          }
+            });
+          }}
         >
-          开赛
+          {startArm ? "再点一次确认开赛" : "开赛"}
         </button>
         <button className="btn btn-sm" disabled={busy} onClick={togglePanel}>
           {panelOpen ? "收起" : "直接报分"}
@@ -1185,11 +1204,11 @@ function EventList({
 
 // 管理端：双方提交的战术阵容（赛前备案可见；公开端开赛后才显示）
 function LineupPanel({ matchId }: { matchId: number }) {
-  const [data, setData] = useState<MatchLineupDTO | null>(null);
+  const [data, setData] = useState<AdminMatchLineupDTO | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let dead = false;
-    api<MatchLineupDTO>(`/api/admin/matches/${matchId}/lineup`)
+    api<AdminMatchLineupDTO>(`/api/admin/matches/${matchId}/lineup`)
       .then((b) => {
         if (!dead) setData(b);
       })
@@ -1207,7 +1226,7 @@ function LineupPanel({ matchId }: { matchId: number }) {
       ) : !data ? (
         <p className="muted">加载中…</p>
       ) : data.home || data.away ? (
-        <LineupGrid home={data.home} away={data.away} />
+        <LineupGrid home={data.home} away={data.away} homeCode={data.homeCode} awayCode={data.awayCode} />
       ) : (
         <p className="muted">双方都还没提交阵容（教练在战术板 → 提交阵容）。</p>
       )}

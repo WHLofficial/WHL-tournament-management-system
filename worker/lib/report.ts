@@ -27,6 +27,8 @@ interface GoalFact {
   teamName: string;
   side: "home" | "away";
   type: "goal" | "pen_goal" | "own_goal";
+  assistId: number | null; // 助攻者（own_goal 恒为 null）
+  assistName: string | null;
   sentenceIdx: number; // 对应过程句下标（功臣后缀挂最后一句）
   playerKey: string;
 }
@@ -43,6 +45,8 @@ function buildNarrative(
   let away = 0;
   const minutePre = (minute: number | null) => (minute === null ? "比赛中，" : `第 ${minute} 分钟，`);
   let firstGoalDone = false;
+  // 助攻从句整场去重：同一份战报里助攻说法不重复
+  const usedAssist = new Set<string>();
   // 呼吸句：纯叙述、不带占位符的短句，只在对应事件真实发生时插入，每场至多一次
   let breathRed = false;
   let breathPenMiss = false;
@@ -100,7 +104,17 @@ function buildNarrative(
       } else {
         verb = pickText(evSeed, [`为${scoringTeam}扳回一城`, `帮${scoringTeam}追回一球`]);
       }
-      const assist = e.assistName && e.type !== "own_goal" ? `，${e.assistName} 送出助攻` : "";
+      // 助攻从句：句库散变体 + 整场去重（乌龙无助攻），并进对应进球句
+      const assist = (() => {
+        if (!e.assistName || e.type === "own_goal") return "";
+        const pool = ["送出助攻", "助攻得手", "送出妙传", "贡献一记助攻", "做饼得手", "送出致命一传"];
+        const seed = `${evSeed}:ast`;
+        let a = pickText(seed, pool);
+        if (usedAssist.has(a)) a = pickText(`${seed}:r`, pool);
+        if (usedAssist.has(a)) a = pool.find((x) => !usedAssist.has(x)) ?? a;
+        usedAssist.add(a);
+        return `，${e.assistName} ${a}`;
+      })();
       const s = `${pre}${who} ${verb}${assist}。`;
       sentences.push(s);
       goalFacts.push({
@@ -109,6 +123,8 @@ function buildNarrative(
         teamName: scoringTeam,
         side: scoring,
         type: e.type as "goal" | "pen_goal" | "own_goal",
+        assistId: e.type !== "own_goal" ? e.assistPlayerId : null,
+        assistName: e.type !== "own_goal" ? e.assistName : null,
         sentenceIdx: sentences.length - 1,
         playerKey: e.playerId === null ? `team:${scoringTeam}` : `p:${e.playerId}`,
       });
@@ -195,7 +211,7 @@ function buildNarrative(
     }
   }
 
-  // 功臣后缀：同一球员 ≥2 球，挂在其最后一次进球句上（括号注，避免句式纠缠）
+  // 功臣后缀：同一球员 ≥2 球，缀在其最后一次进球句的射手名后、动词前（「梅开二度锁定胜局」的战报语序）
   const byPlayer = new Map<string, { count: number; lastIdx: number; name: string }>();
   for (const g of goalFacts) {
     if (g.type === "own_goal") continue; // 乌龙不算射手功臣
@@ -212,7 +228,12 @@ function buildNarrative(
     const suffix =
       info.count === 2 ? "梅开二度" : info.count === 3 ? "上演帽子戏法" : `独中${cnum(info.count)}球`;
     const s = sentences[info.lastIdx];
-    sentences[info.lastIdx] = s.replace(/。$/, `（${suffix}）。`);
+    const gf = goalFacts.find((g) => g.sentenceIdx === info.lastIdx);
+    const who = gf ? gf.playerName ?? gf.teamName : info.name;
+    const cut = s.indexOf(`${who} `);
+    const head = cut > 0 ? cut + who.length + 1 : -1;
+    sentences[info.lastIdx] =
+      head > 0 ? `${s.slice(0, head)}${suffix}${s.slice(head)}` : s.replace(/。$/, `，${suffix}。`);
   }
 
   return { sentences, goalFacts, cards };
@@ -695,6 +716,8 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
     teamName: g.teamName,
     side: g.side,
     type: g.type,
+    assistPlayerName: g.assistName,
+    assistPlayerId: g.assistId,
   }));
 
   return {

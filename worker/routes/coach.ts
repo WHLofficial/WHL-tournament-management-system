@@ -244,6 +244,7 @@ app.put("/matches/:mid/lineup", async (c) => {
   if (!body || typeof body.form !== "string" || !Array.isArray(body.slots)) {
     return c.json({ message: "请求格式不对" }, 400);
   }
+  const code = typeof body.code === "string" ? body.code.trim().slice(0, 512) : "";
   let slots;
   try {
     slots = validateLineupSlots(body.form, body.slots);
@@ -284,15 +285,16 @@ app.put("/matches/:mid/lineup", async (c) => {
   }
 
   await c.env.DB.prepare(
-    `INSERT INTO tactic_submission (match_id, team_id, created_by, form, slots_json)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO tactic_submission (match_id, team_id, created_by, form, slots_json, code)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(match_id, team_id) DO UPDATE SET
        created_by = excluded.created_by,
        form = excluded.form,
        slots_json = excluded.slots_json,
+       code = excluded.code,
        created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
   )
-    .bind(mid, teamId, user.id, body.form, JSON.stringify(slots))
+    .bind(mid, teamId, user.id, body.form, JSON.stringify(slots), code)
     .run();
   return c.json({ ok: true });
 });

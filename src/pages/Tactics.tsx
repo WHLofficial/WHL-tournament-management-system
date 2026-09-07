@@ -334,7 +334,10 @@ export default function Tactics() {
       ),
     ];
     const mid = subMatchId;
-    api(`/api/coach/matches/${mid}/lineup`, { method: "PUT", body: { form: state.form, slots } })
+    api(`/api/coach/matches/${mid}/lineup`, {
+      method: "PUT",
+      body: { form: state.form, slots, code: code === "------------" ? "" : code },
+    })
       .then(() => {
         setSubMsg({ t: "ok", text: "已提交，开赛前随时可回来覆盖" });
         showToast("阵容已提交");

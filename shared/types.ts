@@ -303,6 +303,9 @@ export interface MatchDTO {
   walkoverSide?: "home" | "away" | "both" | null;
   /** 比分曾改判过（公开单场页提示用，不给明细） */
   rescored?: boolean;
+  /** 管理端赛程列表附带：双方是否已提交战术阵容（公开端不带） */
+  homeLineupSubmitted?: boolean;
+  awayLineupSubmitted?: boolean;
   events?: PublicMatchEventDTO[];
   stageKind?: "elim" | "round_robin" | "group";
   /** 所属阶段显示名，单轮查询时前端直接用作阶段头 */
@@ -332,6 +335,8 @@ export type StoredLineupSlot =
 export interface LineupSubmitBody {
   form: string;
   slots: StoredLineupSlot[];
+  /** 战术板编码串（FUT26 格式），随阵容存档；管理端备案可见 */
+  code?: string;
 }
 
 export interface LineupPlayerDTO {
@@ -366,6 +371,9 @@ export interface MatchLineupDTO {
   home: TeamLineupDTO | null;
   away: TeamLineupDTO | null;
 }
+
+// 管理端 GET /api/admin/matches/:id/lineup：在 MatchLineupDTO 上附加战术码备案（公开端不返回码）
+export type AdminMatchLineupDTO = MatchLineupDTO & { homeCode: string; awayCode: string };
 
 // ---------- 赛前情报：未开赛详情页三 Tab（交锋 / 球员 / 阵容） ----------
 

@@ -7,6 +7,7 @@ import type { FeedItemDTO, RecapDTO, WeeklyDTO, WeeklyMatchDTO } from "../../sha
 import type { RawEvent, FinishedMatch } from "./context";
 import { pickText } from "../../shared/textpick";
 import {
+  cnum,
   currentStreaks,
   fetchEventRows,
   fetchFinishedWindow,
@@ -364,10 +365,29 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
     if (used.has(p)) p = pool.find((x) => !used.has(x)) ?? p;
     used.add(p);
     const c = counts.get(n) ?? 0;
-    const hero = c >= 2 && lastIdx.get(n) === i ? (c === 2 ? "梅开二度" : "上演帽子戏法") : null;
-    const tail = hero ? `（${hero}）` : "";
-    if (withTime && e.minute !== null) return `${n} 第 ${e.minute} 分钟${p}${tail}`;
-    return `${n} ${p}${tail}`;
+    const hero =
+      c >= 2 && lastIdx.get(n) === i
+        ? c === 2
+          ? "梅开二度"
+          : c === 3
+            ? "上演帽子戏法"
+            : `独中${cnum(c)}球`
+        : null;
+    // 功臣语序同战报：收尾句「梅开二度锁定胜局」融合动词，非收尾句功臣短语直接作谓语
+    const core = hero ? (closing ? `${hero}${p}` : hero) : p;
+    // 助攻从句：与战报同句库散变体 + 本句去重；助攻事实挂在进球事件上，无需关心相邻性
+    let ast = "";
+    if (e.assistName && e.type !== "own_goal") {
+      const apool = ["送出助攻", "助攻得手", "送出妙传", "贡献一记助攻", "做饼得手", "送出致命一传"];
+      const aseed = `ast:${m.id}:${i}`;
+      let a = pickText(aseed, apool);
+      if (used.has(`a:${a}`)) a = pickText(`${aseed}:r`, apool);
+      if (used.has(`a:${a}`)) a = apool.find((x) => !used.has(`a:${x}`)) ?? a;
+      used.add(`a:${a}`);
+      ast = `，${e.assistName} ${a}`;
+    }
+    if (withTime && e.minute !== null) return `${n} 第 ${e.minute} 分钟${core}${ast}`;
+    return `${n} ${core}${ast}`;
   };
 
   if (goals.length === 1) {
@@ -399,10 +419,140 @@ export async function buildFeed(
   const before = opts.before;
   const items: FeedItemDTO[] = [];
 
+  // 两波并行取代九段串行（冷缓存 20-40 查逐段 +0.2s，是 /feed 慢到超时的根因）：
+  // 波 1 互相独立一起发——完赛窗口 / 红牌 / 改判 / 齐轮分组 / 周报；
+  // 波 2 只依赖波 1，一批并行——窗口事件、阶段轮数、各赛事叙事事实、各阶段榜快照、红牌与综述的后置查询。
+  type RedRow = {
+    id: number; type: "red" | "red_2y"; created_at: string;
+    player_name: string | null;
+    match_id: number; tournament_id: number; tournament_name: string;
+    stage_kind: "elim" | "round_robin" | "group"; stage_name: string | null; round: number; stage_id: number;
+  };
+  type AuditRow = {
+    id: number; created_at: string; target_id: number; detail_json: string | null;
+    tournament_id: number; tournament_name: string;
+    home_team_name: string; away_team_name: string;
+    stage_kind: "elim" | "round_robin" | "group"; stage_name: string | null; stage_id: number; round: number;
+  };
+  type RecapGroupRow = {
+    stage_id: number;
+    round: number;
+    last_at: string | null;
+    tournament_id: number;
+    tournament_name: string;
+    stage_kind: "elim" | "round_robin" | "group";
+    stage_name: string | null;
+  };
+  const windowP = fetchFinishedWindow(db, Math.max(cap * 3, 40), before);
+  const redP = db
+    .prepare(
+      `SELECT me.id, me.type, me.created_at, p.name AS player_name,
+         m.id AS match_id, t.id AS tournament_id, t.name AS tournament_name,
+         s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round
+       FROM match_event me
+       JOIN match m ON m.id = me.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id
+       LEFT JOIN player p ON p.id = me.player_id
+       WHERE me.type IN ('red', 'red_2y') AND t.status != 'draft'
+         ${before ? "AND me.created_at < ?" : ""}
+       ORDER BY me.created_at DESC, me.id DESC LIMIT ${cap}`
+    )
+    .bind(...(before ? [before] : []))
+    .all<RedRow>();
+  const auditP = db
+    .prepare(
+      `SELECT a.id, a.created_at, a.target_id, a.detail_json,
+         t.id AS tournament_id, t.name AS tournament_name,
+         ht.name AS home_team_name, at.name AS away_team_name,
+         s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round
+       FROM audit_log a
+       JOIN match m ON m.id = a.target_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id
+       JOIN entry he ON he.id = m.home_entry_id
+       JOIN team ht ON ht.id = he.team_id
+       JOIN entry ae ON ae.id = m.away_entry_id
+       JOIN team at ON at.id = ae.team_id
+       WHERE a.action = 'match_rescore' AND t.status != 'draft'
+         ${before ? "AND a.created_at < ?" : ""}
+       ORDER BY a.id DESC LIMIT ${cap}`
+    )
+    .bind(...(before ? [before] : []))
+    .all<AuditRow>();
+  const recapP = db
+    .prepare(
+      `SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at,
+         s.tournament_id, t.name AS tournament_name,
+         s.kind AS stage_kind, s.name AS stage_name
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id
+       WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
+         AND COALESCE(m.note, '') != '轮空'
+       GROUP BY m.stage_id, m.round
+       HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END)
+         AND MAX(m.finished_at) < COALESCE(?, '9999-12-31')
+       ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT ${cap}`,
+    )
+    .bind(before ?? "9999-12-31")
+    .all<RecapGroupRow>();
+  const weeklyP = buildWeekly(db);
+
+  const window = await windowP;
+  const wantedByTid = new Map<number, Set<number>>();
+  for (const m of window) {
+    const s = wantedByTid.get(m.tournamentId) ?? new Set<number>();
+    s.add(m.id);
+    wantedByTid.set(m.tournamentId, s);
+  }
+
+  const [eventsByMatch, maxRounds, factsEntries, snapEntries, red, recap] = await Promise.all([
+    fetchEventRows(db, window.map((m) => m.id)),
+    fetchStageMaxRounds(db, window.map((m) => m.stageId)),
+    Promise.all(
+      [...wantedByTid.entries()].map(
+        async ([tid, wanted]) => [tid, await buildNarrativeFacts(db, tid, wanted)] as const,
+      ),
+    ),
+    Promise.all(
+      [...new Set(window.map((m) => m.stageId))].map(
+        async (sid) => [sid, await standingsSnapshot(db, sid)] as const,
+      ),
+    ),
+    // 红牌后置：停赛后缀按（赛事,类型）去重并发（原先每行一查），轮数一查
+    (async () => {
+      const rows = (await redP).results ?? [];
+      const suffixP = new Map<string, Promise<string>>();
+      const suffixes = Promise.all(
+        rows.map((r) => {
+          const k = `${r.tournament_id}:${r.type}`;
+          let p = suffixP.get(k);
+          if (!p) suffixP.set(k, (p = redCardBanSuffix(db, r.tournament_id, r.type)));
+          return p;
+        }),
+      );
+      const [banSuffixes, redMaxRounds] = await Promise.all([
+        suffixes,
+        fetchStageMaxRounds(db, rows.map((r) => r.stage_id)),
+      ]);
+      return { rows, banSuffixes, redMaxRounds };
+    })(),
+    // 综述后置：轮数与各轮完赛名单并行
+    (async () => {
+      const rows = (await recapP).results ?? [];
+      const [recapMaxRounds, recapLists] = await Promise.all([
+        fetchStageMaxRounds(db, rows.map((r) => r.stage_id)),
+        Promise.all(rows.map((r) => fetchRoundFinished(db, r.stage_id, r.round))),
+      ]);
+      return { rows, recapMaxRounds, recapLists };
+    })(),
+  ]);
+  const factsByTid = new Map(factsEntries);
+  const snapMap = new Map(snapEntries);
+  const auditRows = (await auditP).results ?? [];
+
   // 1) 完赛窗口 → 战报/弃权条（窗口取深些给混排留余量）
-  const window = await fetchFinishedWindow(db, Math.max(cap * 3, 40), before);
-  const eventsByMatch = await fetchEventRows(db, window.map((m) => m.id));
-  const maxRounds = await fetchStageMaxRounds(db, window.map((m) => m.stageId));
   for (const m of window) {
     const rl = roundLabel(m, maxRounds.get(m.stageId) ?? m.round);
     const base = {
@@ -452,26 +602,7 @@ export async function buildFeed(
     }
   }
 
-  // 1.5) 叙事条：榜首易主 / 纪录 / 里程碑——全部按「该场完赛时刻」口径重放
-  const wantedByTid = new Map<number, Set<number>>();
-  for (const m of window) {
-    const s = wantedByTid.get(m.tournamentId) ?? new Set<number>();
-    s.add(m.id);
-    wantedByTid.set(m.tournamentId, s);
-  }
-  const factsEntries = await Promise.all(
-    [...wantedByTid.entries()].map(
-      async ([tid, wanted]) => [tid, await buildNarrativeFacts(db, tid, wanted)] as const,
-    ),
-  );
-  const factsByTid = new Map(factsEntries);
-  const snapEntries = await Promise.all(
-    [...new Set(window.map((m) => m.stageId))].map(
-      async (sid) => [sid, await standingsSnapshot(db, sid)] as const,
-    ),
-  );
-  const snapMap = new Map(snapEntries);
-
+  // 1.5) 叙事条：榜首易主 / 纪录 / 里程碑——全部按「该场完赛时刻」口径重放（事实已在波 2 汇齐）
   for (const m of window) {
     const facts = factsByTid.get(m.tournamentId);
     if (!facts) continue;
@@ -625,32 +756,8 @@ export async function buildFeed(
     }
   }
 
-  // 2) 红牌即时快讯（live/finished 都算，录入即出条）
-  type RedRow = {
-    id: number; type: "red" | "red_2y"; created_at: string;
-    player_name: string | null;
-    match_id: number; tournament_id: number; tournament_name: string;
-    stage_kind: "elim" | "round_robin" | "group"; stage_name: string | null; round: number; stage_id: number;
-  };
-  const redRes = await db
-    .prepare(
-      `SELECT me.id, me.type, me.created_at, p.name AS player_name,
-         m.id AS match_id, t.id AS tournament_id, t.name AS tournament_name,
-         s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round
-       FROM match_event me
-       JOIN match m ON m.id = me.match_id
-       JOIN stage s ON s.id = m.stage_id
-       JOIN tournament t ON t.id = s.tournament_id
-       LEFT JOIN player p ON p.id = me.player_id
-       WHERE me.type IN ('red', 'red_2y') AND t.status != 'draft'
-         ${before ? "AND me.created_at < ?" : ""}
-       ORDER BY me.created_at DESC, me.id DESC LIMIT ${cap}`
-    )
-    .bind(...(before ? [before] : []))
-    .all<RedRow>();
-  const redRows = redRes.results ?? [];
-  const redMaxRounds = await fetchStageMaxRounds(db, redRows.map((r) => r.stage_id));
-  const banSuffixes = await Promise.all(redRows.map((r) => redCardBanSuffix(db, r.tournament_id, r.type)));
+  // 2) 红牌即时快讯（live/finished 都算，录入即出条）——查询在波 1 发出，后置在波 2 汇齐
+  const { rows: redRows, banSuffixes, redMaxRounds } = red;
   for (let i = 0; i < redRows.length; i++) {
     const r = redRows[i];
     items.push({
@@ -671,34 +778,8 @@ export async function buildFeed(
     });
   }
 
-  // 3) 更正启事（改判审计）
-  type AuditRow = {
-    id: number; created_at: string; target_id: number; detail_json: string | null;
-    tournament_id: number; tournament_name: string;
-    home_team_name: string; away_team_name: string;
-    stage_kind: "elim" | "round_robin" | "group"; stage_name: string | null; stage_id: number; round: number;
-  };
-  const auditRes = await db
-    .prepare(
-      `SELECT a.id, a.created_at, a.target_id, a.detail_json,
-         t.id AS tournament_id, t.name AS tournament_name,
-         ht.name AS home_team_name, at.name AS away_team_name,
-         s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round
-       FROM audit_log a
-       JOIN match m ON m.id = a.target_id
-       JOIN stage s ON s.id = m.stage_id
-       JOIN tournament t ON t.id = s.tournament_id
-       JOIN entry he ON he.id = m.home_entry_id
-       JOIN team ht ON ht.id = he.team_id
-       JOIN entry ae ON ae.id = m.away_entry_id
-       JOIN team at ON at.id = ae.team_id
-       WHERE a.action = 'match_rescore' AND t.status != 'draft'
-         ${before ? "AND a.created_at < ?" : ""}
-       ORDER BY a.id DESC LIMIT ${cap}`
-    )
-    .bind(...(before ? [before] : []))
-    .all<AuditRow>();
-  for (const a of auditRes.results ?? []) {
+  // 3) 更正启事（改判审计）——查询在波 1 发出
+  for (const a of auditRows) {
     let body = pickText(`ra:${a.id}`, ["比分经复核更正", "赛后比分复核有变"]);
     try {
       const d = JSON.parse(a.detail_json ?? "{}") as {
@@ -726,38 +807,10 @@ export async function buildFeed(
     });
   }
 
-  // 3.5) 轮次综述条：最近完赛的 5 个「全轮完赛」轮次（详情走综述端点）
-  type RecapGroupRow = {
-    stage_id: number;
-    round: number;
-    last_at: string | null;
-    tournament_id: number;
-    tournament_name: string;
-    stage_kind: "elim" | "round_robin" | "group";
-    stage_name: string | null;
-  };
-  const recapRes = await db
-    .prepare(
-      `SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at,
-         s.tournament_id, t.name AS tournament_name,
-         s.kind AS stage_kind, s.name AS stage_name
-       FROM match m
-       JOIN stage s ON s.id = m.stage_id
-       JOIN tournament t ON t.id = s.tournament_id
-       WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
-         AND COALESCE(m.note, '') != '轮空'
-       GROUP BY m.stage_id, m.round
-       HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END)
-         AND MAX(m.finished_at) < COALESCE(?, '9999-12-31')
-       ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT ${cap}`,
-    )
-    .bind(before ?? "9999-12-31")
-    .all<RecapGroupRow>();
-  const recapRows = recapRes.results ?? [];
-  const recapMaxRounds = await fetchStageMaxRounds(db, recapRows.map((r) => r.stage_id));
-  const recapLists = await Promise.all(
-    recapRows.map((r) => fetchRoundFinished(db, r.stage_id, r.round)),
-  );
+  // 3.5) 轮次综述条：最近完赛的 5 个「全轮完赛」轮次（详情走综述端点）——查询在波 1 发出，后置在波 2 汇齐
+  const recapRows = recap.rows;
+  const recapMaxRounds = recap.recapMaxRounds;
+  const recapLists = recap.recapLists;
   for (let i = 0; i < recapRows.length; i++) {
     const g = recapRows[i];
     const agg = roundAgg(recapLists[i]);
@@ -787,8 +840,8 @@ export async function buildFeed(
     });
   }
 
-  // 4) 周报条（本周/回退周有比赛才出）
-  const weekly = await buildWeekly(db);
+  // 4) 周报条（本周/回退周有比赛才出）——与波 1 同时开算，此处只等结果
+  const weekly = await weeklyP;
   if (weekly.played > 0) {
     const weeklyAt = weekly.matches[0]?.finishedAt ?? `${weekly.weekStart}T00:00:00Z`;
     if (!before || (weeklyAt && weeklyAt < before)) {

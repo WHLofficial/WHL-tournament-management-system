@@ -6,7 +6,7 @@ import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig } from "../../lib/suspension";
 import { fetchMatchLineup, LineupError } from "../../lib/lineup";
 import { auditStmt } from "../../lib/audit";
-import type { MatchEventDTO, MatchEventType } from "../../../shared/types";
+import type { MatchEventDTO, MatchEventType, MatchLineupDTO } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
 app.use("*", requireAdmin);
@@ -531,13 +531,31 @@ app.get("/:id/events", async (c) => {
 });
 
 // GET /:id/lineup：双方提交的战术阵容。管理员备案可见，无比赛状态门槛（公开端开赛后才放行）
+// 附带双方战术码备案；公开端 lineup 不返回码
 app.get("/:id/lineup", async (c) => {
+  const mid = Number(c.req.param("id"));
+  let lineup: MatchLineupDTO;
+  let subs: { team_id: number; code: string }[];
   try {
-    return c.json(await fetchMatchLineup(c.env.DB, Number(c.req.param("id")), false));
+    const [l, rows] = await Promise.all([
+      fetchMatchLineup(c.env.DB, mid, false),
+      c.env.DB.prepare(`SELECT team_id, code FROM tactic_submission WHERE match_id = ?`)
+        .bind(mid)
+        .all<{ team_id: number; code: string }>(),
+    ]);
+    lineup = l;
+    subs = rows.results ?? [];
   } catch (e) {
     if (e instanceof LineupError) return fail(c, e.status, e.message);
     throw e;
   }
+  const codeOf = (tid: number | null | undefined) =>
+    tid == null ? "" : (subs.find((r) => r.team_id === tid)?.code ?? "");
+  return c.json({
+    ...lineup,
+    homeCode: codeOf(lineup.home?.teamId),
+    awayCode: codeOf(lineup.away?.teamId),
+  });
 });
 
 export default app;

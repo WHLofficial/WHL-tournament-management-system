@@ -78,6 +78,8 @@ export interface ReportGoalDTO {
   teamName: string;
   side: "home" | "away";
   type: MatchEventType; // goal / pen_goal / own_goal
+  assistPlayerName?: string | null; // 助攻者（own_goal 恒为 null）；数据框展示与 MOTM 候选用
+  assistPlayerId?: number | null;
 }
 
 export interface ReportCardDTO {

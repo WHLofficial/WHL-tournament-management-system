@@ -44,21 +44,32 @@ export default function ReportPage() {
       .catch(() => {});
   }, [report, midNum]);
 
-  // MOTM 候选 = 数据框里出现过的球员（进球/红黄牌），按进球数排前
+  // MOTM 候选 = 数据框里出现过的球员（进球/助攻/红黄牌），按进球数、助攻数次序排前
   const candidates = useMemo(() => {
     if (!report) return [];
-    const map = new Map<number, { playerId: number; name: string; teamName: string; goals: number }>();
+    const map = new Map<
+      number,
+      { playerId: number; name: string; teamName: string; goals: number; assists: number }
+    >();
+    const touch = (playerId: number, name: string, teamName: string) => {
+      const cur = map.get(playerId) ?? { playerId, name, teamName, goals: 0, assists: 0 };
+      map.set(playerId, cur);
+      return cur;
+    };
     for (const g of report.goals) {
       if (g.playerId == null || g.type === "own_goal") continue;
-      const cur = map.get(g.playerId) ?? { playerId: g.playerId, name: g.playerName ?? "球员", teamName: g.teamName, goals: 0 };
-      cur.goals += 1;
-      map.set(g.playerId, cur);
+      touch(g.playerId, g.playerName ?? "球员", g.teamName).goals += 1;
+      if (g.assistPlayerId != null) {
+        touch(g.assistPlayerId, g.assistPlayerName ?? "球员", g.teamName).assists += 1;
+      }
     }
     for (const c of report.cards) {
-      if (c.playerId == null || map.has(c.playerId)) continue;
-      map.set(c.playerId, { playerId: c.playerId, name: c.playerName ?? "球员", teamName: c.teamName, goals: 0 });
+      if (c.playerId == null) continue;
+      touch(c.playerId, c.playerName ?? "球员", c.teamName);
     }
-    return [...map.values()].sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, "zh"));
+    return [...map.values()].sort(
+      (a, b) => b.goals - a.goals || b.assists - a.assists || a.name.localeCompare(b.name, "zh"),
+    );
   }, [report]);
 
   const vote = async (playerId: number) => {
@@ -166,7 +177,10 @@ export default function ReportPage() {
                     <div key={`hg${i}`} className="rp-ev">
                       <span className="m">{g.minute != null ? `${g.minute}'` : ""}</span>
                       <span>{GOAL_TAG[g.type] ?? "⚽"}</span>
-                      <span>{g.playerName ?? "未知球员"}</span>
+                      <span>
+                        {g.playerName ?? "未知球员"}
+                        {g.assistPlayerName ? `（${g.assistPlayerName} 助攻）` : ""}
+                      </span>
                     </div>
                   ))}
                 {report.cards
@@ -187,7 +201,10 @@ export default function ReportPage() {
                     <div key={`ag${i}`} className="rp-ev">
                       <span className="m">{g.minute != null ? `${g.minute}'` : ""}</span>
                       <span>{GOAL_TAG[g.type] ?? "⚽"}</span>
-                      <span>{g.playerName ?? "未知球员"}</span>
+                      <span>
+                        {g.playerName ?? "未知球员"}
+                        {g.assistPlayerName ? `（${g.assistPlayerName} 助攻）` : ""}
+                      </span>
                     </div>
                   ))}
                 {report.cards

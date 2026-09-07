@@ -1934,6 +1934,26 @@ button.add-stage {
   color: var(--muted);
   font-size: 12px;
 }
+.lu-code {
+  margin: 2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.lu-code code {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 1px;
+  background: var(--chalk);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  word-break: break-all;
+}
+.lu-code .btn {
+  flex: none;
+}
 @media (max-width: 640px) {
   .lu-grid {
     grid-template-columns: 1fr;
