@@ -12,7 +12,7 @@ import type { AnnouncementDTO, FeedItemDTO } from "../../shared/news";
 const app = new Hono<AppEnv>();
 
 // 活跃公告（至多一条）；无公告返回 null，前端不渲染 banner
-app.get("/announcement", pubCache(60), async (c) => {
+app.get("/announcement", pubCache(300), async (c) => {
   const row = await c.env.DB.prepare(
     "SELECT id, title, body, updated_at FROM announcement WHERE active = 1 ORDER BY updated_at DESC, id DESC LIMIT 1",
   ).first<{ id: number; title: string; body: string; updated_at: string }>();

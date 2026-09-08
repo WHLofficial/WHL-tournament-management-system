@@ -28,7 +28,7 @@ import { pubCache } from "../lib/cache";
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
 const app = new Hono<AppEnv>();
 
-app.get("/tournaments", pubCache(60), async (c) => {
+app.get("/tournaments", pubCache(300), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
@@ -59,7 +59,7 @@ app.get("/tournaments", pubCache(60), async (c) => {
   return c.json({ tournaments });
 });
 
-app.get("/tournaments/:id", pubCache(60), async (c) => {
+app.get("/tournaments/:id", pubCache(300), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
@@ -315,7 +315,7 @@ const toPubMatch = (
   };
 };
 
-app.get("/tournaments/:id/matches", pubCache(10), async (c) => {
+app.get("/tournaments/:id/matches", pubCache(60), async (c) => {
   const tid = Number(c.req.param("id"));
   const pub = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'"
@@ -368,7 +368,7 @@ app.get("/tournaments/:id/matches", pubCache(10), async (c) => {
 });
 
 // 轮次元信息：公开页跨阶段统一轮次条的分页依据（必须注册在 /matches/:mid 之前，否则被 :mid 吞掉）
-app.get("/tournaments/:id/matches/rounds", pubCache(10), async (c) => {
+app.get("/tournaments/:id/matches/rounds", pubCache(60), async (c) => {
   const tid = Number(c.req.param("id"));
   const pub = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'"
@@ -468,7 +468,7 @@ app.get("/tournaments/:id/matches/summary", pubCache(60), async (c) => {
 });
 
 // 单场详情：公开端比赛页用，结构同赛程接口的元素
-app.get("/tournaments/:id/matches/:mid", pubCache(10), async (c) => {
+app.get("/tournaments/:id/matches/:mid", pubCache(60), async (c) => {
   const tid = Number(c.req.param("id"));
   const mid = Number(c.req.param("mid"));
   const pub = await c.env.DB.prepare(
@@ -1010,7 +1010,7 @@ app.get("/tournaments/:id/matches/:mid/lineup-stats", pubCache(60), async (c) =>
 });
 
 // 跨赛事"即将进行"：非草稿赛事的未开打场次（排除轮空/队伍待定），running 优先
-app.get("/upcoming", pubCache(10), async (c) => {
+app.get("/upcoming", pubCache(60), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status,
        m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round,
@@ -1047,7 +1047,7 @@ app.get("/upcoming", pubCache(10), async (c) => {
 });
 
 // 跨赛事"进行中"：live 场，实时比分与 liveScore 同口径（goal/pen_goal 计事件方，own_goal 记对方）
-app.get("/live", pubCache(10), async (c) => {
+app.get("/live", pubCache(60), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name,
        m.id AS match_id, s.kind AS stage_kind, m.round,
@@ -1130,7 +1130,7 @@ app.get("/live", pubCache(10), async (c) => {
 });
 
 // 跨赛事"最近进行"：最近完赛的 10 场，按完赛时间倒序（改判刷新时间）
-app.get("/recent", pubCache(10), async (c) => {
+app.get("/recent", pubCache(60), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name,
        m.id AS match_id, s.kind AS stage_kind, m.round,
@@ -1176,7 +1176,7 @@ app.get("/recent", pubCache(10), async (c) => {
   return c.json({ recent });
 });
 
-app.get("/tournaments/:id/standings", pubCache(60), async (c) => {
+app.get("/tournaments/:id/standings", pubCache(300), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
@@ -1189,7 +1189,7 @@ app.get("/tournaments/:id/standings", pubCache(60), async (c) => {
 });
 
 // 榜单（球员榜+球队榜）与数据统计：单赛事内；管理端另有不受草稿限制的同名端点
-app.get("/tournaments/:id/toplists", pubCache(60), async (c) => {
+app.get("/tournaments/:id/toplists", pubCache(300), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
@@ -1200,7 +1200,7 @@ app.get("/tournaments/:id/toplists", pubCache(60), async (c) => {
   return c.json(await buildToplistsWithSuspension(c.env.DB, id));
 });
 
-app.get("/tournaments/:id/stats", pubCache(60), async (c) => {
+app.get("/tournaments/:id/stats", pubCache(300), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
     "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"

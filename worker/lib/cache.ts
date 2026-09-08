@@ -3,7 +3,9 @@ import type { AppEnv } from "../env";
 
 // 公开 GET 边缘缓存：按完整 URL（含 query）键存入 Cloudflare 边缘 Cache API。
 // 公开路由不读登录态、响应与用户无关，可安全跨访客共享；404/非 2xx 不缓存。
-// TTL 由路由指定：比分类 10s（直播新鲜度优先），榜单详情类 60s——都短于前端 30s 轮询周期，
+// TTL 由路由指定（2026-09-08 行读配额优化，延迟换配额）：直播比分类 60s——
+// ≥ 前端 30s 轮询间隔，轮询改吃边缘缓存，不再次次穿透 D1，新进球/开赛最坏 ~1 分钟可见；
+// 榜单详情类 300s——榜单/赛事信息本就低频更新。
 // 大陆高 RTT 下重复浏览从「每趟 ~0.9s 网络 + 每查询 ~0.2s」变成边缘直出。
 export function pubCache(ttlSeconds: number) {
   return createMiddleware<AppEnv>(async (c, next) => {
