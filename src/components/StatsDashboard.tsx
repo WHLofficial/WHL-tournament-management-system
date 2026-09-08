@@ -133,7 +133,7 @@ export function StatsDashboard({ tid, base }: { tid: number; base: string }) {
               </div>
             )}
             {data.injuryMatch && (
-              <div className="stat-card">
+              <div className="stat-card wide">
                 <span className="num">
                   {data.injuryMatch.scoreHome === null || data.injuryMatch.scoreAway === null
                     ? `${data.injuryMatch.homeName} vs ${data.injuryMatch.awayName}`

@@ -375,6 +375,21 @@ export interface MatchLineupDTO {
 // 管理端 GET /api/admin/matches/:id/lineup：在 MatchLineupDTO 上附加战术码备案（公开端不返回码）
 export type AdminMatchLineupDTO = MatchLineupDTO & { homeCode: string; awayCode: string };
 
+// ---------- 战术存档（tactic 表，migration 0009/0017） ----------
+
+// /api/coach/tactics 列表项；roster 为战术页人员分配映射 {"首发lid"|"b0".."b8": "player_id"}
+export interface TacticArchiveDTO {
+  id: number;
+  /** 11/12 位战术码（FUT26/FUT25），载入走解码回填 */
+  code: string;
+  form: string;
+  buildup: string;
+  lineHeight: number;
+  note: string;
+  roster: Record<string, string>;
+  createdAt: string;
+}
+
 // ---------- 赛前情报：未开赛详情页三 Tab（交锋 / 球员 / 阵容） ----------
 
 // GET /api/public/tournaments/:tid/matches/:mid/h2h

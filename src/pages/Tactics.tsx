@@ -24,6 +24,7 @@ import {
 } from "../../shared/tactics";
 import type {
   CoachPendingMatchDTO,
+  TacticArchiveDTO,
   TeamLineupDTO,
 } from "../../shared/types";
 
@@ -100,6 +101,9 @@ export default function Tactics() {
   const [subBusy, setSubBusy] = useState(false);
   const [subMsg, setSubMsg] = useState<{ t: "ok" | "err"; text: string } | null>(null);
   const [armSubmit, setArmSubmit] = useState(false);
+  const [archives, setArchives] = useState<TacticArchiveDTO[] | null>(null);
+  const [saveNote, setSaveNote] = useState("");
+  const [archBusy, setArchBusy] = useState(false);
   const toastTimer = useRef<number | null>(null);
   const armTimer = useRef<number | null>(null);
   const subArmTimer = useRef<number | null>(null);
@@ -125,6 +129,25 @@ export default function Tactics() {
       dead = true;
     };
   }, [user]);
+
+  // 存档跟随绑队状态：绑队后拉列表，未绑队不可用
+  useEffect(() => {
+    if (!teamPlayers) {
+      setArchives(null);
+      return;
+    }
+    let dead = false;
+    api<{ tactics: TacticArchiveDTO[] }>("/api/coach/tactics")
+      .then((b) => {
+        if (!dead) setArchives(b.tactics ?? []);
+      })
+      .catch(() => {
+        if (!dead) setArchives([]);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [teamPlayers]);
 
   useEffect(
     () => () => {
@@ -186,29 +209,90 @@ export default function Tactics() {
     return p ? p.name : v;
   }
 
-  function importCode() {
-    const raw = codeInput.trim().replace(/\s+/g, "");
-    if (!raw.length) return;
-    if (raw.length !== 11 && raw.length !== 12) {
-      setMsg({ t: "err", text: `长度不对：战术码是 11 或 12 个字符，你现在输入了 ${raw.length} 个。` });
+  function importCode(raw?: string) {
+    const fromArchive = raw != null;
+    const src = (raw ?? codeInput).trim().replace(/\s+/g, "");
+    if (!src.length) return;
+    if (src.length !== 11 && src.length !== 12) {
+      setMsg({ t: "err", text: `长度不对：战术码是 11 或 12 个字符，你现在输入了 ${src.length} 个。` });
       return;
     }
     let t;
     try {
-      t = raw.length === 12 ? decodeFut26(raw) : decodeFut25(raw);
+      t = src.length === 12 ? decodeFut26(src) : decodeFut25(src);
     } catch (e) {
-      setMsg({ t: "err", text: errText(e as TacticError) });
+      if (!fromArchive) setMsg({ t: "err", text: errText(e as TacticError) });
       return;
     }
     const roles: Record<number, [string, string]> = {};
     for (const s of t.slots) roles[s.lid] = [s.role, s.focus];
     setState({ form: t.form, bu: t.bu, lh: t.lh, roles });
     setSelected(null);
+    if (fromArchive) {
+      showToast("已载入存档");
+      return;
+    }
     setMsg({
       t: "ok",
       text: `已导入：${formTitle(t.form)}，防线 ${lhName(t.lh)}，${BU_ZH[t.bu]}`,
     });
     showToast("战术码已导入");
+  }
+
+  async function saveArchive() {
+    if (archBusy) return;
+    if (code === "------------") {
+      showToast("当前战术无效，不能存档");
+      return;
+    }
+    setArchBusy(true);
+    try {
+      await api("/api/coach/tactics", {
+        method: "POST",
+        body: {
+          note: saveNote,
+          code,
+          form: state.form,
+          buildup: state.bu,
+          lineHeight: state.lh,
+          roster: names,
+        },
+      });
+      setSaveNote("");
+      const b = await api<{ tactics: TacticArchiveDTO[] }>("/api/coach/tactics");
+      setArchives(b.tactics ?? []);
+      showToast("已存档");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "存档失败");
+    } finally {
+      setArchBusy(false);
+    }
+  }
+
+  function loadArchive(a: TacticArchiveDTO) {
+    // 离队球员的 id 直接丢弃，避免瓷砖显示裸 id；自由文本名字保留
+    const next: Record<string, string> = {};
+    for (const [k, v] of Object.entries(a.roster)) {
+      if (!v) continue;
+      if (teamPlayers && /^\d+$/.test(v) && !teamPlayers.some((p) => String(p.id) === v)) continue;
+      next[k] = v;
+    }
+    setNames(next);
+    importCode(a.code);
+  }
+
+  async function deleteArchive(id: number) {
+    if (archBusy) return;
+    setArchBusy(true);
+    try {
+      await api(`/api/coach/tactics/${id}`, { method: "DELETE" });
+      setArchives((list) => (list ? list.filter((x) => x.id !== id) : list));
+      showToast("已删除存档");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "删除失败");
+    } finally {
+      setArchBusy(false);
+    }
   }
 
   function copyCode() {
@@ -465,7 +549,7 @@ export default function Tactics() {
                 autoComplete="off"
                 spellCheck={false}
               />
-              <button className="btn" onClick={importCode}>
+              <button className="btn" onClick={() => importCode()}>
                 解码
               </button>
             </div>
@@ -618,60 +702,124 @@ export default function Tactics() {
               </section>
             )}
           </div>
-
-          <section className="card tac-bench">
-            <h2>
-              替补席 <small>9 人 · 不进战术码，仅本机保存</small>
-            </h2>
-            <div className="tac-bench-grid">
-              {BENCH.map((i) => {
-                const key = `b${i}`;
-                const v = names[key] ?? "";
-                return (
-                  <label className="tac-bench-slot" key={key}>
-                    <span className="tac-bench-no">{i + 1}</span>
-                    {teamPlayers ? (
-                      <select
-                        value={teamPlayers.some((x) => String(x.id) === v) ? v : ""}
-                        onChange={(e) => {
-                          const nv = e.target.value;
-                          setNames((n) => {
-                            const next = { ...n };
-                            if (nv) next[key] = nv;
-                            else delete next[key];
-                            return next;
-                          });
-                        }}
-                        aria-label={`替补 ${i + 1}`}
-                      >
-                        <option value="">（未选）</option>
-                        {teamPlayers.map((p) => (
-                          <option key={p.id} value={String(p.id)}>
-                            {p.number ? `#${p.number} ${p.name}` : p.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        maxLength={16}
-                        placeholder="替补名字"
-                        value={v}
-                        aria-label={`替补 ${i + 1}`}
-                        onChange={(e) =>
-                          setNames((n) => ({
-                            ...n,
-                            [key]: e.target.value.trim(),
-                          }))
-                        }
-                      />
-                    )}
-                  </label>
-                );
-              })}
-            </div>
-          </section>
         </div>
+
+        <section className="card tac-archives">
+          <h2>
+            战术存档 <small>含人员分配 · 同队共享</small>
+          </h2>
+          {teamPlayers ? (
+            <>
+              <div className="tac-arch-save">
+                <input
+                  className="tac-code-input"
+                  value={saveNote}
+                  maxLength={24}
+                  placeholder="存档名（选填，如：客场防反）"
+                  aria-label="存档名"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => setSaveNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveArchive();
+                  }}
+                />
+                <button
+                  className="btn tac-btn-primary"
+                  disabled={archBusy}
+                  onClick={saveArchive}
+                >
+                  存当前
+                </button>
+              </div>
+              {archives != null && archives.length === 0 && (
+                <p className="tac-hint">还没有存档。调好战术后点「存当前」。</p>
+              )}
+              {archives != null && archives.length > 0 && (
+                <div className="tac-arch-list">
+                  {archives.map((a) => (
+                    <div className="tac-arch-card" key={a.id}>
+                      <div className="tac-arch-info">
+                        <b>{a.note || "未命名存档"}</b>
+                        <small>
+                          {formTitle(a.form)} · {BU_ZH[a.buildup as Buildup] ?? a.buildup} · 防线{" "}
+                          {a.lineHeight} · {a.createdAt.slice(0, 10)}
+                        </small>
+                      </div>
+                      <div className="tac-arch-act">
+                        <button className="btn tac-btn-primary" onClick={() => loadArchive(a)}>
+                          载入
+                        </button>
+                        <button
+                          className="btn"
+                          disabled={archBusy}
+                          onClick={() => deleteArchive(a.id)}
+                        >
+                          删
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="tac-hint">登录并绑定球队后可存档，与同队教练共享。</p>
+          )}
+        </section>
+
+        <section className="card tac-bench">
+          <h2>
+            替补席 <small>9 人 · 不进战术码，仅本机保存</small>
+          </h2>
+          <div className="tac-bench-grid">
+            {BENCH.map((i) => {
+              const key = `b${i}`;
+              const v = names[key] ?? "";
+              return (
+                <label className="tac-bench-slot" key={key}>
+                  <span className="tac-bench-no">{i + 1}</span>
+                  {teamPlayers ? (
+                    <select
+                      value={teamPlayers.some((x) => String(x.id) === v) ? v : ""}
+                      onChange={(e) => {
+                        const nv = e.target.value;
+                        setNames((n) => {
+                          const next = { ...n };
+                          if (nv) next[key] = nv;
+                          else delete next[key];
+                          return next;
+                        });
+                      }}
+                      aria-label={`替补 ${i + 1}`}
+                    >
+                      <option value="">（未选）</option>
+                      {teamPlayers.map((p) => (
+                        <option key={p.id} value={String(p.id)}>
+                          {p.number ? `#${p.number} ${p.name}` : p.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      maxLength={16}
+                      placeholder="替补名字"
+                      value={v}
+                      aria-label={`替补 ${i + 1}`}
+                      onChange={(e) =>
+                        setNames((n) => ({
+                          ...n,
+                          [key]: e.target.value.trim(),
+                        }))
+                      }
+                    />
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </section>
       </div>
 
       {teamPlayers && (

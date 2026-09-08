@@ -1333,7 +1333,8 @@ button.add-stage {
 }
 .tac-pitch-panel {
   display: flex;
-  padding: 10px;
+  padding: 10px 10px 0;
+  aspect-ratio: 10 / 13;
 }
 .tac-pitch {
   position: relative;
@@ -1344,7 +1345,6 @@ button.add-stage {
     var(--pitch-deep) 12.5% 25%
   );
   border-radius: 14px;
-  aspect-ratio: 10 / 13;
   overflow: hidden;
   box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.25);
 }
@@ -1468,7 +1468,8 @@ button.add-stage {
   justify-content: space-evenly;
 }
 .tac-settings h2,
-.tac-bench h2 {
+.tac-bench h2,
+.tac-archives h2 {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 1.2px;
@@ -1476,10 +1477,59 @@ button.add-stage {
   color: var(--muted);
   margin: 0 0 10px;
 }
-.tac-bench h2 small {
+.tac-bench h2 small,
+.tac-archives h2 small {
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
+}
+.tac-arch-save {
+  display: flex;
+  gap: 8px;
+}
+.tac-arch-save .tac-code-input {
+  flex: 1;
+  min-width: 0;
+}
+.tac-arch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.tac-arch-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+.tac-arch-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tac-arch-info b {
+  font-size: 14px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tac-arch-info small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.tac-arch-act {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .tac-seg {
   display: flex;
@@ -1696,19 +1746,22 @@ button.add-stage {
     min-height: 380px;
   }
   .tac-code-panel {
-    order: 1;
+    order: 2;
     padding: 10px;
   }
   .tac-import-panel {
-    order: 2;
+    order: 3;
     padding: 10px 12px;
   }
   .tac-duo {
-    order: 3;
+    order: 4;
     flex: 0 0 auto;
   }
+  .tac-archives {
+    order: 1;
+  }
   .tac-bench {
-    order: 4;
+    order: 5;
   }
   .tac-pitch {
     aspect-ratio: auto;

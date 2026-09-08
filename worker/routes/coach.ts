@@ -4,7 +4,8 @@ import { sha256Hex } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
 import { fetchMatchLineup, LineupError, validateLineupSlots } from "../lib/lineup";
 import { requirePwChanged, requireUser } from "../middleware/auth";
-import type { LineupSubmitBody } from "../../shared/types";
+import { BUILDUPS, FORMS, decodeFut25, decodeFut26 } from "../../shared/tactics";
+import type { LineupSubmitBody, TacticArchiveDTO } from "../../shared/types";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
 const app = new Hono<AppEnv>();
@@ -296,6 +297,139 @@ app.put("/matches/:mid/lineup", async (c) => {
   )
     .bind(mid, teamId, user.id, body.form, JSON.stringify(slots), code)
     .run();
+  return c.json({ ok: true });
+});
+
+// —— 战术存档：tactic 表（团队共享，单队上限 20 条）。存当前战术码 + 人员分配映射，载入整板回填 ——
+
+const TACTIC_CAP = 20;
+
+function parseRoster(raw: string): Record<string, string> {
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val === "string") out[k.slice(0, 8)] = val.slice(0, 32);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+app.get("/tactics", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env.DB, user.id);
+  if (!teamId) return c.json({ tactics: [] });
+  const rows = await c.env.DB.prepare(
+    `SELECT id, code, form, buildup, line_height, note, roster_json, created_at
+     FROM tactic WHERE team_id = ? ORDER BY created_at DESC, id DESC LIMIT ${TACTIC_CAP}`,
+  )
+    .bind(teamId)
+    .all<{
+      id: number;
+      code: string;
+      form: string;
+      buildup: string;
+      line_height: number;
+      note: string | null;
+      roster_json: string;
+      created_at: string;
+    }>();
+  const tactics: TacticArchiveDTO[] = rows.results.map((r) => ({
+    id: r.id,
+    code: r.code,
+    form: r.form,
+    buildup: r.buildup,
+    lineHeight: r.line_height,
+    note: r.note ?? "",
+    roster: parseRoster(r.roster_json),
+    createdAt: r.created_at,
+  }));
+  return c.json({ tactics });
+});
+
+app.post("/tactics", async (c) => {
+  const user = c.get("user")!;
+  if (user.locked) return c.json({ message: "你的账号暂不能存档，请联系管理员解锁" }, 403);
+  const teamId = await teamIdOf(c.env.DB, user.id);
+  if (!teamId) return c.json({ message: "请先绑定球队再存档" }, 403);
+  const ip = c.req.header("CF-Connecting-IP") ?? "local";
+  if (!(await rateLimit(c.env, `tarc:${ip}:${user.id}`, 10, 60))) {
+    return c.json({ message: "操作太频繁，请一分钟后再试" }, 429);
+  }
+
+  const body = await c.req
+    .json<{
+      note?: string;
+      code?: string;
+      form?: string;
+      buildup?: string;
+      lineHeight?: number;
+      roster?: Record<string, unknown>;
+    }>()
+    .catch(() => null);
+  const code = typeof body?.code === "string" ? body.code.trim().replace(/\s+/g, "") : "";
+  if (code.length !== 11 && code.length !== 12) {
+    return c.json({ message: "战术码格式不对" }, 400);
+  }
+  try {
+    if (code.length === 12) decodeFut26(code);
+    else decodeFut25(code);
+  } catch {
+    return c.json({ message: "战术码无效，不能存档" }, 400);
+  }
+  const form = typeof body?.form === "string" ? body.form : "";
+  if (!FORMS.some((f) => f.value === form)) {
+    return c.json({ message: "阵型不合法" }, 400);
+  }
+  const buildup = typeof body?.buildup === "string" ? body.buildup : "";
+  if (!BUILDUPS.includes(buildup as never)) {
+    return c.json({ message: "组织风格不合法" }, 400);
+  }
+  const lineHeight = Number(body?.lineHeight);
+  if (!Number.isInteger(lineHeight) || lineHeight < 1 || lineHeight > 100) {
+    return c.json({ message: "防线高度不合法" }, 400);
+  }
+  const note = typeof body?.note === "string" ? body.note.trim().slice(0, 32) : "";
+  const rosterIn = body?.roster;
+  if (rosterIn !== undefined && (rosterIn === null || typeof rosterIn !== "object" || Array.isArray(rosterIn))) {
+    return c.json({ message: "人员分配格式不对" }, 400);
+  }
+  const roster: Record<string, string> = {};
+  if (rosterIn) {
+    for (const [k, v] of Object.entries(rosterIn)) {
+      if (typeof v === "string" && v) roster[k.slice(0, 8)] = v.slice(0, 32);
+      if (Object.keys(roster).length >= 24) break;
+    }
+  }
+
+  const full = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM tactic WHERE team_id = ?")
+    .bind(teamId)
+    .first<{ n: number }>();
+  if ((full?.n ?? 0) >= TACTIC_CAP) {
+    return c.json({ message: `存档已满（${TACTIC_CAP} 条），请先删除旧的` }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `INSERT INTO tactic (team_id, created_by, code, form, buildup, line_height, note, roster_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(teamId, user.id, code, form, buildup, lineHeight, note || null, JSON.stringify(roster))
+    .run();
+  return c.json({ ok: true });
+});
+
+app.delete("/tactics/:id", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env.DB, user.id);
+  if (!teamId) return c.json({ message: "请先绑定球队" }, 403);
+  const id = Number(c.req.param("id"));
+  const res = await c.env.DB.prepare("DELETE FROM tactic WHERE id = ? AND team_id = ?")
+    .bind(id, teamId)
+    .run();
+  if ((res.meta.changes ?? 0) !== 1) return c.json({ message: "存档不存在" }, 404);
   return c.json({ ok: true });
 });
 
