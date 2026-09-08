@@ -15,6 +15,7 @@ export async function createSession(c: Context<AppEnv>, userId: number): Promise
     path: "/",
     secure: new URL(c.req.url).protocol === "https:",
     maxAge: TTL_SECONDS,
+    ...(c.env.COOKIE_DOMAIN ? { domain: c.env.COOKIE_DOMAIN } : {}),
   });
 }
 
