@@ -507,6 +507,8 @@ function MatchPanel({
 }) {
   const homeName = m.homeTeamName ?? "主队";
   const awayName = m.awayTeamName ?? "客队";
+  // 正在编辑的事件（EventList 点「编辑」进入，EventForm 保存/取消退出）
+  const [editing, setEditing] = useState<MatchEventDTO | null>(null);
 
   return (
     <div className="match-panel">
@@ -561,6 +563,8 @@ function MatchPanel({
             suspThreshold={suspThreshold}
             busy={busy}
             act={act}
+            editEv={editing}
+            onCancelEdit={() => setEditing(null)}
           />
           <EventList
             matchId={m.id}
@@ -569,6 +573,8 @@ function MatchPanel({
             busy={busy}
             act={act}
             tick={tick}
+            editingId={editing?.id ?? null}
+            onEdit={setEditing}
           />
         </>
       )}
@@ -854,6 +860,7 @@ const AUDIT_ACTION: Record<string, string> = {
   match_rescore: "改判",
   match_walkover: "判弃权",
   event_create: "录事件",
+  event_update: "改事件",
   event_delete: "删事件",
 };
 
@@ -924,6 +931,17 @@ function AuditPanel({
     if (!d) return "";
     const pname = (id: unknown) =>
       typeof id === "number" ? (playerById.get(id) ?? `#${id}`) : "";
+    if (a.action === "event_update") {
+      const o = (d.before ?? {}) as Record<string, unknown>;
+      const n = (d.after ?? {}) as Record<string, unknown>;
+      const fmt = (x: Record<string, unknown>) => {
+        const label = EVENT_NAME[x.type as MatchEventType] ?? ((x.type as string) ?? "");
+        const who = pname(x.playerId);
+        const min = x.minute != null ? ` ${x.minute}'` : "";
+        return `${label}${who ? ` ${who}` : ""}${min}`;
+      };
+      return `${fmt(o)} → ${fmt(n)}`;
+    }
     if (a.action === "event_create" || a.action === "event_delete") {
       const label = EVENT_NAME[d.type as MatchEventType] ?? ((d.type as string) ?? "");
       const who = pname(d.playerId);
@@ -974,6 +992,8 @@ function EventForm({
   suspThreshold,
   busy,
   act,
+  editEv,
+  onCancelEdit,
 }: {
   match: MatchDTO;
   homePlayers: PlayerDTO[];
@@ -982,6 +1002,8 @@ function EventForm({
   suspThreshold: number;
   busy: boolean;
   act: Act;
+  editEv: MatchEventDTO | null;
+  onCancelEdit: () => void;
 }) {
   const [type, setType] = useState<Exclude<MatchEventDTO["type"], "red_2y">>("goal");
   const [side, setSide] = useState<"home" | "away">("home");
@@ -995,6 +1017,28 @@ function EventForm({
     setSide(s);
     setPlayerId("");
     setAssistId("");
+  };
+
+  // 进入编辑态：按事件回填（red_2y 不给编辑入口，这里兜底映射成 red 防御）
+  useEffect(() => {
+    if (!editEv) return;
+    setSide(editEv.entryId === m.homeEntryId ? "home" : "away");
+    setType(editEv.type === "red_2y" ? "red" : editEv.type);
+    setPlayerId(editEv.playerId != null ? String(editEv.playerId) : "");
+    setAssistId(editEv.assistPlayerId != null ? String(editEv.assistPlayerId) : "");
+    setMinute(editEv.minute != null ? String(editEv.minute) : "");
+  }, [editEv, m.homeEntryId]);
+
+  const clearForm = () => {
+    setType("goal");
+    setSide("home");
+    setPlayerId("");
+    setAssistId("");
+    setMinute("");
+  };
+  const exitEdit = () => {
+    clearForm();
+    onCancelEdit();
   };
 
   // 软约束提示：选中停赛球员给红色警告，逼近黄牌阈值给黄色预警（都不拦截录入）
@@ -1016,7 +1060,7 @@ function EventForm({
   return (
     <>
       <form
-        className="inline-form event-form"
+        className={editEv ? "inline-form event-form editing" : "inline-form event-form"}
         onSubmit={(e) => {
           e.preventDefault();
           if (busy) return;
@@ -1028,19 +1072,34 @@ function EventForm({
               scoreAway: number;
               notice?: string;
               warning?: string;
-            }>(`/api/admin/matches/${m.id}/events`, {
-              method: "POST",
-              body: {
-                type,
-                entryId,
-                playerId: playerId === "" ? undefined : Number(playerId),
-                assistPlayerId:
-                  goalish && assistId !== "" ? Number(assistId) : undefined,
-                minute: minute === "" ? undefined : Number(minute),
+            }>(
+              editEv
+                ? `/api/admin/matches/${m.id}/events/${editEv.id}`
+                : `/api/admin/matches/${m.id}/events`,
+              {
+                method: editEv ? "PUT" : "POST",
+                body: {
+                  type,
+                  entryId,
+                  playerId: playerId === "" ? undefined : Number(playerId),
+                  assistPlayerId:
+                    goalish && assistId !== "" ? Number(assistId) : undefined,
+                  minute: minute === "" ? undefined : Number(minute),
+                },
               },
-            });
+            );
+            if (editEv) exitEdit();
             return [b.notice, b.warning].filter(Boolean).join("；") || null;
-          }, { light: true, resusp: type === "yellow" || type === "red" });
+          }, {
+            light: true,
+            // 编辑时新旧类型任一是牌类都可能改变停赛账本，都要重拉停赛数据
+            resusp:
+              type === "yellow" ||
+              type === "red" ||
+              editEv?.type === "yellow" ||
+              editEv?.type === "red" ||
+              editEv?.type === "red_2y",
+          });
         }}
       >
         <div className="ev-side-seg" role="group" aria-label="所属球队">
@@ -1113,8 +1172,13 @@ function EventForm({
             style={{ width: "5em" }}
           />
           <button className="btn btn-sm" type="submit" disabled={busy}>
-            {busy ? "记录中…" : "记录事件"}
+            {editEv ? (busy ? "保存中…" : "保存修改") : busy ? "记录中…" : "记录事件"}
           </button>
+          {editEv && (
+            <button className="btn btn-sm" type="button" disabled={busy} onClick={exitEdit}>
+              取消
+            </button>
+          )}
         </div>
         {sel && suspWarn && (
           <span className="warn-line susp-warn">
@@ -1138,6 +1202,8 @@ function EventList({
   busy,
   act,
   tick,
+  editingId,
+  onEdit,
 }: {
   matchId: number;
   entryById: Map<number, EntryDTO>;
@@ -1145,6 +1211,8 @@ function EventList({
   busy: boolean;
   act: Act;
   tick: number;
+  editingId: number | null;
+  onEdit: (ev: MatchEventDTO | null) => void;
 }) {
   const [events, setEvents] = useState<MatchEventDTO[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1178,6 +1246,15 @@ function EventList({
             {who && <span className="ev-player">{who}</span>}
             {assist && <span className="ev-assist">（助攻 {assist}）</span>}
             <span className="ev-team">{name}</span>
+            {ev.type !== "red_2y" && (
+              <button
+                className="btn btn-sm"
+                disabled={busy}
+                onClick={() => onEdit(ev)}
+              >
+                编辑
+              </button>
+            )}
             <button
               className="btn btn-sm btn-danger"
               disabled={busy}
@@ -1186,6 +1263,8 @@ function EventList({
                   await api(`/api/admin/matches/${matchId}/events/${ev.id}`, {
                     method: "DELETE",
                   });
+                  // 删的就是正在编辑的事件时，退出编辑态避免表单挂着已不存在的事件
+                  if (ev.id === editingId) onEdit(null);
                   return null;
                 }, {
                   light: true,

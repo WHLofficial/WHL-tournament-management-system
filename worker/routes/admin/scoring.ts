@@ -499,6 +499,147 @@ app.delete("/:id/events/:eventId", async (c) => {
   }
 });
 
+// PUT /events/:eventId：编辑已录事件（复用录入校验；牌类纪律计数排除自身行，
+// 否则保留原球员的黄牌编辑会把自己数进去，误触发两黄变一红）
+app.put("/:id/events/:eventId", async (c) => {
+  const id = Number(c.req.param("id"));
+  const eventId = Number(c.req.param("eventId"));
+  const body = (await c.req.json().catch(() => null)) as {
+    type?: string;
+    entryId?: number;
+    playerId?: number | null;
+    assistPlayerId?: number | null;
+    minute?: number | null;
+  } | null;
+  if (!body?.type || !EVENT_TYPES.includes(body.type as (typeof EVENT_TYPES)[number]))
+    return fail(c, 400, "事件类型必须是 goal / pen_goal / pen_miss / own_goal / injury_minor / injury_major / yellow / red");
+  if (body.entryId == null) return fail(c, 400, "缺少所属球队 entryId");
+  if (body.minute != null && (body.minute < 0 || body.minute > 300))
+    return fail(c, 400, "分钟数应在 0-300 之间");
+  try {
+    const pids = [body.playerId, body.assistPlayerId].filter(
+      (p): p is number => p != null,
+    );
+    const wantCards =
+      (body.type === "yellow" || body.type === "red") && body.playerId != null;
+    const [ctx, ev, owned, card] = await Promise.all([
+      loadMatchCtx(c.env.DB, id),
+      c.env.DB.prepare(
+        "SELECT id, entry_id, player_id, assist_player_id, type, minute FROM match_event WHERE id = ? AND match_id = ?"
+      )
+        .bind(eventId, id)
+        .first<{
+          id: number;
+          entry_id: number;
+          player_id: number | null;
+          assist_player_id: number | null;
+          type: string;
+          minute: number | null;
+        }>(),
+      pids.length
+        ? c.env.DB.prepare(
+            `SELECT p.id FROM player p
+             JOIN entry e ON e.team_id = p.team_id
+             WHERE e.id = ? AND p.id IN (${pids.map(() => "?").join(",")})`
+          )
+            .bind(body.entryId, ...pids)
+            .all<{ id: number }>()
+        : Promise.resolve(null),
+      wantCards
+        ? c.env.DB.prepare(
+            `SELECT SUM(CASE WHEN type IN ('red', 'red_2y') THEN 1 ELSE 0 END) AS reds,
+                    SUM(CASE WHEN type = 'yellow' THEN 1 ELSE 0 END) AS yellows
+             FROM match_event WHERE match_id = ? AND player_id = ? AND id != ?`
+          )
+            .bind(id, body.playerId, eventId)
+            .first<{ reds: number | null; yellows: number | null }>()
+        : Promise.resolve(null),
+    ]);
+    if (!ev) return fail(c, 404, "事件不存在");
+    const m = ctx.m;
+    if (m.status === "pending") return fail(c, 400, "比赛还没开打，开赛后才能编辑事件");
+    if (body.entryId !== m.home_entry_id && body.entryId !== m.away_entry_id)
+      return fail(c, 400, "该球队不在本场对阵中");
+    const ownedIds = new Set((owned?.results ?? []).map((r) => r.id));
+    if (body.playerId != null && !ownedIds.has(body.playerId))
+      return fail(c, 400, "进球球员不属于该球队");
+    if (body.assistPlayerId != null && !ownedIds.has(body.assistPlayerId))
+      return fail(c, 400, "助攻球员不属于该球队");
+    const wantsAssist = body.assistPlayerId != null;
+    if (wantsAssist && body.type !== "goal" && body.type !== "pen_goal")
+      return fail(c, 400, "只有进球和点球进球可以记助攻");
+    if (wantsAssist && body.playerId == null)
+      return fail(c, 400, "记助攻需要先选择进球球员");
+    if (wantsAssist && body.assistPlayerId === body.playerId)
+      return fail(c, 400, "助攻球员不能和进球球员是同一人");
+
+    // 与 POST 相同的纪律裁决，但计数已排除自身行
+    let eventType: MatchEventType = body.type as MatchEventType;
+    let notice: string | null = null;
+    if (card) {
+      if ((card.reds ?? 0) >= 1)
+        return fail(c, 400, "该球员本场已被罚下，如需更正请先删除红牌事件");
+      if (body.type === "yellow" && (card.yellows ?? 0) >= 1) {
+        eventType = "red_2y";
+        const sc = await getSuspensionConfig(c.env.DB, ctx.tournamentId);
+        notice = `第 2 张黄牌已自动记录为两黄变一红（停赛 ${sc.red2yBan} 场）`;
+      }
+    }
+
+    // UPDATE + 审计（+ live 时尾随实时比分查询）一个 batch 办完；完赛编辑不改比分列
+    const live = m.status === "live";
+    const batch: D1PreparedStatement[] = [
+      c.env.DB.prepare(
+        `UPDATE match_event
+         SET entry_id = ?, player_id = ?, assist_player_id = ?, type = ?, minute = ?
+         WHERE id = ?`
+      ).bind(
+        body.entryId,
+        body.playerId ?? null,
+        body.assistPlayerId ?? null,
+        eventType,
+        body.minute ?? null,
+        eventId,
+      ),
+      auditStmt(c.env.DB, c.get("user")!.id, "event_update", id, {
+        eventId,
+        before: {
+          type: ev.type,
+          entryId: ev.entry_id,
+          playerId: ev.player_id,
+          assistPlayerId: ev.assist_player_id,
+          minute: ev.minute,
+        },
+        after: {
+          type: eventType,
+          entryId: body.entryId,
+          playerId: body.playerId ?? null,
+          assistPlayerId: body.assistPlayerId ?? null,
+          minute: body.minute ?? null,
+          ...(eventType !== body.type ? { red2y: true } : {}),
+        },
+      }),
+    ];
+    if (live) batch.push(c.env.DB.prepare(LIVE_SCORE_SQL).bind(id));
+    const batchRes = await c.env.DB.batch(batch);
+    const extras: Record<string, string> = {};
+    if (notice) extras.notice = notice;
+    if (live) {
+      const score = scoreFromRows(m, (batchRes[2].results ?? []) as ScoreRow[]);
+      return c.json({ ok: true, scoreHome: score.home, scoreAway: score.away, ...extras });
+    }
+    return c.json({
+      ok: true,
+      scoreHome: m.score_home ?? 0,
+      scoreAway: m.score_away ?? 0,
+      ...extras,
+    });
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    throw e;
+  }
+});
+
 // GET /:id/events：事件列表（管理端展示用）
 app.get("/:id/events", async (c) => {
   const id = Number(c.req.param("id"));
