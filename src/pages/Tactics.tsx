@@ -104,9 +104,11 @@ export default function Tactics() {
   const [archives, setArchives] = useState<TacticArchiveDTO[] | null>(null);
   const [saveNote, setSaveNote] = useState("");
   const [archBusy, setArchBusy] = useState(false);
+  const [armDel, setArmDel] = useState<number | null>(null);
   const toastTimer = useRef<number | null>(null);
   const armTimer = useRef<number | null>(null);
   const subArmTimer = useRef<number | null>(null);
+  const armDelTimer = useRef<number | null>(null);
 
   useEffect(() => saveLS(LS_STATE, state), [state]);
   useEffect(() => saveLS(LS_NAMES, names), [names]);
@@ -154,6 +156,7 @@ export default function Tactics() {
       if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
       if (armTimer.current !== null) window.clearTimeout(armTimer.current);
       if (subArmTimer.current !== null) window.clearTimeout(subArmTimer.current);
+      if (armDelTimer.current !== null) window.clearTimeout(armDelTimer.current);
     },
     [],
   );
@@ -283,6 +286,15 @@ export default function Tactics() {
 
   async function deleteArchive(id: number) {
     if (archBusy) return;
+    // 两段式确认：首击 arm 该卡（3 秒复位），再击才真删
+    if (armDel !== id) {
+      setArmDel(id);
+      if (armDelTimer.current !== null) window.clearTimeout(armDelTimer.current);
+      armDelTimer.current = window.setTimeout(() => setArmDel(null), 3000);
+      return;
+    }
+    if (armDelTimer.current !== null) window.clearTimeout(armDelTimer.current);
+    setArmDel(null);
     setArchBusy(true);
     try {
       await api(`/api/coach/tactics/${id}`, { method: "DELETE" });
@@ -751,11 +763,11 @@ export default function Tactics() {
                           载入
                         </button>
                         <button
-                          className="btn"
+                          className={`btn ${armDel === a.id ? "btn-danger" : ""}`}
                           disabled={archBusy}
                           onClick={() => deleteArchive(a.id)}
                         >
-                          删
+                          {armDel === a.id ? "确认删?" : "删"}
                         </button>
                       </div>
                     </div>
