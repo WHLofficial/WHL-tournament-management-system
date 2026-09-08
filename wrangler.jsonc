@@ -35,8 +35,9 @@
   "observability": {
     "enabled": true
   },
-  // 同主域子系统共享登录态：部署时设为主域根（如 ".example.com"）；不设则 cookie 仅本域有效
-  // "vars": { "COOKIE_DOMAIN": ".example.com" },
+  // 同主域子系统共享登录态（竞猜系统 guess.whleague.win）：设为主域根
+  // 注意：vars 会被 wrangler deploy 覆盖，用 secret 更稳：npx wrangler secret put COOKIE_DOMAIN  ->  ".whleague.win"
+  // "vars": { "COOKIE_DOMAIN": ".whleague.win" },
   // Smart Placement：让 CF 把 Worker 计算挪到靠近 D1 库（亚太）的数据中心，削减跨洋查询往返；部署后 ~15 分钟热身
   "placement": {
     "mode": "smart"
