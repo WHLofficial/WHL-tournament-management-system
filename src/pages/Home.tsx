@@ -170,8 +170,12 @@ export function Home() {
     }
   }, []);
 
-  // 头条 = 最新一条战报/弃权条目；橱窗 = 其余条目前 3
-  const headline = feed?.find((i) => (i.kind === "match" || i.kind === "walkover") && i.homeTeamName) ?? null;
+  // 头条 = 最近战报里剧情分（drama）最高的一场，平手取更早出现者；无战报时退弃权条目
+  const matchFeed = (feed ?? []).filter((i) => i.kind === "match" && i.homeTeamName);
+  const headline =
+    matchFeed.length > 0
+      ? matchFeed.reduce((a, b) => ((b.drama ?? 0) > (a.drama ?? 0) ? b : a))
+      : ((feed ?? []).find((i) => i.kind === "walkover" && i.homeTeamName) ?? null);
   const shelf = (feed ?? []).filter((i) => i !== headline).slice(0, 3);
   const tickerItems = (feed ?? []).slice(0, 12);
   // 已归档赛事不进主列表，收进底部折叠条（后端列表照常返回，前端拆）

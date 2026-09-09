@@ -90,7 +90,15 @@ export default function NewsPage() {
                   <span className="news-item-title">{i.title}</span>
                   <span className="news-item-time">{fmtTime(i.at)}</span>
                 </div>
-                <p className="news-item-body">{i.body}</p>
+                {i.paragraphs?.length ? (
+                  <div className="news-item-paras">
+                    {i.paragraphs.map((p, k) => (
+                      <p key={k}>{p}</p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="news-item-body">{i.body}</p>
+                )}
               </Link>
               <ReactionBar
                 itemId={i.id}

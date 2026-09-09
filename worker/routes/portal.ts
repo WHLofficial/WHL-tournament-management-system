@@ -23,6 +23,7 @@ app.get("/announcement", pubCache(300), async (c) => {
 });
 
 // 快讯流：?limit（默认 15，上限 50）&before（ISO 游标，档案页翻页用）。
+// 键版本 v2：FeedItemDTO 增加 paragraphs/drama 后整体变形，与 v1 旧缓存隔离。
 // 首页（无 before）在边缘 Cache 之下再垫一层 KV SWR：60s 内直出缓存；
 // 过期先把旧值回给访客、waitUntil 后台重算回填——冷重算的两波查询不再压在某个访客的请求里。
 // KV 为最终一致且每键写限频，写失败/写冲突静默吞掉（旧值或边缘缓存兜底）；带 before 的翻页冷路径不进 SWR。
@@ -30,7 +31,7 @@ app.get("/feed", pubCache(60), async (c) => {
   const limitRaw = Number(c.req.query("limit"));
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 15;
   const before = c.req.query("before") || undefined;
-  const key = `swr:feed:v1:${limit}:${before ?? "latest"}`;
+  const key = `swr:feed:v2:${limit}:${before ?? "latest"}`;
   const store = (items: FeedItemDTO[]) =>
     c.executionCtx.waitUntil(
       c.env.KV.put(key, JSON.stringify({ at: Date.now(), items }), { expirationTtl: 600 }).catch(() => {}),

@@ -2,7 +2,7 @@
 // 标题（结果导向）→ 导语（谁/何时/结果/意义）→ 过程（比分状态机选句）→ 赛事背景段 → 数据框。
 // 全部句子由比赛事实模板化生成：数据不动文章一字不动，数据变了自动重写（纯派生，无撤稿概念）。
 import type { MatchReportDTO, ReportCardDTO, ReportGoalDTO } from "../../shared/news";
-import { pickText } from "../../shared/textpick";
+import { chance, pickText } from "../../shared/textpick";
 import {
   cnDate,
   cnum,
@@ -20,6 +20,8 @@ import {
   type FinishedMatch,
   type RawEvent,
 } from "./context";
+import { BREATH, RATES, SEAL_REPLACE, SEAL_WORDS, heroPhrase, pickReportDrama } from "./copybanks";
+import { computeMatchFacts } from "./narrativeFacts";
 
 interface GoalFact {
   minute: number | null;
@@ -47,9 +49,16 @@ function buildNarrative(
   let firstGoalDone = false;
   // 助攻从句整场去重：同一份战报里助攻说法不重复
   const usedAssist = new Set<string>();
-  // 呼吸句：纯叙述、不带占位符的短句，只在对应事件真实发生时插入，每场至多一次
-  let breathRed = false;
-  let breathPenMiss = false;
+  // 呼吸句：纯叙述、不带占位符的短句，只在对应事件真实发生时插入；战报预算 ≤2，逐槽 chance 门控（条件满足不一定触发）；同类事件（多次红牌/多次罚失点球）整场只呼吸一次，防同池句复现
+  let breathBudget = 2;
+  const breathFired = new Set<string>();
+  const tryBreath = (slot: string, seed: string, pool: readonly string[]): void => {
+    if (breathBudget <= 0 || breathFired.has(slot)) return;
+    if (!chance(`${seed}:go`, RATES.breathReport)) return;
+    sentences.push(pickText(seed, pool));
+    breathFired.add(slot);
+    breathBudget -= 1;
+  };
 
   for (const e of events) {
     const side = e.entryId !== null ? (e.entryId === m.homeEntryId ? "home" : e.entryId === m.awayEntryId ? "away" : null) : null;
@@ -129,7 +138,7 @@ function buildNarrative(
         playerKey: e.playerId === null ? `team:${scoringTeam}` : `p:${e.playerId}`,
       });
       if (isFirst && e.minute !== null && e.minute <= 10) {
-        sentences.push(pickText(`${m.id}:bref`, ["开场才几分钟，比分就被改写了。", "比赛刚开始不久，僵局就被破了。"]));
+        tryBreath("bref", `${m.id}:bref`, BREATH.bolt);
       }
       continue;
     }
@@ -141,10 +150,7 @@ function buildNarrative(
           "没能把点球罚进。",
         ])}`,
       );
-      if (!breathPenMiss) {
-        breathPenMiss = true;
-        sentences.push(pickText(`${m.id}:brpm`, ["点球点上的机会，就这样溜走了。", "十二码前的机会，没能变成进球。"]));
-      }
+      tryBreath("brpm", `${m.id}:brpm`, BREATH.penMissLive);
       continue;
     }
     if (e.type === "red" || e.type === "red_2y") {
@@ -154,10 +160,7 @@ function buildNarrative(
           ? pickText(redSeed, ["直接红牌被罚下", "吃到红牌，提前回了更衣室", "被主裁直接出示红牌"])
           : pickText(redSeed, ["两黄变一红被罚下", "领到第二张黄牌，两黄变一红", "累积两黄，被红牌罚下"]);
       sentences.push(`${minutePre(e.minute)}${e.playerName ?? "球员"} ${redPhrase}。`);
-      if (!breathRed) {
-        breathRed = true;
-        sentences.push(pickText(`${m.id}:brred`, ["少一人，此后每一步都更难。", "红牌之后，场上的平衡被打破了。"]));
-      }
+      tryBreath("brred", `${m.id}:brred`, BREATH.redLive);
       cards.push({
         type: "red",
         minute: e.minute,
@@ -191,7 +194,7 @@ function buildNarrative(
 
   // 收尾呼吸句：大胜场的静态总结（纯叙述、不带数据）
   if (home !== away && Math.abs(home - away) >= 3) {
-    sentences.push("这是一场一边倒的较量。");
+    tryBreath("brout", `${m.id}:brout`, BREATH.rout);
   }
 
   // 「锁定胜局」回填：最后一个进球句若是 eventual winner 打进且此后对方无进球（即它本身就是最后一粒），
@@ -200,14 +203,10 @@ function buildNarrative(
   if (lastGoal && home !== away) {
     const winnerSide = home > away ? "home" : "away";
     if (lastGoal.side === winnerSide) {
-      const s = sentences[lastGoal.sentenceIdx];
-      sentences[lastGoal.sentenceIdx] = s
-        .replace("再下一城", "锁定胜局")
-        .replace("再进一球", "锁定胜局")
-        .replace("扩大战果", "锁定胜局")
-        .replace("再入一球", "锁定胜局")
-        .replace("扳回一城", "锁定胜局")
-        .replace("扳回一球", "锁定胜局");
+      sentences[lastGoal.sentenceIdx] = SEAL_WORDS.reduce(
+        (acc, w) => acc.replace(w, SEAL_REPLACE),
+        sentences[lastGoal.sentenceIdx],
+      );
     }
   }
 
@@ -225,8 +224,7 @@ function buildNarrative(
   }
   for (const info of byPlayer.values()) {
     if (info.count < 2) continue;
-    const suffix =
-      info.count === 2 ? "梅开二度" : info.count === 3 ? "上演帽子戏法" : `独中${cnum(info.count)}球`;
+    const suffix = heroPhrase(info.count);
     const s = sentences[info.lastIdx];
     const gf = goalFacts.find((g) => g.sentenceIdx === info.lastIdx);
     const who = gf ? gf.playerName ?? gf.teamName : info.name;
@@ -261,23 +259,36 @@ function resultPhrases(m: FinishedMatch, events: RawEvent[]) {
     title = pickText(`t1:${m.id}`, [
       `${winner} ${h}:${a}（点 ${m.penHome}:${m.penAway}）淘汰 ${loser}`,
       `${winner} 点球 ${m.penHome}:${m.penAway} 淘汰 ${loser}`,
+      `点球大战 ${m.penHome}:${m.penAway}，${winner} 过关`,
+      `${winner} 笑到最后：点球 ${m.penHome}:${m.penAway}`,
+      `${h}:${a} 之后点球决胜，${winner} 挺进下一轮`,
+      `常规时间 ${h}:${a}，点球 ${m.penHome}:${m.penAway} ${winner} 胜出`,
     ]);
   } else if (h > a) {
     title = pickText(`t2:${m.id}`, [
       `${m.homeTeamName} ${h}:${a} 击败 ${m.awayTeamName}`,
       `${m.homeTeamName} 主场 ${h}:${a} 拿下 ${m.awayTeamName}`,
       `${m.homeTeamName} ${h}:${a} 战胜 ${m.awayTeamName}`,
+      `${m.homeTeamName} 主场 ${h}:${a} 告捷`,
+      `全场 ${h}:${a}，${m.homeTeamName} 击退 ${m.awayTeamName}`,
+      `${m.homeTeamName} ${h}:${a} 拿下主场`,
     ]);
   } else if (a > h) {
     title = pickText(`t3:${m.id}`, [
       `${m.awayTeamName} 客场 ${a}:${h} 击败 ${m.homeTeamName}`,
       `${m.awayTeamName} ${a}:${h} 战胜 ${m.homeTeamName}`,
       `${m.homeTeamName} 主场 ${h}:${a} 不敌 ${m.awayTeamName}`,
+      `${m.awayTeamName} 客场 ${a}:${h} 带走胜利`,
+      `${m.homeTeamName} ${h}:${a} 落败，${m.awayTeamName} 客场得手`,
+      `客场作战的 ${m.awayTeamName} ${a}:${h} 击退 ${m.homeTeamName}`,
     ]);
   } else {
     title = pickText(`t4:${m.id}`, [
       `${m.homeTeamName} ${h}:${a} 战平 ${m.awayTeamName}`,
       `${m.homeTeamName} 与 ${m.awayTeamName} ${h}:${a} 言和`,
+      `${h}:${a}，${m.homeTeamName} 与 ${m.awayTeamName} 各取一分`,
+      `${m.homeTeamName} 与 ${m.awayTeamName} 打成 ${h}:${a}`,
+      `${h}:${a} 收场，双方均未占得便宜`,
     ]);
   }
 
@@ -290,8 +301,7 @@ function resultPhrases(m: FinishedMatch, events: RawEvent[]) {
   let hero: { name: string; goals: number } | null = null;
   for (const [name, n] of counts) if (!hero || n > hero.goals) hero = { name, goals: n };
   if (hero && hero.goals >= 2) {
-    const suffix =
-      hero.goals === 2 ? "梅开二度" : hero.goals === 3 ? "上演帽子戏法" : `独中${cnum(hero.goals)}球`;
+    const suffix = heroPhrase(hero.goals);
     title += `，${hero.name} ${suffix}`;
   }
 
@@ -351,6 +361,8 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
   }
 
   // ---------- 正常场 ----------
+  // 事实层：剧情句（2.5 节）与近况段共用的本场画像；呼吸句槽仍由事件流驱动，不依赖 facts
+  const facts = computeMatchFacts(m, events);
   const { sentences, goalFacts, cards } = buildNarrative(m, events);
   const { title, outcome, hero } = resultPhrases(m, events);
   const dateStr = cnDate(m.finishedAt);
@@ -511,6 +523,24 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
     const lEntry = wEntry ? (wEntry === m.homeEntryId ? m.awayEntryId : m.homeEntryId) : null;
     const wName = wEntry === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
     const lName = lEntry === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
+
+    // 2.5) 本场剧情（事实层）：逆转/绝杀/红牌/点球/一人扛队，最多 1 句，条件满足不一定触发
+    if (facts) {
+      const topBag =
+        facts.maxBagGoals >= 2 ? facts.playerBags.find((p) => p.goals === facts.maxBagGoals) ?? null : null;
+      const dramaLine = pickReportDrama(`${m.id}:rdl`, facts, {
+        label: `${m.homeTeamName} vs ${m.awayTeamName}`,
+        scoreLine: `${m.scoreHome}:${m.scoreAway}`,
+        goalCount: facts.totalGoals,
+        winnerName: wEntry ? wName : null,
+        loserName: lEntry ? lName : null,
+        heroName: topBag?.playerName ?? null,
+        roundLabel: rl,
+        redTeamName: facts.redTurn ? (facts.redTurn.side === "home" ? m.homeTeamName : m.awayTeamName) : null,
+      });
+      if (dramaLine) aftermath.push(dramaLine);
+    }
+
     const streakLines: string[] = [];
     if (wEntry && lEntry) {
       const wAfter = currentStreaks(afterList, wEntry);
@@ -706,6 +736,68 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
 
     // 影响收尾段：本场之后才成立的事织进正文（倒金字塔结尾层），最多 3 句
     if (aftermath.length > 0) paragraphs.push(aftermath.slice(0, 3).join(""));
+
+    // 6) 球队近况（收尾新段）：整体近 5 场或分主/客，口径轮换（积分/胜场/不败/丢球/净胜/连败），样本 <3 场不写；弃权场不计入
+    const formOf = (entryId: number, venue: "all" | "home" | "away") => {
+      const recent = tFinished
+        .filter(
+          (x) =>
+            x.id !== m.id &&
+            x.walkoverSide === "" &&
+            (x.homeEntryId === entryId || x.awayEntryId === entryId) &&
+            (venue === "all" || (venue === "home" ? x.homeEntryId === entryId : x.awayEntryId === entryId)),
+        )
+        .slice(-5);
+      if (recent.length < 3) return null;
+      let w = 0;
+      let d = 0;
+      let l = 0;
+      let gf = 0;
+      let ga = 0;
+      for (const x of recent) {
+        const isHome = x.homeEntryId === entryId;
+        const f = isHome ? x.scoreHome : x.scoreAway;
+        const a = isHome ? x.scoreAway : x.scoreHome;
+        gf += f;
+        ga += a;
+        if (f > a) w += 1;
+        else if (f === a) d += 1;
+        else l += 1;
+      }
+      return { n: recent.length, w, d, l, pts: w * 3 + d, ga, gd: gf - ga };
+    };
+    const formLine = (
+      teamName: string,
+      f: { n: number; w: number; d: number; l: number; pts: number; ga: number; gd: number },
+      venue: "all" | "home" | "away",
+      seed: string,
+    ): string | null => {
+      const vn = venue === "all" ? `近 ${f.n} 场` : venue === "home" ? `近 ${f.n} 个主场` : `近 ${f.n} 个客场`;
+      const cand: string[] = [];
+      if (f.pts >= 10) cand.push(`${teamName} ${vn}拿下 ${f.pts} 分。`);
+      if (f.w >= 3) cand.push(`${teamName} ${vn}赢下 ${f.w} 场。`);
+      if (f.l === 0) cand.push(`${teamName} ${vn}${f.w}胜${f.d}平保持不败。`);
+      if (f.ga <= 2) cand.push(`${teamName} ${vn}只丢 ${f.ga} 球。`);
+      if (f.gd >= 4) cand.push(`${teamName} ${vn}净胜 ${f.gd} 球。`);
+      if (f.l >= 3) cand.push(`${teamName} ${vn}输掉 ${f.l} 场，需要调整状态。`);
+      if (cand.length === 0) return null;
+      return pickText(seed, cand);
+    };
+    const formCand: string[] = [];
+    for (const [entryId, teamName, isHome, seed] of [
+      [m.homeEntryId, m.homeTeamName, true, `${m.id}:fh`],
+      [m.awayEntryId, m.awayTeamName, false, `${m.id}:fa`],
+    ] as const) {
+      const all = formOf(entryId, "all");
+      const allLine = all ? formLine(teamName, all, "all", `${seed}:a`) : null;
+      const ven = formOf(entryId, isHome ? "home" : "away");
+      const venLine = ven ? formLine(teamName, ven, isHome ? "home" : "away", `${seed}:v`) : null;
+      const opts = allLine && venLine ? [allLine, venLine] : allLine ? [allLine] : venLine ? [venLine] : [];
+      if (opts.length > 0) formCand.push(pickText(`${seed}:pick`, opts));
+    }
+    if (formCand.length > 0 && chance(`${m.id}:fg`, RATES.formReport)) {
+      paragraphs.push(formCand.join(""));
+    }
   }
 
   // 数据框

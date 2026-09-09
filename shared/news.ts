@@ -22,6 +22,11 @@ export interface FeedItemDTO {
   at: string | null; // 条目事实时间（ISO UTC），橱窗/档案页排序键
   title: string;
   body: string;
+  // 段落制正文（只增不改：缺省时前端回退渲染 body）。match 条目为完整结构（事件段+数据段+快评段?），
+  // body 保留为首个带数据段（橱窗/跑马灯两行截断用）；其余 kind 暂不携带。
+  paragraphs?: string[];
+  // match 条目剧情分（0-100，narrativeFacts.dramaScore）：首页头条「最近战报里最有戏的一场」选卡用
+  drama?: number;
   tournamentId?: number;
   tournamentName?: string;
   matchId?: number; // match/walkover/rescore/discipline 携带
@@ -67,6 +72,7 @@ export interface WeeklyDTO {
   ownGoals: number;
   topScorer: { name: string; teamName: string; goals: number } | null;
   bestDefense: { teamName: string; conceded: number } | null;
+  bestMatch?: { matchId: number; label: string; score: string; dramaScore: number } | null; // 本周最佳比赛（dramaScore 最高）；旧缓存读出无此字段
   matches: WeeklyMatchDTO[];
 }
 

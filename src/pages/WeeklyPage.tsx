@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api } from "../api";
 import type { WeeklyDTO } from "../../shared/news";
@@ -53,6 +53,43 @@ export default function WeeklyPage() {
   const next = isoDate(new Date(base.getTime() + WEEK_MS));
   const canNext = base.getTime() < thisMonday.getTime();
 
+  // 卡序轮换：按周种子确定性旋转，破「射手王永远第一张」的固定版式；「本周最佳」为新增卡
+  const cards: ReactNode[] = [];
+  if (data.topScorer)
+    cards.push(
+      <div className="wk-card" key="scorer">
+        <b>👑 射手王</b>
+        {data.topScorer.name}
+        <span className="muted">（{data.topScorer.teamName}）</span> · {data.topScorer.goals} 球
+      </div>,
+    );
+  if (data.bestDefense)
+    cards.push(
+      <div className="wk-card" key="defense">
+        <b>🛡 最佳防守</b>
+        {data.bestDefense.teamName} · 仅失 {data.bestDefense.conceded} 球
+      </div>,
+    );
+  if (data.biggestMargin)
+    cards.push(
+      <div className="wk-card" key="margin">
+        <b>💥 最大分差</b>
+        <Link to={`/report/${data.biggestMargin.matchId}`}>{data.biggestMargin.score}</Link>
+      </div>,
+    );
+  if (data.bestMatch)
+    cards.push(
+      <div className="wk-card" key="best">
+        <b>⭐ 本周最佳</b>
+        <Link to={`/report/${data.bestMatch.matchId}`}>{data.bestMatch.label}</Link>
+        <span className="muted">（{data.bestMatch.score}）</span>
+      </div>,
+    );
+  let seedH = 0;
+  for (const ch of data.weekStart) seedH = (seedH * 31 + ch.charCodeAt(0)) % 997;
+  const off = cards.length > 0 ? seedH % cards.length : 0;
+  const rotatedCards = [...cards.slice(off), ...cards.slice(0, off)];
+
   return (
     <main className="container">
       <article className="art">
@@ -90,29 +127,7 @@ export default function WeeklyPage() {
           </div>
         </div>
 
-        <div className="wk-high">
-          {data.topScorer && (
-            <div className="wk-card">
-              <b>👑 射手王</b>
-              {data.topScorer.name}
-              <span className="muted">（{data.topScorer.teamName}）</span> · {data.topScorer.goals} 球
-            </div>
-          )}
-          {data.bestDefense && (
-            <div className="wk-card">
-              <b>🛡 最佳防守</b>
-              {data.bestDefense.teamName} · 仅失 {data.bestDefense.conceded} 球
-            </div>
-          )}
-          {data.biggestMargin && (
-            <div className="wk-card">
-              <b>💥 最大分差</b>
-              <Link to={`/report/${data.biggestMargin.matchId}`}>
-                {data.biggestMargin.score}
-              </Link>
-            </div>
-          )}
-        </div>
+        <div className="wk-high">{rotatedCards}</div>
 
         {data.matches.length > 0 && (
           <div className="art-sec">

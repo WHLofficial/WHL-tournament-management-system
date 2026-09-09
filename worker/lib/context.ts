@@ -424,18 +424,24 @@ export function cnDate(iso: string | null): string {
   return `${d.getUTCMonth() + 1} 月 ${d.getUTCDate()} 日`;
 }
 
-// 轮次文案：淘汰赛用轮次名，小组/循环用第 N 轮；阶段有自定义名时前置
+// 轮次文案：淘汰赛用轮次名，小组/循环用第 N 轮；阶段有自定义名时前置；
+// 有赛事名时整体前置赛事名（标题/正文提及轮次一律「赛事名 + 轮次名」，不出光杆「第 N 轮」）
 export function roundLabel(
-  m: Pick<FinishedMatch, "stageKind" | "stageName" | "round">,
+  m: Pick<FinishedMatch, "stageKind" | "stageName" | "round"> & { tournamentName?: string | null },
   maxRound: number,
 ): string {
   const stage = m.stageName?.trim() || "";
+  let inner: string;
   if (m.stageKind === "elim") {
     const r = elimRoundName(m.round, maxRound);
-    return stage ? `${stage}·${r}` : r;
+    inner = stage ? `${stage}·${r}` : r;
+  } else if (m.stageKind === "group") {
+    inner = `${stage || "小组赛"}第 ${m.round} 轮`;
+  } else {
+    inner = stage ? `${stage}·第 ${m.round} 轮` : `第 ${m.round} 轮`;
   }
-  if (m.stageKind === "group") return `${stage || "小组赛"}第 ${m.round} 轮`;
-  return stage ? `${stage}·第 ${m.round} 轮` : `第 ${m.round} 轮`;
+  const tn = m.tournamentName?.trim() || "";
+  return tn ? `${tn} ${inner}` : inner;
 }
 
 // 各阶段最大轮数（淘汰赛轮次名依赖总轮数），一次分组查询

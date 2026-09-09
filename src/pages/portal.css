@@ -207,6 +207,16 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
+/* 段落制快讯（match 条目）：档案页整段铺开，段间留白 */
+.news-item-paras p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.news-item-paras p + p {
+  margin-top: 8px;
+}
 .news-item .reaction-bar { margin-top: 8px; margin-bottom: -2px; }
 /* 橱窗底部「阅读更多」 */
 .whl-more {

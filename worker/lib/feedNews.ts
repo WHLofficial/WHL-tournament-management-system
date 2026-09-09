@@ -5,7 +5,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { FeedItemDTO, RecapDTO, WeeklyDTO, WeeklyMatchDTO } from "../../shared/news";
 import type { RawEvent, FinishedMatch } from "./context";
-import { pickText } from "../../shared/textpick";
+import { chance, pickText } from "../../shared/textpick";
 import {
   cnum,
   currentStreaks,
@@ -20,6 +20,26 @@ import {
   standingsSnapshot,
   subtractMatchContribution,
 } from "./context";
+import { bestMatchOf, computeMatchFacts, summarizeRound } from "./narrativeFacts";
+import {
+  LEADER_TITLE,
+  MILESTONE_GOALS_TITLE,
+  MILESTONE_TOP_TITLE,
+  RED2Y_TITLE,
+  RED_TITLE,
+  RECAP_TITLE,
+  STREAK_CLEAN_TITLE,
+  STREAK_UNBEATEN_TITLE,
+  STREAK_WIN_TITLE,
+  RATES,
+  chooseAngle,
+  matchDataPara,
+  matchNewsTitle,
+  pickAttitude,
+  pickBreath,
+  walkoverTitle,
+  weeklyTitle,
+} from "./copybanks";
 
 // ---------- 周报（自然周，周一起算，UTC 口径；本周空回退最近有比赛的一周） ----------
 
@@ -132,6 +152,11 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
   }
   const topScorer = topScorerOf(eventsByMatch, list);
 
+  // 本周最佳比赛：dramaScore 最高（平分取先完赛者）；弃权场 computeMatchFacts 返 null 自然出局
+  const bestMatch = bestMatchOf(
+    list.map((m) => ({ m, facts: computeMatchFacts(m, eventsByMatch.get(m.id) ?? []) })),
+  );
+
   // 聚合：进球含弃权判负记分（0:3 与积分榜口径一致）；零封/最佳防守不计弃权场
   let goals = 0;
   let cleanSheets = 0;
@@ -178,6 +203,7 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
     ownGoals,
     topScorer,
     bestDefense,
+    bestMatch,
     matches,
   };
 }
@@ -576,28 +602,84 @@ export async function buildFeed(
         ...base,
         id: `wo:${m.id}`,
         kind: "walkover",
-        title:
-          m.walkoverSide === "both"
-            ? `${m.homeTeamName} 与 ${m.awayTeamName} 双双弃权`
-            : `${loser} 弃权，${winner} 不战而胜`,
+        title: walkoverTitle(`wt:${m.id}`, loser, winner, m.homeTeamName, m.awayTeamName),
         body: pickText(`wo:${m.id}`, [
           `${rl}｜比分记 ${m.scoreHome}:${m.scoreAway}${m.note ? `（${m.note}）` : ""}`,
           `${rl}｜判定比分 ${m.scoreHome}:${m.scoreAway}${m.note ? `，${m.note}` : ""}`,
         ]),
       });
     } else {
-      const bodyLines = matchBodyLines(m, eventsByMatch.get(m.id) ?? []);
+      const events = eventsByMatch.get(m.id) ?? [];
+      const facts = computeMatchFacts(m, events);
+      const winnerName = facts?.winnerSide
+        ? facts.winnerSide === "home"
+          ? m.homeTeamName
+          : m.awayTeamName
+        : null;
+      const bodyLines = matchBodyLines(m, events);
       const goalless = m.scoreHome === 0 && m.scoreAway === 0;
+      const loserName = winnerName
+        ? winnerName === m.homeTeamName
+          ? m.awayTeamName
+          : m.homeTeamName
+        : null;
+      // p1 事件段（body=teaser，呼吸句 ≤1 条过骰子拼入段尾）；事件流水从句拼接天然无尾句号，统一补齐
+      const body0 = bodyLines.length
+        ? pickText(`mb:${m.id}`, bodyLines)
+        : goalless
+          ? pickText(`ng:${m.id}`, ["双方均无进球入账", "两队都没能敲开对方球门", "互交白卷，比分没有改写"])
+          : `比分 ${m.scoreHome}:${m.scoreAway}，进球明细未录入`;
+      const body = /[。！？]$/.test(body0) ? body0 : `${body0}。`;
+      const breath = facts ? pickBreath(`nb:${m.id}`, facts, 1, RATES.breathNews) : [];
+      const p1 = breath.length ? `${body}${breath[0]}` : body;
+      // p2 数据段：纯数字盘面（比分/总进球/点球大战），不与事件段重复人物细节
+      const p2 = matchDataPara(`md:${m.id}`, {
+        scoreHome: m.scoreHome,
+        scoreAway: m.scoreAway,
+        totalGoals: facts?.totalGoals ?? m.scoreHome + m.scoreAway,
+        winnerName,
+        penLine: facts?.penShootout
+          ? `点球大战 ${facts.penShootout.home}:${facts.penShootout.away} 分出胜负`
+          : null,
+      });
+      const paragraphs = [p1, p2];
+      // p3 快评段（可选）：drama 高的文章更常开口，平淡场不注水；过了骰子才出现
+      if (facts) {
+        const rate = facts.dramaScore >= 30 ? RATES.attitudeNews : RATES.paraThird;
+        if (chance(`gp3:${m.id}`, rate)) {
+          const topBag =
+            facts.maxBagGoals >= 2
+              ? facts.playerBags.find((p) => p.goals === facts.maxBagGoals) ?? null
+              : null;
+          paragraphs.push(
+            pickAttitude(`av:${m.id}`, chooseAngle(`ag:${m.id}`, facts.dramaScore), {
+              label: `${m.homeTeamName} vs ${m.awayTeamName}`,
+              scoreLine: `${m.scoreHome}:${m.scoreAway}`,
+              goalCount: facts.totalGoals,
+              winnerName,
+              loserName,
+              heroName: topBag?.playerName ?? null,
+              roundLabel: rl,
+            }),
+          );
+        }
+      }
       items.push({
         ...base,
         id: `match:${m.id}`,
         kind: "match",
-        title: `${rl}｜${m.homeTeamName} ${m.scoreHome}:${m.scoreAway} ${m.awayTeamName}`,
-        body: bodyLines.length
-          ? pickText(`mb:${m.id}`, bodyLines)
-          : goalless
-            ? pickText(`ng:${m.id}`, ["双方均无进球入账", "两队都没能敲开对方球门", "互交白卷，比分没有改写"])
-            : `比分 ${m.scoreHome}:${m.scoreAway}，进球明细未录入`,
+        title: matchNewsTitle(`tt:${m.id}`, {
+          roundLabel: rl,
+          home: m.homeTeamName,
+          away: m.awayTeamName,
+          scoreHome: m.scoreHome,
+          scoreAway: m.scoreAway,
+          winnerName,
+          loserName,
+        }, facts),
+        body: p1,
+        paragraphs,
+        drama: facts?.dramaScore,
       });
     }
   }
@@ -659,7 +741,7 @@ export async function buildFeed(
               ...base,
               id: `leader:${m.id}`,
               kind: "leader",
-              title: pickText(`ld:${m.id}`, [`${newL.teamName} 登顶积分榜`, `积分榜易主，${newL.teamName} 登上头名`]),
+              title: pickText(`ld:${m.id}`, LEADER_TITLE)(newL.teamName, oldL.teamName),
               body: pickText(`ldb:${m.id}`, [
                 `${rl}过后反超 ${oldL.teamName}${gap > 0 ? `，领先 ${gap} 分` : ""}`,
                 `把 ${oldL.teamName} 挤下头名（${rl}）${gap > 0 ? `，领先 ${gap} 分` : ""}`,
@@ -679,27 +761,21 @@ export async function buildFeed(
         let body = "";
         if (st.win >= 3) {
           const t = entryTail(cut, entryId, st.win);
-          title = pickText(`sw:${m.id}:${entryId}`, [`${teamName} ${st.win} 连胜`, `${teamName} 斩获${st.win}连胜`]);
+          title = pickText(`sw:${m.id}:${entryId}`, STREAK_WIN_TITLE)(teamName, st.win);
           body = pickText(`swb:${m.id}:${entryId}`, [
             `${rl}｜近 ${st.win} 场全胜，进 ${t.gf} 球失 ${t.ga} 球`,
             `${rl}｜${st.win} 连胜期间进 ${t.gf} 球失 ${t.ga} 球`,
           ]);
         } else if (st.unbeaten >= 5) {
           const t = entryTail(cut, entryId, st.unbeaten);
-          title = pickText(`su:${m.id}:${entryId}`, [
-            `${teamName} 连续 ${st.unbeaten} 场不败`,
-            `${teamName} 已连续 ${st.unbeaten} 场不败`,
-          ]);
+          title = pickText(`su:${m.id}:${entryId}`, STREAK_UNBEATEN_TITLE)(teamName, st.unbeaten);
           body = pickText(`sub:${m.id}:${entryId}`, [
             `${rl}｜近 ${st.unbeaten} 场 ${t.w} 胜 ${t.d} 平，进 ${t.gf} 球失 ${t.ga} 球`,
             `${rl}｜${st.unbeaten} 场 ${t.w} 胜 ${t.d} 平，还未尝败绩`,
           ]);
         } else if (st.cleanSheet >= 2) {
           const t = entryTail(cut, entryId, st.cleanSheet);
-          title = pickText(`sc:${m.id}:${entryId}`, [
-            `${teamName} 连续 ${st.cleanSheet} 场零封`,
-            `${teamName} 的球门连续 ${st.cleanSheet} 场未被攻破`,
-          ]);
+          title = pickText(`sc:${m.id}:${entryId}`, STREAK_CLEAN_TITLE)(teamName, st.cleanSheet);
           body = pickText(`scb:${m.id}:${entryId}`, [
             `${rl}｜近 ${st.cleanSheet} 场零封，进 ${t.gf} 球`,
             `${rl}｜连续 ${st.cleanSheet} 场零封，期间打进 ${t.gf} 球`,
@@ -728,10 +804,7 @@ export async function buildFeed(
             ...base,
             id: `milestone:${m.id}:${e.playerId}`,
             kind: "milestone",
-            title: pickText(`mg:${m.id}:${e.playerId}`, [
-              `${afterRow.name} 达成本届第 ${afterRow.goals} 球`,
-              `${afterRow.name} 攻入本届第 ${afterRow.goals} 球`,
-            ]),
+            title: pickText(`mg:${m.id}:${e.playerId}`, MILESTONE_GOALS_TITLE)(afterRow.name, afterRow.goals),
             body: pickText(`mgb:${m.id}:${e.playerId}`, [
               `${rl}｜代表 ${afterRow.teamName}，本届进球来到 ${afterRow.goals} 个`,
               `${rl}｜为 ${afterRow.teamName} 出战，本届进球数来到 ${afterRow.goals}`,
@@ -742,10 +815,7 @@ export async function buildFeed(
             ...base,
             id: `milestone:${m.id}:${e.playerId}`,
             kind: "milestone",
-            title: pickText(`mt:${m.id}:${e.playerId}`, [
-              `${afterRow.name} 登顶射手榜`,
-              `${afterRow.name} 升至射手榜头名`,
-            ]),
+            title: pickText(`mt:${m.id}:${e.playerId}`, MILESTONE_TOP_TITLE)(afterRow.name, afterRow.goals),
             body: pickText(`mtb:${m.id}:${e.playerId}`, [
               `${rl}过后以 ${afterRow.goals} 球升至射手榜首位`,
               `${rl}｜${afterRow.goals} 球，抢下射手榜第一`,
@@ -767,12 +837,9 @@ export async function buildFeed(
       tournamentId: r.tournament_id,
       tournamentName: r.tournament_name,
       matchId: r.match_id,
-      title: pickText(`dp:${r.id}`, [
-        `${r.player_name ?? "球员"} ${r.type === "red" ? "直红" : "两黄变一红"}被罚下`,
-        r.type === "red" ? `${r.player_name ?? "球员"} 吃到红牌` : `${r.player_name ?? "球员"} 两黄变红离场`,
-      ]),
+      title: pickText(`dp:${r.id}`, r.type === "red" ? RED_TITLE : RED2Y_TITLE)(r.player_name ?? "球员"),
       body: `${roundLabel(
-        { stageKind: r.stage_kind, stageName: r.stage_name, round: r.round },
+        { stageKind: r.stage_kind, stageName: r.stage_name, round: r.round, tournamentName: r.tournament_name },
         redMaxRounds.get(r.stage_id) ?? r.round,
       )}${banSuffixes[i]}`,
     });
@@ -816,7 +883,7 @@ export async function buildFeed(
     const agg = roundAgg(recapLists[i]);
     if (agg.played === 0) continue;
     const rl = roundLabel(
-      { stageKind: g.stage_kind, stageName: g.stage_name, round: g.round },
+      { stageKind: g.stage_kind, stageName: g.stage_name, round: g.round, tournamentName: g.tournament_name },
       recapMaxRounds.get(g.stage_id) ?? g.round,
     );
     items.push({
@@ -827,7 +894,7 @@ export async function buildFeed(
       tournamentName: g.tournament_name,
       stageId: g.stage_id,
       round: g.round,
-      title: `${rl}综述｜${agg.played} 场 ${agg.goals} 球`,
+      title: pickText(`rt:${g.stage_id}:${g.round}`, RECAP_TITLE)(rl, agg.played, agg.goals),
       body: agg.biggestMargin
         ? pickText(`rb:${g.stage_id}:${g.round}`, [
             `最大分差 ${agg.biggestMargin.score}（${agg.biggestMargin.label}）`,
@@ -850,7 +917,13 @@ export async function buildFeed(
         kind: "weekly",
         at: weeklyAt,
         weekStart: weekly.weekStart,
-        title: `WHL 周报 · ${weekly.label}${weekly.isFallback ? "（上周）" : ""}`,
+        title: weeklyTitle(`wkt:${weekly.weekStart}`, {
+          label: `${weekly.label}${weekly.isFallback ? "（上周）" : ""}`,
+          played: weekly.played,
+          goals: weekly.goals,
+          topScorerName: weekly.topScorer?.name,
+          topScorerGoals: weekly.topScorer?.goals,
+        }),
         body: pickText(`wk:${weekly.weekStart}`, [
           `${weekly.played} 场比赛共打进 ${weekly.goals} 球${weekly.topScorer ? `，射手王是 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
           `本周 ${weekly.played} 战收获 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑射手榜` : ""}`,
@@ -902,7 +975,7 @@ export async function buildRoundRecap(
   const isComplete = finished.length >= total.n;
   const maxRounds = await fetchStageMaxRounds(db, [stageId]);
   const rl = roundLabel(
-    { stageKind: stage.kind, stageName: stage.name, round },
+    { stageKind: stage.kind, stageName: stage.name, round, tournamentName: tour.name },
     maxRounds.get(stageId) ?? round,
   );
 
@@ -912,6 +985,11 @@ export async function buildRoundRecap(
     finished.map((m) => m.id),
   );
   const topScorer = topScorerOf(eventsByMatch, finished);
+
+  // 本轮之最（事实层聚合）：最快进球/最晚制胜球/红牌账；最大分差 p1 已记不重复
+  const ext = summarizeRound(
+    finished.map((m) => ({ m, facts: computeMatchFacts(m, eventsByMatch.get(m.id) ?? []) })),
+  );
 
   // 积分榜前 5：读时现算口径=当前榜；多组小组赛跨组排名无意义，整段留空
   const snap = await standingsSnapshot(db, stageId);
@@ -948,7 +1026,6 @@ export async function buildRoundRecap(
     p1 += pickText(`${rSeed}:air`, ["这一轮的门将们日子不太好过。", "进攻端的账单拉得很长。"]);
   }
   if (!p1.endsWith("。")) p1 += "。";
-  paragraphs.push(p1);
   // 次段：射手与榜首织成一段（段内 2-3 句成文）
   const p2: string[] = [];
   if (topScorer) {
@@ -969,7 +1046,38 @@ export async function buildRoundRecap(
       ]),
     );
   }
-  if (p2.length > 0) paragraphs.push(p2.join("。") + (p2.length > 1 ? "。" : ""));
+  const p2Text = p2.length > 0 ? p2.join("。") + "。" : null;
+
+  // 段序轮换：约一半轮次把射手/榜首段提到开头，破「总账永远第一段」的固定版式
+  const scorerFirst = p2Text !== null && chance(`${rSeed}:ord`, 0.5);
+  if (p2Text !== null && scorerFirst) paragraphs.push(p2Text);
+  paragraphs.push(p1);
+  if (p2Text !== null && !scorerFirst) paragraphs.push(p2Text);
+
+  // 尾段「本轮之最」：最快进球/绝杀/红牌账，有账才写（最大分差 p1 已记，不重复）
+  const bits: string[] = [];
+  if (ext.fastestGoal)
+    bits.push(
+      pickText(`${rSeed}:xfg`, [
+        `本轮最快的进球出现在 ${ext.fastestGoal.label}（第 ${ext.fastestGoal.minute} 分钟${ext.fastestGoal.playerName ? `，${ext.fastestGoal.playerName}` : ""}）`,
+        `${ext.fastestGoal.label} 打进了本轮最快的球，第 ${ext.fastestGoal.minute} 分钟`,
+      ]),
+    );
+  if (ext.latestWinner)
+    bits.push(
+      pickText(`${rSeed}:xlw`, [
+        `${ext.latestWinner.label} 一直缠到第 ${ext.latestWinner.minute} 分钟才分出胜负`,
+        `最晚的制胜球也在本轮：${ext.latestWinner.label}，第 ${ext.latestWinner.minute} 分钟`,
+      ]),
+    );
+  if (ext.redCount > 0)
+    bits.push(
+      pickText(`${rSeed}:xrc`, [
+        ext.redCount === 1 ? "这轮还出现过一张红牌" : `红牌账上，这轮记了 ${ext.redCount} 张`,
+        ext.redCount === 1 ? "有一场比赛见过了红牌" : `这轮的红牌总数是 ${ext.redCount} 张`,
+      ]),
+    );
+  if (bits.length > 0) paragraphs.push(bits.join("。") + "。");
 
   return {
     tournamentId,
