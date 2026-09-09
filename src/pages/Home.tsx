@@ -170,11 +170,16 @@ export function Home() {
     }
   }, []);
 
-  // 头条 = 最近战报里剧情分（drama）最高的一场，平手取更早出现者；无战报时退弃权条目
+  // 头条 = 最近战报里有效剧情分最高的一场，平手取更早出现者；无战报时退弃权条目。
+  // 有效剧情分 = drama × 0.75^idx（idx 为其前更新的完赛条目数，下限 0）：每多一场更新的完赛打七五折，
+  // 比赛日约 10 场，老的高分比赛一个比赛日内让位、隔天基本出清，新的新闻才上得来
+  const HEADLINE_DECAY = 0.75;
   const matchFeed = (feed ?? []).filter((i) => i.kind === "match" && i.homeTeamName);
   const headline =
     matchFeed.length > 0
-      ? matchFeed.reduce((a, b) => ((b.drama ?? 0) > (a.drama ?? 0) ? b : a))
+      ? matchFeed
+          .map((item, idx) => ({ item, eff: Math.max(0, (item.drama ?? 0) * Math.pow(HEADLINE_DECAY, idx)) }))
+          .reduce((a, b) => (b.eff > a.eff ? b : a)).item
       : ((feed ?? []).find((i) => i.kind === "walkover" && i.homeTeamName) ?? null);
   const shelf = (feed ?? []).filter((i) => i !== headline).slice(0, 3);
   const tickerItems = (feed ?? []).slice(0, 12);
