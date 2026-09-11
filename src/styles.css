@@ -1842,6 +1842,33 @@ button.add-stage {
     0 0 14px rgba(240, 190, 70, 0.95),
     0 0 30px rgba(240, 190, 70, 0.55);
 }
+/* 顶栏竞猜站入口：与鸣谢同款按钮形态，冷色调区分（选择器要压过 .nav-links a 的标签样式） */
+.nav-links a.btn-guess {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #35a8c9;
+  background: linear-gradient(180deg, #8fe6f7, #35a8c9);
+  color: #06303d;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow:
+    0 0 10px rgba(80, 205, 235, 0.7),
+    0 0 22px rgba(80, 205, 235, 0.35);
+}
+.nav-links a.btn-guess:hover {
+  color: #06303d;
+  filter: brightness(1.07);
+  box-shadow:
+    0 0 14px rgba(80, 205, 235, 0.9),
+    0 0 30px rgba(80, 205, 235, 0.5);
+}
 .credit {
   position: fixed;
   inset: 0;

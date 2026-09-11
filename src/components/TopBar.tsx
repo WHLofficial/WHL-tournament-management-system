@@ -31,11 +31,6 @@ export function TopBar() {
       </Link>
       <nav className="nav-links">
         {!forced && <Link to="/tactics">战术板</Link>}
-        {!forced && (
-          <a href={GUESS_URL} target="_blank" rel="noopener noreferrer">
-            竞猜 ↗
-          </a>
-        )}
         {user && !forced && (user.role === "admin" || user.role === "superadmin") ? (
           <>
             <Link to="/admin">赛事管理</Link>
@@ -46,6 +41,11 @@ export function TopBar() {
         ) : null}
         {user && !forced ? <Link to="/my-team">我的球队</Link> : null}
         {!forced && <CreditsButton />}
+        {!forced && (
+          <a className="btn-guess" href={GUESS_URL} target="_blank" rel="noopener noreferrer">
+            去竞猜站↗
+          </a>
+        )}
       </nav>
       {loading ? null : user ? (
         <span className="userbox">
