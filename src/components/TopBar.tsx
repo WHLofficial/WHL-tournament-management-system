@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ROLE_LABEL, useAuth } from "../auth";
+import { GUESS_URL } from "../lib/links";
 import { CreditsButton } from "./Credits";
 
 export function TopBar() {
@@ -30,6 +31,11 @@ export function TopBar() {
       </Link>
       <nav className="nav-links">
         {!forced && <Link to="/tactics">战术板</Link>}
+        {!forced && (
+          <a href={GUESS_URL} target="_blank" rel="noopener noreferrer">
+            竞猜 ↗
+          </a>
+        )}
         {user && !forced && (user.role === "admin" || user.role === "superadmin") ? (
           <>
             <Link to="/admin">赛事管理</Link>
