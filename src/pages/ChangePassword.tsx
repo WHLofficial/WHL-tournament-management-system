@@ -5,13 +5,36 @@ import { useAuth } from "../auth";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 
 export function ChangePassword({ forced = false }: { forced?: boolean }) {
-  const { refresh } = useAuth();
+  const { refresh, authMode, authHome } = useAuth();
   const navigate = useNavigate();
   // 主动打开时可以关掉回退；强制盖卡没有关闭
   const goBack = () => (window.history.length > 1 ? navigate(-1) : navigate("/"));
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const form = useSubmit();
+
+  // OIDC 模式：密码统一在认证中心管理（auth 改完写回本库并清 must_change_pw，盖卡自动消失）
+  if (authMode === "oidc") {
+    return (
+      <Page>
+        <div className="page-head">
+          <div>
+            <h2>改密码</h2>
+          </div>
+        </div>
+        <div className="card">
+          <p className="muted">
+            {forced
+              ? "密码刚被管理员重置，请到统一认证中心设置新密码，改完回到本站即可继续。"
+              : "密码统一在认证中心管理，跳转后即可修改。"}
+          </p>
+          <a className="btn" href={authHome ? `${authHome}/password` : "/"}>
+            去认证中心改密码
+          </a>
+        </div>
+      </Page>
+    );
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -6,7 +6,7 @@ import { AuthForm, Field, SubmitButton, useSubmit } from "../components/ui";
 import type { MeResp } from "../../shared/types";
 
 export function Register() {
-  const { refresh } = useAuth();
+  const { refresh, loading, authMode, authHome } = useAuth();
   const navigate = useNavigate();
   const { busy, error, run } = useSubmit();
   const [name, setName] = useState("");
@@ -14,6 +14,32 @@ export function Register() {
   const [password2, setPassword2] = useState("");
   const [signupCode, setSignupCode] = useState("");
   const [email, setEmail] = useState("");
+
+  // OIDC 模式：注册收口到认证中心（邀请码/开放注册语义不变）
+  useEffect(() => {
+    if (!loading && authMode === "oidc" && authHome) {
+      window.location.href = `${authHome}/register`;
+    }
+  }, [loading, authMode, authHome]);
+
+  // 认证模式没回来前先等一下，避免表单闪一下又被跳走
+  if (loading) {
+    return (
+      <AuthForm title="注册">
+        <p className="hint">加载中…</p>
+      </AuthForm>
+    );
+  }
+  if (authMode === "oidc") {
+    return (
+      <AuthForm title="注册">
+        <p className="hint">注册已统一到 WHL 认证中心，正在跳转…</p>
+        <p className="hint" style={{ marginTop: 12 }}>
+          没有自动跳转？<a href={authHome ? `${authHome}/register` : "/"}>点这里继续</a>
+        </p>
+      </AuthForm>
+    );
+  }
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();

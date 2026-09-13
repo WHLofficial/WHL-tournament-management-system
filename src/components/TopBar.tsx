@@ -5,7 +5,7 @@ import { GUESS_URL } from "../lib/links";
 import { CreditsButton } from "./Credits";
 
 export function TopBar() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, authMode, authHome } = useAuth();
   const forced = user?.mustChangePassword === true;
   // 登出两段式确认：点一下进入待确认，再点才真登出，5 秒不点自动还原
   const [confirming, setConfirming] = useState(false);
@@ -51,7 +51,11 @@ export function TopBar() {
         <span className="userbox">
           {user.name}
           <span className="role-badge">{user.locked ? "观众" : ROLE_LABEL[user.role]}</span>
-          <Link to="/password">改密码</Link>
+          {authMode === "oidc" ? (
+            <a href={authHome ? `${authHome}/password` : "/password"}>改密码</a>
+          ) : (
+            <Link to="/password">改密码</Link>
+          )}
           <button
             className={`btn ${confirming ? "btn-danger" : "btn-ghost"}`}
             onClick={requestLogout}
@@ -61,8 +65,18 @@ export function TopBar() {
         </span>
       ) : (
         <span className="userbox">
-          <Link to="/login">登录</Link>
-          <Link to="/register">注册</Link>
+          {authMode === "oidc" ? (
+            <>
+              {/* OIDC 模式：登录/注册入口指向本站 RP 发起端点与认证中心注册页 */}
+              <a href="/api/auth/login">登录</a>
+              <a href={authHome ? `${authHome}/register` : "/register"}>注册</a>
+            </>
+          ) : (
+            <>
+              <Link to="/login">登录</Link>
+              <Link to="/register">注册</Link>
+            </>
+          )}
         </span>
       )}
     </header>
