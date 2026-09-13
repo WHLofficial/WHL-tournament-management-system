@@ -1,5 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import type { AppEnv } from "../env";
+import { isOidc } from "../lib/oidc";
 import { getSessionUser } from "../lib/session";
 
 export const attachUser = createMiddleware<AppEnv>(async (c, next) => {
@@ -34,7 +35,13 @@ export const requirePwChanged = createMiddleware<AppEnv>(async (c, next) => {
   const user = c.get("user");
   if (user?.mustChangePassword) {
     return c.json(
-      { error: "password_change_required", message: "密码刚被重置，请先设置新密码" },
+      {
+        error: "password_change_required",
+        // OIDC 模式改密入口在认证中心，文案同步指过去
+        message: isOidc(c.env)
+          ? "密码刚被重置，请先到认证中心设置新密码"
+          : "密码刚被重置，请先设置新密码",
+      },
       403,
     );
   }

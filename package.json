@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --port 8790",
+    "dev:oidc": "wrangler dev --port 8797 --var OIDC_ISSUER:http://127.0.0.1:8792 --var OIDC_CLIENT_ID:tour",
+    "test": "vitest run",
     "dev:web": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
@@ -13,6 +15,7 @@
   },
   "dependencies": {
     "hono": "^4.6.0",
+    "jose": "^6.2.12",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -26,6 +29,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.6.3",
     "vite": "^6.0.0",
+    "vitest": "^3.2.7",
     "wrangler": "^4.0.0"
   }
 }

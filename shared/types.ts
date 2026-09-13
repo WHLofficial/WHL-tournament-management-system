@@ -212,6 +212,14 @@ export interface MeResp {
   mustChangePassword: boolean; // 密码被重置后未改密：强制先改密码
 }
 
+// GET /api/auth/me 响应（统一认证迁移步骤②）：user 与认证模式一起下发。
+// authMode=oidc 时前端把登录/注册/改密/登出入口指向认证中心（authHome）
+export interface MeEnvelope {
+  user: MeResp | null;
+  authMode: "oidc" | "shared";
+  authHome: string | null;
+}
+
 // ---------- API DTO（camelCase，路由层做映射） ----------
 
 export interface TeamDTO {

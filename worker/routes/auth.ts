@@ -3,9 +3,10 @@ import type { Context } from "hono";
 import type { AppEnv } from "../env";
 import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
-import { createSession, destroySession } from "../lib/session";
+import { createSession, destroyOidcSession, destroySession } from "../lib/session";
+import { isOidc } from "../lib/oidc";
 import { requireUser } from "../middleware/auth";
-import type { MeResp } from "../../shared/types";
+import type { MeEnvelope, MeResp } from "../../shared/types";
 
 const app = new Hono<AppEnv>();
 
@@ -25,6 +26,8 @@ async function teamIdOf(c: Context<AppEnv>, userId: number): Promise<number | nu
 }
 
 app.post("/register", async (c) => {
+  // OIDC 模式：注册收口到认证中心（auth 写 tour 库，邀请码/开放注册/首个超管语义不变）
+  if (isOidc(c.env)) return c.redirect(`${c.env.OIDC_ISSUER}/register`, 302);
   const ip = clientIp(c);
   if (!(await rateLimit(c.env, `reg:${ip}`, 5, 3600)))
     return c.json({ error: "rate_limited", message: "注册太频繁，请一小时后再试" }, 429);
@@ -108,6 +111,8 @@ app.post("/register", async (c) => {
 });
 
 app.post("/login", async (c) => {
+  // OIDC 模式：登录收口到认证中心，本端点退化为跳 RP 登录发起（旧前端入口兜底）
+  if (isOidc(c.env)) return c.redirect("/api/auth/login", 302);
   const ip = clientIp(c);
   if (!(await rateLimit(c.env, `login-ip:${ip}`, 10, 900)))
     return c.json({ error: "rate_limited", message: "尝试太频繁，请 15 分钟后再来" }, 429);
@@ -140,12 +145,23 @@ app.post("/login", async (c) => {
 });
 
 app.post("/logout", async (c) => {
+  if (isOidc(c.env)) {
+    // 先吊销本地会话行并清 cookie；前端再跳认证中心 end_session，联动全生态登出
+    await destroyOidcSession(c);
+    const origin = c.env.OIDC_REDIRECT_ORIGIN || new URL(c.req.url).origin;
+    return c.json({
+      ok: true,
+      redirect: `${c.env.OIDC_ISSUER}/logout?post_logout_redirect_uri=${encodeURIComponent(origin + "/")}`,
+    });
+  }
   await destroySession(c);
   return c.json({ ok: true });
 });
 
 // 修改自己的密码：验证旧密码；改完当前会话保持有效
 app.post("/password", requireUser, async (c) => {
+  // OIDC 模式：改密收口到认证中心（auth 写 tour 库并清 must_change_pw）
+  if (isOidc(c.env)) return c.redirect(`${c.env.OIDC_ISSUER}/password`, 302);
   const user = c.get("user")!;
   if (!(await rateLimit(c.env, `pwd:${user.id}`, 5, 900)))
     return c.json({ error: "rate_limited", message: "尝试太频繁，请 15 分钟后再来" }, 429);
@@ -170,8 +186,14 @@ app.post("/password", requireUser, async (c) => {
   return c.json({ ok: true });
 });
 
-app.get("/me", requireUser, async (c) => {
-  const user = c.get("user")!;
+// 认人接口：user 与认证模式一起下发（前端据此切换登录/注册/改密/登出入口）。
+// 未登录也回 200 + user:null——前端需要 authMode 决定跳哪，401 会让它拿不到这个信息
+app.get("/me", async (c) => {
+  const user = c.get("user");
+  const oidc = isOidc(c.env);
+  const authMode = oidc ? "oidc" : "shared";
+  const authHome = oidc ? c.env.OIDC_ISSUER! : null;
+  if (!user) return c.json({ user: null, authMode, authHome } satisfies MeEnvelope);
   const resp: MeResp = {
     id: user.id,
     name: user.name,
@@ -180,7 +202,7 @@ app.get("/me", requireUser, async (c) => {
     locked: user.locked,
     mustChangePassword: user.mustChangePassword,
   };
-  return c.json(resp);
+  return c.json({ user: resp, authMode, authHome } satisfies MeEnvelope);
 });
 
 type RegisterBody = { name?: string; password?: string; signupCode?: string; email?: string };

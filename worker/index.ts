@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "./env";
 import { attachUser } from "./middleware/auth";
+import oidcRoutes from "./routes/oidc";
 import authRoutes from "./routes/auth";
 import adminRoutes from "./routes/admin";
 import publicRoutes from "./routes/public";
@@ -20,6 +21,9 @@ app.use("/api/*", (c, next) =>
 
 app.get("/api/health", (c) => c.json({ ok: true, ts: Date.now() }));
 
+// 统一认证 RP 端点先挂（GET /login、GET /callback、POST /backchannel-logout，
+// 与 authRoutes 的 POST /login 等旧入口按方法+路径天然不冲突）
+app.route("/api/auth", oidcRoutes);
 app.route("/api/auth", authRoutes);
 app.route("/api/admin", adminRoutes);
 app.route("/api/public", publicRoutes);
