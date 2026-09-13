@@ -3,14 +3,15 @@ import type { AppEnv } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
 import { fetchMatchLineup, LineupError, validateLineupSlots } from "../lib/lineup";
-import { requirePwChanged, requireUser } from "../middleware/auth";
+import { requirePermission, requirePwChanged } from "../middleware/auth";
 import { BUILDUPS, FORMS, decodeFut25, decodeFut26 } from "../../shared/tactics";
 import type { LineupSubmitBody, TacticArchiveDTO } from "../../shared/types";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
 const app = new Hono<AppEnv>();
 
-app.use("*", requireUser);
+// 教练侧全部端点旧判定 = 仅登录 + 未锁定（观众号也持 tour.team.bind，锁定在 /bind 内拦截）
+app.use("*", requirePermission("tour.team.bind", "user"));
 app.use("*", requirePwChanged);
 
 app.post("/bind", async (c) => {

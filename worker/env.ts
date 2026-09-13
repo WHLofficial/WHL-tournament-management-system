@@ -14,7 +14,15 @@ export type Bindings = {
   OIDC_REDIRECT_ORIGIN?: string;
 };
 
-export type SessionUser = { id: number; name: string; role: Role; locked: boolean; mustChangePassword: boolean };
+export type SessionUser = {
+  id: number;
+  name: string;
+  role: Role;
+  locked: boolean;
+  mustChangePassword: boolean;
+  /** 统一认证步骤③（auth P0-10）：OIDC 模式 = userinfo 下发的权限点；兼容模式 = []（判定走旧角色） */
+  permissions: string[];
+};
 
 export type AppEnv = {
   Bindings: Bindings;

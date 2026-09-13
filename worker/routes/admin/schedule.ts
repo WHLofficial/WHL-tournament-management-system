@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
-import { requireAdmin } from "../../middleware/auth";
+import { requirePermission } from "../../middleware/auth";
 import { mediaUrl } from "../../lib/media";
 import type { MatchDTO } from "../../../shared/types";
 import {
@@ -15,7 +15,8 @@ import {
 import { getTiebreakers, readStandings, type StandRow } from "../../lib/standings";
 
 const app = new Hono<AppEnv>();
-app.use("*", requireAdmin);
+// 赛程编排 ≡ 旧 requireAdmin（tour.match.manage，行为等价）
+app.use("*", requirePermission("tour.match.manage"));
 
 type StageRow = {
   id: number;

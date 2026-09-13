@@ -13,6 +13,33 @@ export const requireUser = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 });
 
+// 统一认证步骤③（auth P0-10，TECH_DESIGN §6.3）：OIDC 模式按 userinfo 下发的权限点判定；
+// 兼容模式没有权限点声明，按 compatLevel 回落旧角色判定（与迁移前行为逐点等价）。
+// compatLevel 是该端点在旧角色模型下的判定档位：user=仅登录，admin=录入员及以上，superadmin。
+export function requirePermission(perm: string, compatLevel: "user" | "admin" | "superadmin" = "admin") {
+  return createMiddleware<AppEnv>(async (c, next) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "unauthorized", message: "请先登录" }, 401);
+    if (isOidc(c.env)) {
+      if (!user.permissions.includes(perm)) {
+        return c.json({ error: "forbidden", message: "权限不足" }, 403);
+      }
+      await next();
+      return;
+    }
+    if (
+      (compatLevel === "superadmin" && user.role !== "superadmin") ||
+      (compatLevel === "admin" && user.role !== "admin" && user.role !== "superadmin")
+    ) {
+      return c.json(
+        { error: "forbidden", message: compatLevel === "superadmin" ? "需要超级管理员权限" : "需要管理员权限" },
+        403,
+      );
+    }
+    await next();
+  });
+}
+
 // admin（录入员）及以上
 export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
   const user = c.get("user");

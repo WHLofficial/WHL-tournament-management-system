@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { generateCode, sha256Hex } from "../lib/crypto";
-import { requireAdmin, requirePwChanged } from "../middleware/auth";
+import { requirePermission, requirePwChanged } from "../middleware/auth";
 import teamsRoutes from "./admin/teams";
 import tournamentsRoutes from "./admin/tournaments";
 import scheduleRoutes from "./admin/schedule";
@@ -11,7 +11,9 @@ import announcementsRoutes from "./admin/announcements";
 
 const app = new Hono<AppEnv>();
 
-app.use("*", requireAdmin);
+// 管理台整体 ≡ 旧 requireAdmin（admin+superadmin 才持有 tour.match.manage，行为等价）。
+// 兼容模式回落旧角色判定（见 middleware requirePermission）。
+app.use("*", requirePermission("tour.match.manage"));
 app.use("*", requirePwChanged);
 
 app.route("/teams", teamsRoutes);
@@ -28,10 +30,7 @@ app.get("/org-settings", async (c) => {
   return c.json({ allowOpenReg: row?.allow_open_reg === 1 });
 });
 
-app.put("/org-settings", async (c) => {
-  if (c.get("user")!.role !== "superadmin") {
-    return c.json({ message: "需要超级管理员权限" }, 403);
-  }
+app.put("/org-settings", requirePermission("tour.org.settings", "superadmin"), async (c) => {
   const body = await c.req.json<{ allowOpenReg?: boolean }>().catch(() => null);
   if (typeof body?.allowOpenReg !== "boolean") {
     return c.json({ message: "请求格式不对" }, 400);

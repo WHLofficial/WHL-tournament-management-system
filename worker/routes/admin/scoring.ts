@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
-import { requireAdmin } from "../../middleware/auth";
+import { requirePermission } from "../../middleware/auth";
 import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
 import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig } from "../../lib/suspension";
@@ -9,7 +9,8 @@ import { auditStmt } from "../../lib/audit";
 import type { MatchEventDTO, MatchEventType, MatchLineupDTO } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
-app.use("*", requireAdmin);
+// 比分录入 ≡ 旧 requireAdmin（tour.match.manage，行为等价）
+app.use("*", requirePermission("tour.match.manage"));
 
 class HttpError extends Error {
   constructor(

@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { genTempPassword, hashPassword } from "../../lib/crypto";
-import { requireSuperadmin } from "../../middleware/auth";
+// 账号管理 ≡ 旧 requireSuperadmin（superadmin 专属权限点，行为等价）
+import { requirePermission } from "../../middleware/auth";
 
 const app = new Hono<AppEnv>();
 
-app.use("*", requireSuperadmin);
+app.use("*", requirePermission("tour.accounts.manage", "superadmin"));
 
 // 账号列表（含绑定球队；一账号一队，LEFT JOIN 至多一行）
 app.get("/", async (c) => {

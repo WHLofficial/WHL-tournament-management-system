@@ -52,15 +52,43 @@ interface StubState {
   sid: string;
   idToken?: string; // 覆盖默认现签（伪造签名 / nonce 不符用）
   tokenStatus?: number; // 强制换票失败
+  userinfoStatus?: number; // 强制 userinfo 失败
+  userinfo?: Record<string, unknown>; // 覆盖默认 claims（userinfo 缺字段负例用）
   tokenCalls: URLSearchParams[];
 }
 
+// userinfo 下发的 claims（§6.2 播种投影：admin=recorder+coach，coach=coach），
+// 与 user 表种子一一对应——收口后判定只认这份 claims，不再查表
+const USERINFO_BY_SUB: Record<string, Record<string, unknown>> = {
+  "1": {
+    sub: "1", name: "oidc管理", locked: false, must_change_pw: false,
+    roles: ["tour.coach", "tour.recorder"],
+    permissions: ["tour.match.manage", "tour.team.bind", "tour.team.bindcode.issue"],
+  },
+  "2": { sub: "2", name: "oidc教练", locked: false, must_change_pw: false, roles: ["tour.coach"], permissions: ["tour.team.bind"] },
+  "3": {
+    sub: "3", name: "oidc待改密", locked: false, must_change_pw: true,
+    roles: ["tour.recorder"], permissions: ["tour.match.manage", "tour.team.bindcode.issue"],
+  },
+};
+
 let stub: StubState;
+
+let fakeFetchCalls = 0;
 
 async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = input instanceof URL ? input : new URL(String(input));
   if (url.pathname.endsWith("/jwks.json")) {
     return new Response(JSON.stringify({ keys: [signing.jwk] }), {
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (url.pathname.endsWith("/userinfo")) {
+    fakeFetchCalls++;
+    if (stub.userinfoStatus) return new Response("boom", { status: stub.userinfoStatus });
+    const auth = String(init?.headers instanceof Headers ? init.headers.get("authorization") : (init?.headers as Record<string, string>)?.authorization ?? "");
+    if (auth !== "Bearer fake-at") return new Response(JSON.stringify({ error: "invalid_token" }), { status: 401 });
+    return new Response(JSON.stringify(stub.userinfo ?? USERINFO_BY_SUB[stub.sub] ?? {}), {
       headers: { "content-type": "application/json" },
     });
   }
@@ -238,7 +266,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(u.searchParams.get("response_type")).toBe("code");
     expect(u.searchParams.get("client_id")).toBe(CLIENT_ID);
     expect(u.searchParams.get("redirect_uri")).toBe("http://localhost/api/auth/callback");
-    expect(u.searchParams.get("scope")).toBe("openid");
+    expect(u.searchParams.get("scope")).toBe("openid profile");
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     // S256 challenge 恒 43 位 base64url（auth 侧逐字校验这个形态）
     expect(u.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -269,19 +297,27 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(sc).toContain("Max-Age=604800");
     expect(sc).toContain("Secure");
 
-    // 会话行：token_hash 是会话 cookie 的 sha256（独立实现核对），sub/sid 来自 id_token
-    const row = sqlGet<{ token_hash: string; sub: string; auth_sid: string; revoked_at: null }>(
+    // 会话行：token_hash 是会话 cookie 的 sha256（独立实现核对），sub/sid 来自 id_token，
+    // claims 是回调时 userinfo 的原样存档（收口后判定唯一依据）
+    const row = sqlGet<{ token_hash: string; sub: string; auth_sid: string; claims: string; revoked_at: null }>(
       sqlite,
-      "SELECT token_hash, sub, auth_sid, revoked_at FROM oidc_session",
+      "SELECT token_hash, sub, auth_sid, claims, revoked_at FROM oidc_session",
     );
     expect(row).toEqual({
       token_hash: createHash("sha256").update(session!).digest("hex"),
       sub: "2",
       auth_sid: "sid-1",
+      claims: JSON.stringify({
+        name: "oidc教练",
+        locked: false,
+        must_change_pw: false,
+        roles: ["tour.coach"],
+        permissions: ["tour.team.bind"],
+      }),
       revoked_at: null,
     });
 
-    // /api/auth/me 用会话 cookie 认人（姓名/角色现查 user 表，不信任令牌声明）
+    // /api/auth/me 用会话 cookie 认人（姓名/角色/权限全部来自会话内 claims，不再查 user 表）
     const me = await app.request("/api/auth/me", { method: "GET", headers: { Cookie: `__Host-tour_session=${session}` } }, env);
     const meBody = (await me.json()) as { user: { id: number; name: string; role: string; locked: boolean; mustChangePassword: boolean }; authMode: string };
     expect(meBody.user).toEqual({ id: 2, name: "oidc教练", role: "coach", teamId: null, locked: false, mustChangePassword: false });
@@ -292,11 +328,15 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(((await legacy.json()) as { user: unknown }).user).toBeNull();
   });
 
-  it("验收探针：OIDC 会话下教练端点与管理台端点正常认人、角色照常拦人", async () => {
+  it("验收探针：OIDC 会话下教练端点与管理台端点正常认人、权限点照常拦人", async () => {
     vi.stubGlobal("fetch", fakeFetch);
-    const { env } = freshEnv(true);
+    const { env, sqlite } = freshEnv(true);
 
     const coach = await oidcLogin(env, { sub: "2" });
+    const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
+    // 收口断言：判定只认会话内 claims——把本库 user 表清空，认人与权限判定照常工作
+    sqlite.prepare("DELETE FROM user").run();
+
     const coachTeam = await app.request(
       "/api/coach/me/team",
       { method: "GET", headers: { Cookie: `__Host-tour_session=${coach.session}` } },
@@ -305,7 +345,6 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(coachTeam.status).toBe(200);
     expect(((await coachTeam.json()) as { team: unknown }).team).toBeNull();
 
-    const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
     const orgSettings = await app.request(
       "/api/admin/org-settings",
       { method: "GET", headers: { Cookie: `__Host-tour_session=${admin.session}` } },
@@ -313,7 +352,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     );
     expect(orgSettings.status).toBe(200);
 
-    // 教练撞管理台：403（角色判定不因换认证方式而放宽）
+    // 教练撞管理台：403（claims 里没有 tour.match.manage，判定不因换认证方式而放宽）
     const forbidden = await app.request(
       "/api/admin/org-settings",
       { method: "GET", headers: { Cookie: `__Host-tour_session=${coach.session}` } },
@@ -390,6 +429,12 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     stub = { ...stub, idToken: undefined, challenge: "A".repeat(43) };
     expect((await bad(`code=CODE-2&state=${state}&iss=${encodeURIComponent(ISSUER)}`, temp)).status).toBe(502);
     expect(stub.tokenCalls.at(-1)!.get("code_verifier")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    // userinfo 失败 / 缺关键字段（收口后 claims 是判定唯一来源，拉不到/不完整不能建会话）→ 502
+    stub = { ...stub, challenge: authUrl.searchParams.get("code_challenge")!, userinfoStatus: 500 };
+    expect((await bad(`code=CODE-2&state=${state}&iss=${encodeURIComponent(ISSUER)}`, temp)).status).toBe(502);
+    stub = { ...stub, userinfoStatus: undefined, userinfo: { sub: "2", locked: false } };
+    expect((await bad(`code=CODE-2&state=${state}&iss=${encodeURIComponent(ISSUER)}`, temp)).status).toBe(502);
   });
 
   it("登出：吊销本地会话行，返回认证中心 end_session 地址带白名单回跳", async () => {

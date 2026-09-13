@@ -1,10 +1,9 @@
-// 统一认证接入（迁移步骤②，auth 项目 PRD P0-7，tour 降级）：OIDC RP 端点。
+// 统一认证接入（迁移步骤②③，auth 项目 PRD P0-7/P0-10）：OIDC RP 端点。
 // 配置 OIDC_ISSUER + OIDC_CLIENT_ID 即切换 OIDC 模式；未配置 = 兼容模式，
 // 这些端点一律 404（登录/注册/改密走本站原表单），双模式在 session.ts 里互斥切换。
-// 流程：authorize（PKCE S256，scope 只带 openid）→ 回调验签建本地会话
+// 流程：authorize（PKCE S256，scope=openid profile）→ 回调验签 + 拉 userinfo
+// → 角色/权限/状态存会话行（步骤③收口，判定不再依赖本库 user 表）
 // → 登出先吊销本地行，浏览器再跳认证中心 end_session → back-channel 按 sid 吊销。
-// 不调 userinfo：过渡期 sub 即 tour user id，姓名/角色现查本库 user 表（账号真源仍在 tour，
-// 步骤③才收口），不信任令牌声明。
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { jwtVerify, type JWTPayload } from "jose";
@@ -63,7 +62,7 @@ oidcRoutes.get("/login", async (c) => {
     response_type: "code",
     client_id: c.env.OIDC_CLIENT_ID,
     redirect_uri: callbackUri(c),
-    scope: "openid",
+    scope: "openid profile", // profile 供 userinfo 下发姓名（角色/权限/状态不按 scope 收费）
     state,
     nonce,
     code_challenge: await pkceChallenge(verifier),
@@ -126,9 +125,9 @@ oidcRoutes.get("/callback", async (c) => {
     }),
   });
   const tokens = tokenRes.ok
-    ? ((await tokenRes.json().catch(() => null)) as { id_token?: unknown } | null)
+    ? ((await tokenRes.json().catch(() => null)) as { id_token?: unknown; access_token?: unknown } | null)
     : null;
-  if (!tokens || typeof tokens.id_token !== "string") {
+  if (!tokens || typeof tokens.id_token !== "string" || typeof tokens.access_token !== "string") {
     return c.json({ error: "oidc_token_error", message: "认证中心换票失败，请稍后重试" }, 502);
   }
 
@@ -155,16 +154,44 @@ oidcRoutes.get("/callback", async (c) => {
     return c.json({ error: "oidc_claim_error", message: "登录凭证不完整，请重新登录" }, 502);
   }
 
+  // 步骤③收口（auth P0-10）：拉 userinfo 把角色/权限/状态存进会话，此后判定不依赖本库
+  // user 表。userinfo 是唯一声明真源（auth 按 aud 过滤下发，§6.3）；access token 只用这一次
+  const uiRes = await fetch(`${issuer}/userinfo`, {
+    headers: { authorization: `Bearer ${tokens.access_token}` },
+  });
+  const ui = uiRes.ok ? ((await uiRes.json().catch(() => null)) as Record<string, unknown> | null) : null;
+  if (
+    !ui ||
+    typeof ui.name !== "string" ||
+    !ui.name ||
+    typeof ui.locked !== "boolean" ||
+    typeof ui.must_change_pw !== "boolean" ||
+    !Array.isArray(ui.roles) ||
+    !ui.roles.every((r) => typeof r === "string") ||
+    !Array.isArray(ui.permissions) ||
+    !ui.permissions.every((p) => typeof p === "string")
+  ) {
+    return c.json({ error: "oidc_userinfo_error", message: "账号信息拉取失败，请重新登录" }, 502);
+  }
+  const claims = JSON.stringify({
+    name: ui.name,
+    locked: ui.locked,
+    must_change_pw: ui.must_change_pw,
+    roles: ui.roles,
+    permissions: ui.permissions,
+  });
+
   const now = new Date().toISOString();
   await c.env.DB.prepare("DELETE FROM oidc_session WHERE expires_at < ?").bind(now).run();
   const token = randomB64url(32);
   await c.env.DB.prepare(
-    "INSERT INTO oidc_session (token_hash, sub, auth_sid, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO oidc_session (token_hash, sub, auth_sid, claims, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
   )
     .bind(
       await sha256Hex(token),
       payload.sub,
       payload.sid,
+      claims,
       now,
       new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
     )
