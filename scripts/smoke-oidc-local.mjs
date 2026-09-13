@@ -147,8 +147,8 @@ ok(
   u1.authzUrl.href,
 );
 ok(
-  u1.authzUrl.searchParams.get("client_id") === "tour" && u1.authzUrl.searchParams.get("scope") === "openid",
-  "client_id=tour，scope=openid",
+  u1.authzUrl.searchParams.get("client_id") === "tour" && u1.authzUrl.searchParams.get("scope") === "openid profile",
+  "client_id=tour，scope=openid profile",
 );
 ok(
   u1.authzUrl.searchParams.get("code_challenge_method") === "S256" &&
