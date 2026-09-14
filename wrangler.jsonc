@@ -32,6 +32,13 @@
       "bucket_name": "whl-media"
     }
   ],
+  // 统一认证中心（生产）：配了这两项即从「共享会话」切到 OIDC 模式（登录跳 auth /authorize，
+  // 会话存本地 oidc_session 表 + __Host-tour_session cookie）；撤掉这两个变量重新部署即回兼容模式。
+  // 注意与上一段的 COOKIE_DOMAIN 不同：那两个值是有意写进配置的（部署可复现、可回滚），不是 secret。
+  "vars": {
+    "OIDC_ISSUER": "https://auth.whleague.win",
+    "OIDC_CLIENT_ID": "tour"
+  },
   "observability": {
     "enabled": true
   },
