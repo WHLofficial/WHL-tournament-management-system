@@ -17,6 +17,14 @@
       "binding": "DB",
       "database_name": "whl",
       "database_id": "ec3cc695-70bc-47ab-a454-5ca62ec22dd6"
+    },
+    // 增量 7：认证中心库只读绑定（球队目录/绑定关系派生读）。写路径走 HMAC 机器通道
+    // （worker/lib/authClient.ts），密钥用 secret：npx wrangler secret put AUTH_BIND_SECRET
+    // （与 auth 服务的 BIND_SECRET 同值；不配则派生读为空、绑定端点报「认证中心未配置」）
+    {
+      "binding": "AUTH_DB",
+      "database_name": "whl-auth",
+      "database_id": "b76d1129-77ae-4844-931c-1c7b00a9b048"
     }
   ],
   "kv_namespaces": [

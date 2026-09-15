@@ -1,6 +1,14 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { generateCode, sha256Hex } from "../lib/crypto";
+import {
+  AuthApiError,
+  authIssueTeamCode,
+  authRegisterTeam,
+  authUnbindTeam,
+  teamCodes,
+  teamMembers,
+} from "../lib/authClient";
 import { requirePermission, requirePwChanged } from "../middleware/auth";
 import teamsRoutes from "./admin/teams";
 import tournamentsRoutes from "./admin/tournaments";
@@ -84,76 +92,74 @@ app.get("/signup-codes", async (c) => {
 });
 
 // ---- 球队认证码（教练绑定用）：一次有效，默认 24h ----
+// ---- 球队认证码（教练绑定用）：一次有效，默认 24h。
+// 增量 7：码表与烧码收口认证中心；这里只代理发码。目录缺行时自愈登记后重试一次。 ----
 app.post("/teams/:id/auth-codes", async (c) => {
   const teamId = Number(c.req.param("id"));
-  const team = await c.env.DB.prepare("SELECT id FROM team WHERE id = ?")
+  const team = await c.env.DB.prepare("SELECT id, name FROM team WHERE id = ?")
     .bind(teamId)
-    .first<{ id: number }>();
+    .first<{ id: number; name: string }>();
   if (!team) return c.json({ message: "球队不存在" }, 404);
 
   const body = await c.req.json<{ expiresInHours?: number }>().catch(() => null);
-  const hours =
+  const requested =
     typeof body?.expiresInHours === "number" && body.expiresInHours > 0
       ? body.expiresInHours
       : 24;
-  const expiresAt = new Date(Date.now() + hours * 3600_000).toISOString();
-  const code = generateCode(8);
-  await c.env.DB.prepare(
-    "INSERT INTO auth_code (team_id, code_hash, expires_at, created_by) VALUES (?, ?, ?, ?)"
-  )
-    .bind(teamId, await sha256Hex(code), expiresAt, c.get("user")!.id)
-    .run();
-  return c.json({ code, expiresAt }, 201);
+  const hours = Math.min(requested, 720); // auth 端上限 30 天
+  const issue = async () => authIssueTeamCode(c.env, { tourTeamId: teamId, hours });
+  let out: { code: string; expiresAt: string };
+  try {
+    out = await issue();
+  } catch (e) {
+    // 目录缺行自愈：建队后没登记过（register 失败/迁移前建的队）→ 登记后重试
+    if (e instanceof AuthApiError && e.code === "team_not_found") {
+      try {
+        await authRegisterTeam(c.env, { tourTeamId: teamId, name: team.name });
+      } catch {
+        return c.json({ message: "认证中心暂不可用，请稍后再试" }, 502);
+      }
+      try {
+        out = await issue();
+      } catch {
+        return c.json({ message: "认证中心暂不可用，请稍后再试" }, 502);
+      }
+    } else {
+      return c.json({ message: "认证中心暂不可用，请稍后再试" }, 502);
+    }
+  }
+  return c.json({ code: out.code, expiresAt: out.expiresAt }, 201);
 });
 
 app.get("/teams/:id/auth-codes", async (c) => {
   const teamId = Number(c.req.param("id"));
-  const rows = await c.env.DB.prepare(
-    `SELECT id, expires_at, used_by, used_at, created_at FROM auth_code
-     WHERE team_id = ? ORDER BY created_at DESC LIMIT 20`
-  )
-    .bind(teamId)
-    .all<{
-      id: number;
-      expires_at: string | null;
-      used_by: number | null;
-      used_at: string | null;
-      created_at: string;
-    }>();
-  return c.json({
-    codes: rows.results.map((r) => ({
-      id: r.id,
-      expiresAt: r.expires_at,
-      used: r.used_by !== null,
-      usedAt: r.used_at,
-      createdAt: r.created_at,
-    })),
-  });
+  return c.json({ codes: await teamCodes(c.env, teamId) });
 });
 
 app.get("/teams/:id/members", async (c) => {
   const teamId = Number(c.req.param("id"));
-  const rows = await c.env.DB.prepare(
-    `SELECT tm.user_id, u.name, tm.created_at FROM team_member tm
-     JOIN user u ON u.id = tm.user_id WHERE tm.team_id = ? ORDER BY tm.created_at`
-  )
-    .bind(teamId)
-    .all<{ user_id: number; name: string; created_at: string }>();
-  return c.json({
-    members: rows.results.map((r) => ({
-      userId: r.user_id,
-      name: r.name,
-      joinedAt: r.created_at,
-    })),
-  });
+  return c.json({ members: await teamMembers(c.env, teamId) });
 });
 
-// 解绑教练（一账号一队，解绑后可凭新码绑别队）
+// 解绑教练（一账号一队，解绑后可凭新码绑别队）；真源在 auth，本地留审计
 app.delete("/teams/:id/members/:userId", async (c) => {
   const teamId = Number(c.req.param("id"));
   const userId = Number(c.req.param("userId"));
-  await c.env.DB.prepare("DELETE FROM team_member WHERE team_id = ? AND user_id = ?")
-    .bind(teamId, userId)
+  try {
+    await authUnbindTeam(c.env, userId);
+  } catch (e) {
+    if (e instanceof AuthApiError) {
+      if (e.code === "not_bound") return c.json({ message: "该账号未绑定球队" }, 404);
+      if (e.code === "unconfigured") return c.json({ message: "认证中心通道未配置" }, 500);
+      return c.json({ message: "认证中心暂不可用，请稍后再试" }, 502);
+    }
+    throw e;
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json)
+     VALUES (?, ?, 'team_member', ?, ?)`
+  )
+    .bind(c.get("user")!.id, "team.unbind", userId, JSON.stringify({ teamId }))
     .run();
   return c.json({ ok: true });
 });

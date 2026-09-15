@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
-import { sha256Hex } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
 import { fetchMatchLineup, LineupError, validateLineupSlots } from "../lib/lineup";
+import { AuthApiError, authBindTeam, boundTeamId, teamMembers } from "../lib/authClient";
 import { requirePermission, requirePwChanged } from "../middleware/auth";
 import { BUILDUPS, FORMS, decodeFut25, decodeFut26 } from "../../shared/tactics";
 import type { LineupSubmitBody, TacticArchiveDTO } from "../../shared/types";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
+// 增量 7：绑定真源在 auth 库（team_binding），本仓只读派生（AUTH_DB）。
 const app = new Hono<AppEnv>();
 
 // 教练侧全部端点旧判定 = 仅登录 + 未锁定（观众号也持 tour.team.bind，锁定在 /bind 内拦截）
@@ -33,75 +34,38 @@ app.post("/bind", async (c) => {
     return c.json({ message: "认证码格式不对，应为 8 位字母数字" }, 400);
   }
 
-  const hash = await sha256Hex(code);
-  const row = await c.env.DB.prepare(
-    `SELECT id, team_id, expires_at FROM auth_code
-     WHERE code_hash = ? AND used_by IS NULL
-       AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`
-  )
-    .bind(hash)
-    .first<{ id: number; team_id: number; expires_at: string | null }>();
-  if (!row) {
-    return c.json({ message: "认证码无效或已过期" }, 400);
-  }
-
-  // 一账号一队先查再插：查不出已绑时不烧码，提示更友好
-  const existing = await c.env.DB.prepare(
-    "SELECT team_id FROM team_member WHERE user_id = ?"
-  )
-    .bind(user.id)
-    .first<{ team_id: number }>();
-  if (existing) {
-    return c.json({ message: "该账号已经绑定了球队，解绑需联系管理员" }, 409);
-  }
-
-  // 条件烧码防并发重复使用（两个请求同码竞速，只有一个能改到行）
-  const burn = await c.env.DB.prepare(
-    `UPDATE auth_code SET used_by = ?, used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-     WHERE id = ? AND used_by IS NULL`
-  )
-    .bind(user.id, row.id)
-    .run();
-  if ((burn.meta.changes ?? 0) !== 1) {
-    return c.json({ message: "认证码无效或已过期" }, 400);
-  }
+  // 增量 7：绑定真源在 auth（team_binding），烧码经机器通道写认证中心；
+  // 一次性码、一账号一队并发闸、审计全在 auth 单事务内完成。
   try {
-    await c.env.DB.prepare("INSERT INTO team_member (team_id, user_id) VALUES (?, ?)").bind(
-      row.team_id,
-      user.id,
-    ).run();
-  } catch {
-    return c.json({ message: "该账号已经绑定了球队，解绑需联系管理员" }, 409);
+    const { teamId } = await authBindTeam(c.env, { code, accountId: user.id, via: "tour" });
+    return c.json({ ok: true, teamId });
+  } catch (e) {
+    if (e instanceof AuthApiError) {
+      if (e.code === "invalid_code") return c.json({ message: "认证码无效或已过期" }, 400);
+      if (e.code === "already_bound") return c.json({ message: "该账号已经绑定了球队，解绑需联系管理员" }, 409);
+      return c.json({ message: "认证中心暂不可用，请稍后再试" }, 502);
+    }
+    throw e;
   }
-  return c.json({ ok: true, teamId: row.team_id });
 });
 
 // 我的球队（未绑定时 team 为 null）
 app.get("/me/team", async (c) => {
   const user = c.get("user")!;
-  const tm = await c.env.DB.prepare(
-    "SELECT team_id FROM team_member WHERE user_id = ?"
-  )
-    .bind(user.id)
-    .first<{ team_id: number }>();
+  const tm = await boundTeamId(c.env, user.id);
   if (!tm) return c.json({ team: null });
 
   const team = await c.env.DB.prepare("SELECT id, name FROM team WHERE id = ?")
-    .bind(tm.team_id)
+    .bind(tm)
     .first<{ id: number; name: string }>();
   const [players, members, entries] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, name, number FROM player WHERE team_id = ?
        ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id`
     )
-      .bind(tm.team_id)
+      .bind(tm)
       .all<{ id: number; name: string; number: string | null }>(),
-    c.env.DB.prepare(
-      `SELECT u.id, u.name, tm.created_at FROM team_member tm
-       JOIN user u ON u.id = tm.user_id WHERE tm.team_id = ? ORDER BY tm.created_at`
-    )
-      .bind(tm.team_id)
-      .all<{ id: number; name: string; created_at: string }>(),
+    teamMembers(c.env, tm),
     c.env.DB.prepare(
       `SELECT e.id, t.name AS tournament_name, t.status, g.name AS group_name, e.seed
        FROM entry e
@@ -109,7 +73,7 @@ app.get("/me/team", async (c) => {
        LEFT JOIN "group" g ON g.id = e.group_id
        WHERE e.team_id = ? ORDER BY t.created_at DESC`
     )
-      .bind(tm.team_id)
+      .bind(tm)
       .all<{
         id: number;
         tournament_name: string;
@@ -120,17 +84,17 @@ app.get("/me/team", async (c) => {
   ]);
   return c.json({
     team: {
-      id: team?.id ?? tm.team_id,
+      id: team?.id ?? tm,
       name: team?.name ?? "",
       players: players.results.map((p) => ({
         id: p.id,
         name: p.name,
         number: p.number,
       })),
-      members: members.results.map((m) => ({
-        id: m.id,
+      members: members.map((m) => ({
+        id: m.userId,
         name: m.name,
-        joinedAt: m.created_at,
+        joinedAt: m.joinedAt,
       })),
       entries: entries.results.map((e) => ({
         id: e.id,
@@ -146,18 +110,14 @@ app.get("/me/team", async (c) => {
 // 教练侧写入口约定：阵容提交是唯一的教练写赛事数据端点（一赛一队一份，重复提交覆盖）。
 // 可见性：赛前仅管理员可见（备案）；开赛（live）后公开。教练回显只看得到自己那份，看不到对手的。
 
-async function teamIdOf(db: D1Database, userId: number): Promise<number | null> {
-  const tm = await db
-    .prepare("SELECT team_id FROM team_member WHERE user_id = ?")
-    .bind(userId)
-    .first<{ team_id: number }>();
-  return tm?.team_id ?? null;
+async function teamIdOf(env: AppEnv["Bindings"], userId: number): Promise<number | null> {
+  return boundTeamId(env, userId);
 }
 
 // 本队待开的比赛：选一场提交阵容用。轮空场排除（没有对阵意义）
 app.get("/me/matches", async (c) => {
   const user = c.get("user")!;
-  const teamId = await teamIdOf(c.env.DB, user.id);
+  const teamId = await teamIdOf(c.env, user.id);
   if (!teamId) return c.json({ matches: [] });
   const rows = await c.env.DB.prepare(
     `SELECT m.id, m.round, m.leg, m.note,
@@ -216,7 +176,7 @@ app.get("/me/matches", async (c) => {
 // 我在某场比赛已提交的阵容（提交面板回显；只回自己那份，对手的赛前看不到）
 app.get("/matches/:mid/lineup", async (c) => {
   const user = c.get("user")!;
-  const teamId = await teamIdOf(c.env.DB, user.id);
+  const teamId = await teamIdOf(c.env, user.id);
   if (!teamId) return c.json({ lineup: null });
   const mid = Number(c.req.param("mid"));
   let lineup;
@@ -235,7 +195,7 @@ app.get("/matches/:mid/lineup", async (c) => {
 app.put("/matches/:mid/lineup", async (c) => {
   const user = c.get("user")!;
   if (user.locked) return c.json({ message: "你的账号暂不能提交阵容，请联系管理员解锁" }, 403);
-  const teamId = await teamIdOf(c.env.DB, user.id);
+  const teamId = await teamIdOf(c.env, user.id);
   if (!teamId) return c.json({ message: "请先绑定球队再提交阵容" }, 403);
   const ip = c.req.header("CF-Connecting-IP") ?? "local";
   if (!(await rateLimit(c.env, `tsub:${ip}:${user.id}`, 10, 60))) {
@@ -321,7 +281,7 @@ function parseRoster(raw: string): Record<string, string> {
 
 app.get("/tactics", async (c) => {
   const user = c.get("user")!;
-  const teamId = await teamIdOf(c.env.DB, user.id);
+  const teamId = await teamIdOf(c.env, user.id);
   if (!teamId) return c.json({ tactics: [] });
   const rows = await c.env.DB.prepare(
     `SELECT id, code, form, buildup, line_height, note, roster_json, created_at
@@ -354,7 +314,7 @@ app.get("/tactics", async (c) => {
 app.post("/tactics", async (c) => {
   const user = c.get("user")!;
   if (user.locked) return c.json({ message: "你的账号暂不能存档，请联系管理员解锁" }, 403);
-  const teamId = await teamIdOf(c.env.DB, user.id);
+  const teamId = await teamIdOf(c.env, user.id);
   if (!teamId) return c.json({ message: "请先绑定球队再存档" }, 403);
   const ip = c.req.header("CF-Connecting-IP") ?? "local";
   if (!(await rateLimit(c.env, `tarc:${ip}:${user.id}`, 10, 60))) {
@@ -424,7 +384,7 @@ app.post("/tactics", async (c) => {
 
 app.delete("/tactics/:id", async (c) => {
   const user = c.get("user")!;
-  const teamId = await teamIdOf(c.env.DB, user.id);
+  const teamId = await teamIdOf(c.env, user.id);
   if (!teamId) return c.json({ message: "请先绑定球队" }, 403);
   const id = Number(c.req.param("id"));
   const res = await c.env.DB.prepare("DELETE FROM tactic WHERE id = ? AND team_id = ?")

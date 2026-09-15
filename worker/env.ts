@@ -5,6 +5,10 @@ export type Bindings = {
   KV: KVNamespace;
   ASSETS: Fetcher;
   MEDIA: R2Bucket;
+  /** 增量 7：认证中心库（whl-auth）只读绑定——team 目录/绑定关系派生读；写通道走 lib/authClient */
+  AUTH_DB?: D1Database;
+  /** 增量 7：机器通道 HMAC 密钥（与 auth 服务端 BIND_SECRET 同值），发码/烧码/解绑验签用 */
+  AUTH_BIND_SECRET?: string;
   /** 可选：会话 cookie 的 Domain 属性（如 ".example.com"），供同主域子系统共享登录态；不配则 host-only */
   COOKIE_DOMAIN?: string;
   /** 统一认证中心（迁移步骤②，auth 项目 PRD P0-7）：配置即 OIDC 模式；不配 = 兼容模式（共享 KV 会话） */

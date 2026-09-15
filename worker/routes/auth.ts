@@ -7,6 +7,7 @@ import { rateLimit } from "../lib/ratelimit";
 import { createSession, destroyOidcSession, destroySession } from "../lib/session";
 import { OIDC_PROBE_COOKIE } from "../lib/oidc";
 import { isOidc } from "../lib/oidc";
+import { boundTeamId } from "../lib/authClient";
 import { requireUser } from "../middleware/auth";
 import type { MeEnvelope, MeResp } from "../../shared/types";
 
@@ -21,10 +22,8 @@ function nowIso(): string {
 }
 
 async function teamIdOf(c: Context<AppEnv>, userId: number): Promise<number | null> {
-  const row = await c.env.DB.prepare("SELECT team_id FROM team_member WHERE user_id = ?")
-    .bind(userId)
-    .first<{ team_id: number }>();
-  return row?.team_id ?? null;
+  // 增量 7：绑定真源在 auth 库（team_binding），本仓只读派生
+  return boundTeamId(c.env, userId);
 }
 
 app.post("/register", async (c) => {

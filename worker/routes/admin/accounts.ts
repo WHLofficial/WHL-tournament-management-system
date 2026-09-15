@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { genTempPassword, hashPassword } from "../../lib/crypto";
+import { teamOfAccounts } from "../../lib/authClient";
 // 账号管理 ≡ 旧 requireSuperadmin（superadmin 专属权限点，行为等价）
 import { requirePermission } from "../../middleware/auth";
 
@@ -8,25 +9,23 @@ const app = new Hono<AppEnv>();
 
 app.use("*", requirePermission("tour.accounts.manage", "superadmin"));
 
-// 账号列表（含绑定球队；一账号一队，LEFT JOIN 至多一行）
+// 账号列表（含绑定球队）。增量 7：绑定真源在 auth 库，跨库无法 JOIN，
+// 取全量「账号→球队」映射在代码层合并（一账号一队，至多一行）
 app.get("/", async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT u.id, u.name, u.email, u.role, u.locked, u.created_at,
-            tm.team_id AS team_id, t.name AS team_name
-     FROM user u
-     LEFT JOIN team_member tm ON tm.user_id = u.id
-     LEFT JOIN team t ON t.id = tm.team_id
-     ORDER BY u.id`
-  ).all<{
-    id: number;
-    name: string;
-    email: string | null;
-    role: string;
-    locked: number;
-    created_at: string;
-    team_id: number | null;
-    team_name: string | null;
-  }>();
+  const [rows, bindings] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT u.id, u.name, u.email, u.role, u.locked, u.created_at
+       FROM user u ORDER BY u.id`
+    ).all<{
+      id: number;
+      name: string;
+      email: string | null;
+      role: string;
+      locked: number;
+      created_at: string;
+    }>(),
+    teamOfAccounts(c.env),
+  ]);
   return c.json({
     accounts: rows.results.map((r) => ({
       id: r.id,
@@ -35,8 +34,8 @@ app.get("/", async (c) => {
       role: r.role,
       locked: r.locked === 1,
       createdAt: r.created_at,
-      teamId: r.team_id,
-      teamName: r.team_name,
+      teamId: bindings.get(r.id)?.teamId ?? null,
+      teamName: bindings.get(r.id)?.teamName ?? null,
     })),
   });
 });
