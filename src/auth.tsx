@@ -38,6 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(d.user);
       setAuthMode(d.authMode ?? "shared");
       setAuthHome(d.authHome ?? null);
+      // 进站即探测：匿名 + oidc 模式 + 不在冷却期（后端 syncProbe 判定）→ 无感同步登录态。
+      // 回跳目标由 /api/auth/sync 的 back 参数记录；冷却中 syncProbe 为空，防循环
+      if (d.syncProbe) {
+        window.location.href = `/api/auth/sync?back=${encodeURIComponent(location.pathname + location.search)}`;
+        return;
+      }
     } catch {
       setUser(null);
     } finally {

@@ -213,11 +213,13 @@ export interface MeResp {
 }
 
 // GET /api/auth/me 响应（统一认证迁移步骤②）：user 与认证模式一起下发。
-// authMode=oidc 时前端把登录/注册/改密/登出入口指向认证中心（authHome）
+// authMode=oidc 时前端把登录/注册/改密/登出入口指向认证中心（authHome）。
+// syncProbe（进站即探测）：匿名 + oidc + 非冷却期时为 true，前端据此自动跳 /api/auth/sync
 export interface MeEnvelope {
   user: MeResp | null;
   authMode: "oidc" | "shared";
   authHome: string | null;
+  syncProbe?: boolean;
 }
 
 // ---------- API DTO（camelCase，路由层做映射） ----------

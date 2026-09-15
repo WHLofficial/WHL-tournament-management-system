@@ -1,9 +1,11 @@
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
 import type { Context } from "hono";
 import type { AppEnv } from "../env";
 import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
 import { createSession, destroyOidcSession, destroySession } from "../lib/session";
+import { OIDC_PROBE_COOKIE } from "../lib/oidc";
 import { isOidc } from "../lib/oidc";
 import { requireUser } from "../middleware/auth";
 import type { MeEnvelope, MeResp } from "../../shared/types";
@@ -187,13 +189,18 @@ app.post("/password", requireUser, async (c) => {
 });
 
 // 认人接口：user 与认证模式一起下发（前端据此切换登录/注册/改密/登出入口）。
-// 未登录也回 200 + user:null——前端需要 authMode 决定跳哪，401 会让它拿不到这个信息
+// 未登录也回 200 + user:null——前端需要 authMode 决定跳哪，401 会让它拿不到这个信息。
+// syncProbe（进站即探测）：匿名 + oidc 模式 + 不在探测冷却期 → 前端自动跳 /api/auth/sync
+// 无感同步登录态；冷却标记防循环（SPA 页面请求直达静态资源，探测只能由前端发起）
 app.get("/me", async (c) => {
   const user = c.get("user");
   const oidc = isOidc(c.env);
   const authMode = oidc ? "oidc" : "shared";
   const authHome = oidc ? c.env.OIDC_ISSUER! : null;
-  if (!user) return c.json({ user: null, authMode, authHome } satisfies MeEnvelope);
+  if (!user) {
+    const probeCooling = Boolean(getCookie(c, OIDC_PROBE_COOKIE));
+    return c.json({ user: null, authMode, authHome, syncProbe: oidc && !probeCooling ? true : undefined } satisfies MeEnvelope);
+  }
   const resp: MeResp = {
     id: user.id,
     name: user.name,

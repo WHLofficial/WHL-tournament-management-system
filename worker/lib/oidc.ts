@@ -8,6 +8,15 @@ import { createRemoteJWKSet } from "jose";
 export const OIDC_SESSION_COOKIE = "__Host-tour_session";
 // authorize 跳转前的 state/nonce/verifier 中转（10 分钟寿命，登录完成后即删）
 export const OIDC_TEMP_COOKIE = "__Host-tour_oidc";
+// 静默同步探测（prompt=none，进站即探测）的冷却标记：无会话访客 10 分钟内不重复探测
+export const OIDC_PROBE_COOKIE = "__Host-tour_probe";
+export const PROBE_COOLDOWN_SECONDS = 600;
+
+/** 只接受站内相对路径，防开放跳转与头部注入（静默探测的回跳地址） */
+export function safeReturn(v: unknown): string {
+  if (typeof v !== "string" || !v.startsWith("/") || v.startsWith("//") || v.includes("\\") || /[\r\n\t]/.test(v)) return "/";
+  return v.slice(0, 512);
+}
 
 export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
 

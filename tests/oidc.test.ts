@@ -10,7 +10,7 @@ import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
 import app from "../worker/index";
 import { hashPassword } from "../worker/lib/crypto";
 import { applyMigrations, createTestD1, createTestKV, sqlGet } from "./d1";
-import { BACKCHANNEL_LOGOUT_EVENT } from "../worker/lib/oidc";
+import { BACKCHANNEL_LOGOUT_EVENT, b64urlDecode } from "../worker/lib/oidc";
 
 const ISSUER = "https://auth.example";
 const CLIENT_ID = "tour";
@@ -243,7 +243,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect((await post("/api/auth/register")).headers.get("Location")).toBe(`${ISSUER}/register`);
 
     const me0 = await app.request("/api/auth/me", { method: "GET" }, env);
-    expect(await me0.json()).toEqual({ user: null, authMode: "oidc", authHome: ISSUER });
+    expect(await me0.json()).toEqual({ user: null, authMode: "oidc", authHome: ISSUER, syncProbe: true });
 
     // 改密移交需有效会话（挂在 requireUser 后面）
     const { session } = await oidcLogin(env);
@@ -519,4 +519,59 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     );
     expect(alive?.revoked_at).toBeNull();
   });
+
+describe("静默同步探测（prompt=none，进站即探测）", () => {
+  async function startSync(env: Record<string, unknown>, back = "/portal") {
+    const sync = await app.request(`/api/auth/sync?back=${encodeURIComponent(back)}`, { method: "GET" }, env);
+    expect(sync.status).toBe(302);
+    const authUrl = new URL(sync.headers.get("Location")!);
+    expect(authUrl.origin).toBe(ISSUER);
+    expect(authUrl.searchParams.get("prompt")).toBe("none");
+    expect(authUrl.searchParams.get("redirect_uri")).toContain("/api/auth/callback");
+    return { authUrl, temp: cookieOf(sync, "__Host-tour_oidc"), probe: cookieOf(sync, "__Host-tour_probe") };
+  }
+
+  it("sync 端点：prompt=none 发起，temp 存 returnTo，种 10 分钟冷却标记；me 据此下发 syncProbe", async () => {
+    const { env } = freshEnv(true);
+    const { authUrl, temp, probe } = await startSync(env);
+    expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(JSON.parse(b64urlDecode(temp!)).returnTo).toBe("/portal");
+    expect(probe).toBe("1");
+    const me = await app.request("/api/auth/me", { method: "GET" }, env);
+    expect(((await me.json()) as { syncProbe?: boolean }).syncProbe).toBe(true);
+    // 冷却中的 me：syncProbe 不再下发
+    const meCooling = await app.request("/api/auth/me", { method: "GET", headers: { Cookie: "__Host-tour_probe=1" } }, env);
+    expect(((await meCooling.json()) as { syncProbe?: boolean }).syncProbe).toBeUndefined();
+  });
+
+  it("auth 无会话回 error=login_required：原路送回来源页继续匿名，不出错页", async () => {
+    const { env } = freshEnv(true);
+    const { authUrl, temp } = await startSync(env);
+    const cb = await app.request(
+      `/api/auth/callback?error=login_required&state=${authUrl.searchParams.get("state")}&iss=${encodeURIComponent(ISSUER)}`,
+      { method: "GET", headers: { Cookie: `__Host-tour_oidc=${temp}` } },
+      env,
+    );
+    expect(cb.status).toBe(302);
+    expect(cb.headers.get("Location")).toBe("/portal");
+    expect(cookieOf(cb, "__Host-tour_session")).toBeUndefined();
+  });
+
+  it("auth 有会话：静默登录回跳来源页；back 非站内相对路径归一化为 /", async () => {
+    vi.stubGlobal("fetch", fakeFetch);
+    const { env, sqlite } = freshEnv(true);
+    const { authUrl, temp } = await startSync(env, "https://evil.example/x");
+    expect(JSON.parse(b64urlDecode(temp!)).returnTo).toBe("/");
+    stub = { code: "CODE-1", challenge: authUrl.searchParams.get("code_challenge")!, nonce: authUrl.searchParams.get("nonce")!, sub: "2", sid: "sid-1", tokenCalls: [] };
+    const cb = await app.request(
+      `/api/auth/callback?code=${stub.code}&state=${authUrl.searchParams.get("state")}&iss=${encodeURIComponent(ISSUER)}`,
+      { method: "GET", headers: { Cookie: `__Host-tour_oidc=${temp}` } },
+      env,
+    );
+    expect(cb.status).toBe(302);
+    expect(cb.headers.get("Location")).toBe("/");
+    expect(cookieOf(cb, "__Host-tour_session")).toBeTruthy();
+  });
+});
+
 });
