@@ -367,11 +367,25 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
     const closing =
       i === goals.length - 1 && winnerSide !== null && scoringSide(e) === winnerSide && e.type !== "own_goal";
     const seed = `mbp:${m.id}:${i}`;
+    // 该侧在第 i 球前的进球数（乌龙记受益方），用于判定「本队首球」
+    const teamGoalsBefore = (side: "home" | "away"): number => {
+      let c = 0;
+      for (let k = 0; k < i; k++) {
+        const g = goals[k];
+        const s = g.type === "own_goal" ? (scoringSide(g) === "home" ? "away" : "home") : scoringSide(g);
+        if (s === side) c += 1;
+      }
+      return c;
+    };
+    const ogCountBefore = goals.slice(0, i).filter((g) => g.type === "own_goal").length;
     let pool: string[];
     if (e.type === "own_goal") {
       pool = first
         ? [`自摆乌龙，为 ${ogBeneficiary(e)} 送出开门礼`, `不慎自摆乌龙，${ogBeneficiary(e)} 白捡一球`]
-        : [`再送一记乌龙，${ogBeneficiary(e)} 笑纳`, "又摆了一道乌龙"];
+        : ogCountBefore === 0
+          ? // 全场第一个乌龙：不写「再送」，受益方首球时第二分句也属多余
+            ["不慎自摆乌龙"]
+          : [`再送一记乌龙，${ogBeneficiary(e)} 笑纳`, "又摆了一道乌龙"];
     } else if (closing) {
       pool = e.type === "pen_goal"
         ? ["点球锁定胜局", "点球奠定胜局"]
@@ -381,9 +395,15 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
         ? ["点球首开纪录", "点球率先破门"]
         : ["率先破门", "首开纪录", "打开局面"];
     } else {
+      // 本队（乌龙记受益方）此前没进过球时不用延续词，避免 A 队进球后 B 队球员「再下一城」的错位
+      const teamFirst = teamGoalsBefore(scoringSide(e)) === 0;
       pool = e.type === "pen_goal"
-        ? ["点球再下一城", "再度主罚点球命中"]
-        : ["再入一球", "接着破门", "也为球队建功"];
+        ? teamFirst
+          ? ["点球破门得分", "点球建功"]
+          : ["点球再下一城", "再度主罚点球命中"]
+        : teamFirst
+          ? ["破门得分", "为球队建功"]
+          : ["再入一球", "接着破门", "也为球队建功"];
     }
     // 句内不重复用词：首选已被前面进球用过时，按种子换一个，再不行取池中第一个未用的
     let p = pickText(seed, pool);

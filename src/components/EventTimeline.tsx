@@ -39,7 +39,9 @@ export function timelineSide(e: PublicMatchEventDTO): "home" | "away" {
 }
 
 // 中央链条-节点式时间线：中轴贯穿、轴上是素色链环节点；
-// 事件图标+分钟+球员信息作为信息块贴在轴旁——主队向左展开、客队向右展开
+// 事件图标+分钟+球员信息作为信息块贴在轴旁——主队向左展开、客队向右展开。
+// 相邻同分钟同侧事件合并为一个节点（乌龙按受益侧）：分钟只显示一次，
+// 节点内逐事件一行、各保留自己的图标与标签，助攻独立一行挂在所属球员下方
 export function EventTimeline({
   events,
   showAll = false,
@@ -49,31 +51,59 @@ export function EventTimeline({
 }) {
   const rows = events.filter((e) => SHOW[e.type] || (showAll && EXTRA[e.type]));
   if (rows.length === 0) return null;
+  const nodeKey = (e: PublicMatchEventDTO) => `${timelineSide(e)}:${e.minute}`;
+  const nodes: PublicMatchEventDTO[][] = [];
+  for (const e of rows) {
+    const g = nodes[nodes.length - 1];
+    if (g && nodeKey(g[0]) === nodeKey(e)) g.push(e);
+    else nodes.push([e]);
+  }
   return (
     <div className="evt-list">
-      {rows.map((e) => {
-        const meta = SHOW[e.type] ?? EXTRA[e.type]!;
-        const mark = BALL_MARK[e.type];
+      {nodes.map((g) => {
+        const head = g[0];
+        const headMeta = SHOW[head.type] ?? EXTRA[head.type]!;
+        const headMark = BALL_MARK[head.type];
+        const side = timelineSide(head);
         const info = (
           <span className="evt-info">
-            <span className={`evt-icon${mark ? ` evt-ball ${mark}` : ""}`}>
-              {meta.card ? <CardIcon kind={meta.card} /> : meta.icon}
+            <span className={`evt-icon${headMark ? ` evt-ball ${headMark}` : ""}`}>
+              {headMeta.card ? <CardIcon kind={headMeta.card} /> : headMeta.icon}
             </span>
-            <span className="evt-min">{e.minute !== null ? `${e.minute}′` : ""}</span>
+            <span className="evt-min">{head.minute !== null ? `${head.minute}′` : ""}</span>
             <span className="evt-who">
-              {e.playerName}
-              {meta.tag && <span className="evt-tag">{meta.tag}</span>}
-              {e.assistPlayerName && (
-                <span className="evt-assist" title="助攻">
-                  👟 {e.assistPlayerName}
-                </span>
-              )}
+              {g.map((e, i) => {
+                const meta = SHOW[e.type] ?? EXTRA[e.type]!;
+                const mark = BALL_MARK[e.type];
+                // 首事件的图标已由节点位展示，行内不再重复；后续事件各带自己的图标
+                const icon =
+                  i === 0 ? null : (
+                    <span className={`evt-icon${mark ? ` evt-ball ${mark}` : ""}`}>
+                      {meta.card ? <CardIcon kind={meta.card} /> : meta.icon}
+                    </span>
+                  );
+                return (
+                  <span className="evt-line" key={e.id}>
+                    <span className="evt-main">
+                      {icon}
+                      <span className="evt-name">
+                        {e.playerName}
+                        {meta.tag && <span className="evt-tag">{meta.tag}</span>}
+                      </span>
+                    </span>
+                    {e.assistPlayerName && (
+                      <span className="evt-assist" title="助攻">
+                        👟 {e.assistPlayerName}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
             </span>
           </span>
         );
-        const side = timelineSide(e);
         return (
-          <div key={e.id} className={`evt-row ${side === "home" ? "evt-home" : "evt-away"}`}>
+          <div key={head.id} className={`evt-row ${side === "home" ? "evt-home" : "evt-away"}`}>
             {side === "home" && info}
             <span className="evt-mid">
               <span className="evt-chain" />

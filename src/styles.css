@@ -908,6 +908,31 @@ button.add-stage {
 }
 .evt-who {
   font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.evt-home .evt-who {
+  align-items: flex-end;
+}
+.evt-line {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.evt-home .evt-line {
+  align-items: flex-end;
+}
+.evt-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.evt-home .evt-main {
+  flex-direction: row-reverse;
+}
+.evt-name {
+  font-weight: 500;
 }
 .evt-tag {
   margin-left: 6px;
@@ -917,9 +942,20 @@ button.add-stage {
   border-radius: 4px;
   padding: 0 4px;
 }
+.evt-home .evt-tag {
+  margin-left: 0;
+  margin-right: 6px;
+}
 .evt-assist {
   color: var(--muted);
   font-size: 12px;
+  /* 独立一行，与所属球员名对齐（缩进过一个图标位） */
+  display: block;
+  padding-left: 24px;
+}
+.evt-home .evt-assist {
+  padding-left: 0;
+  padding-right: 24px;
 }
 .upcoming {
   margin: 18px 0 6px;
