@@ -126,10 +126,14 @@ auth_code    队伍认证码（谈判插件同款规则）
   expires_at,          -- 默认 24h，可指定
   used_by? →user,      -- 用后作废
   created_by →user
+  -- 增量 7 起休眠：码真源上收认证中心 team_bind_code（tour/club 双入口共表）
 
 team_member  绑定关系（教练 = 在这张表里）
   id, team_id →team, user_id →user
   -- 应用层约束：一账号一队；同队多人可绑；仅超管可解绑
+  -- 增量 7 起休眠：绑定真源上收认证中心（auth 库 team/team_bind_code/team_binding），
+  -- 本表存量随 scripts/migrate-team-bindings.mjs 迁移后不再读写；发码/烧码/解绑
+  -- 经 worker/lib/authClient.ts 走 auth 机器 API（X-Sign HMAC），派生读走只读 AUTH_DB
 
 signup_code  注册码（注册验证：无码不能注册）
   id, code_hash, expires_at?,
