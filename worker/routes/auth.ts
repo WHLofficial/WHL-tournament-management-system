@@ -1,11 +1,11 @@
 import { Hono } from "hono";
-import { getCookie } from "hono/cookie";
 import type { Context } from "hono";
 import type { AppEnv } from "../env";
 import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
 import { rateLimit } from "../lib/ratelimit";
-import { createSession, destroyOidcSession, destroySession } from "../lib/session";
-import { OIDC_PROBE_COOKIE } from "../lib/oidc";
+import { createSession, destroyOidcSession, destroySession, isStaleOidcSession } from "../lib/session";
+import { deleteCookie, getCookie } from "hono/cookie";
+import { OIDC_PROBE_COOKIE, OIDC_SESSION_COOKIE } from "../lib/oidc";
 import { isOidc } from "../lib/oidc";
 import { boundTeamId } from "../lib/authClient";
 import { requireUser } from "../middleware/auth";
@@ -198,6 +198,10 @@ app.get("/me", async (c) => {
   const authHome = oidc ? c.env.OIDC_ISSUER! : null;
   if (!user) {
     const probeCooling = Boolean(getCookie(c, OIDC_PROBE_COOKIE));
+    // stale 会话 cookie（行已撤销/过期）：顺手清掉，浏览器侧同步瘦身
+    if (oidc && (await isStaleOidcSession(c))) {
+      deleteCookie(c, OIDC_SESSION_COOKIE, { path: "/", secure: true });
+    }
     return c.json({ user: null, authMode, authHome, syncProbe: oidc && !probeCooling ? true : undefined } satisfies MeEnvelope);
   }
   const resp: MeResp = {

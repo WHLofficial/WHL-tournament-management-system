@@ -52,8 +52,13 @@ function AppShell() {
   const { pathname } = useLocation();
   const { user, loading } = useAuth();
   const bare = pathname === "/login" || pathname === "/register";
+  // 登录态在途（me 未回来）：不渲染任何内容防「匿名→登录态」跳变闪屏；
+  // me 带 syncProbe 时整页跳探测，看到的只是一瞬「加载中」
+  if (loading) {
+    return <div className="container"><p className="hint">加载中…</p></div>;
+  }
   // 密码被重置后未改密：改密码卡盖在一切前面，改完自动消失
-  const forced = !loading && user?.mustChangePassword === true;
+  const forced = user?.mustChangePassword === true;
   return (
     <>
       {!bare && <TopBar />}

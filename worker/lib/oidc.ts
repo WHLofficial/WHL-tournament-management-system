@@ -8,9 +8,10 @@ import { createRemoteJWKSet } from "jose";
 export const OIDC_SESSION_COOKIE = "__Host-tour_session";
 // authorize 跳转前的 state/nonce/verifier 中转（10 分钟寿命，登录完成后即删）
 export const OIDC_TEMP_COOKIE = "__Host-tour_oidc";
-// 静默同步探测（prompt=none，进站即探测）的冷却标记：无会话访客 10 分钟内不重复探测
+// 静默同步探测（prompt=none，进站即探测）的冷却标记：无会话访客 60 秒内不重复探测
+// （60 秒足够打断「探测→回跳→再探测」循环；取长会摁住「别处刚登录回来」的同步）
 export const OIDC_PROBE_COOKIE = "__Host-tour_probe";
-export const PROBE_COOLDOWN_SECONDS = 600;
+export const PROBE_COOLDOWN_SECONDS = 60;
 
 /** 只接受站内相对路径，防开放跳转与头部注入（静默探测的回跳地址） */
 export function safeReturn(v: unknown): string {

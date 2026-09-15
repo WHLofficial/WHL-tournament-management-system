@@ -531,12 +531,16 @@ describe("静默同步探测（prompt=none，进站即探测）", () => {
     return { authUrl, temp: cookieOf(sync, "__Host-tour_oidc"), probe: cookieOf(sync, "__Host-tour_probe") };
   }
 
-  it("sync 端点：prompt=none 发起，temp 存 returnTo，种 10 分钟冷却标记；me 据此下发 syncProbe", async () => {
+  it("sync 端点：prompt=none 发起，temp 存 returnTo，种 60 秒冷却标记；me 据此下发 syncProbe", async () => {
     const { env } = freshEnv(true);
     const { authUrl, temp, probe } = await startSync(env);
     expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
     expect(JSON.parse(b64urlDecode(temp!)).returnTo).toBe("/portal");
     expect(probe).toBe("1");
+    // 探测冷却 60 秒（temp 中转仍是 600，别改错对象）
+    const probeSc = (await app.request("/api/auth/sync?back=%2F", { method: "GET" }, env))
+      .headers.getSetCookie().find((l) => l.startsWith("__Host-tour_probe="));
+    expect(probeSc).toContain("Max-Age=60");
     const me = await app.request("/api/auth/me", { method: "GET" }, env);
     expect(((await me.json()) as { syncProbe?: boolean }).syncProbe).toBe(true);
     // 冷却中的 me：syncProbe 不再下发
@@ -571,6 +575,27 @@ describe("静默同步探测（prompt=none，进站即探测）", () => {
     expect(cb.status).toBe(302);
     expect(cb.headers.get("Location")).toBe("/");
     expect(cookieOf(cb, "__Host-tour_session")).toBeTruthy();
+  });
+
+  it("stale 会话：me 认不出人（行已撤销）→ 下发 syncProbe + 清掉无效会话 cookie", async () => {
+    vi.stubGlobal("fetch", fakeFetch);
+    const { env, sqlite } = freshEnv(true);
+    const { session } = await oidcLogin(env);
+    // 正常会话：me 认人，无 syncProbe，不清 cookie
+    const meLive = await app.request("/api/auth/me", { method: "GET", headers: { Cookie: `__Host-tour_session=${session}` } }, env);
+    const liveJson = (await meLive.json()) as { user: unknown; syncProbe?: boolean };
+    expect(liveJson.user).toBeTruthy();
+    expect(liveJson.syncProbe).toBeUndefined();
+    expect(meLive.headers.getSetCookie().find((l) => l.startsWith("__Host-tour_session="))).toBeUndefined();
+    // 撤销后（back-channel 登出撤行的浏览器侧后果）：cookie 还在但行没了 → 清 cookie + 照常探测
+    sqlite.prepare("UPDATE oidc_session SET revoked_at = '2020-01-01T00:00:00.000Z'").run();
+    const meStale = await app.request("/api/auth/me", { method: "GET", headers: { Cookie: `__Host-tour_session=${session}` } }, env);
+    const staleJson = (await meStale.json()) as { user: unknown; syncProbe?: boolean };
+    expect(staleJson.user).toBeNull();
+    expect(staleJson.syncProbe).toBe(true);
+    const sc = meStale.headers.getSetCookie().find((l) => l.startsWith("__Host-tour_session="));
+    expect(sc).toMatch(/^__Host-tour_session=;/);
+    expect(sc).toContain("Max-Age=0");
   });
 });
 
