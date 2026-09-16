@@ -1,0 +1,1277 @@
+{
+ "resolved": [
+  {
+   "id": 264,
+   "team_id": 1,
+   "name": "Wesley",
+   "number": "80",
+   "candidates": [
+    [
+     80170,
+     "Wesley",
+     52
+    ],
+    [
+     74913,
+     "Wesley",
+     112139
+    ],
+    [
+     232381,
+     "Wesley",
+     131487
+    ]
+   ],
+   "ea_id": 80170,
+   "how": "s901-exact",
+   "s901_team": 73,
+   "s901_num": 80
+  },
+  {
+   "id": 268,
+   "team_id": 1,
+   "name": "Andrew Robertson",
+   "number": "26",
+   "candidates": [
+    [
+     216267,
+     "A. Robertson",
+     9
+    ],
+    [
+     263673,
+     "Andrew",
+     1888
+    ],
+    [
+     259677,
+     "A. Robertson",
+     1961
+    ]
+   ],
+   "ea_id": 216267,
+   "how": "s901-exact",
+   "s901_team": 73,
+   "s901_num": 26
+  },
+  {
+   "id": 489,
+   "team_id": 2,
+   "name": "Reece James",
+   "number": "24",
+   "candidates": [
+    [
+     238074,
+     "R. James",
+     5
+    ],
+    [
+     211514,
+     "R. James",
+     1797
+    ]
+   ],
+   "ea_id": 238074,
+   "how": "s901-exact",
+   "s901_team": 66,
+   "s901_num": 24
+  },
+  {
+   "id": 491,
+   "team_id": 2,
+   "name": "Milos Kerkez",
+   "number": "6",
+   "candidates": [
+    [
+     260908,
+     "M. Kerkez",
+     9
+    ],
+    [
+     80224,
+     "M. Kerkez",
+     634
+    ]
+   ],
+   "ea_id": 260908,
+   "how": "s901-exact",
+   "s901_team": 66,
+   "s901_num": 6
+  },
+  {
+   "id": 497,
+   "team_id": 2,
+   "name": "Malick Fofana",
+   "number": "16",
+   "candidates": [
+    [
+     256420,
+     "M. Fofana",
+     66
+    ],
+    [
+     235849,
+     "M. Fofana",
+     691
+    ],
+    [
+     258973,
+     "M. Fofana",
+     110720
+    ]
+   ],
+   "ea_id": 256420,
+   "how": "s901-exact",
+   "s901_team": 66,
+   "s901_num": 16
+  },
+  {
+   "id": 502,
+   "team_id": 2,
+   "name": "Éderson",
+   "number": "13",
+   "candidates": [
+    [
+     210257,
+     "Ederson",
+     326
+    ],
+    [
+     266866,
+     "Éderson",
+     39
+    ]
+   ],
+   "ea_id": 266866,
+   "how": "s901-team",
+   "s901_team": 66,
+   "s901_num": 13,
+   "same_name_rows": 2,
+   "ea_team": 66
+  },
+  {
+   "id": 122,
+   "team_id": 3,
+   "name": "Ibrahima Konaté",
+   "number": "5",
+   "candidates": [
+    [
+     237678,
+     "I. Konaté",
+     9
+    ],
+    [
+     75083,
+     "I. Konaté",
+     1746
+    ]
+   ],
+   "ea_id": 237678,
+   "how": "s901-exact",
+   "s901_team": 9,
+   "s901_num": 5
+  },
+  {
+   "id": 145,
+   "team_id": 3,
+   "name": "Trent Alexander-Arnold",
+   "number": "66",
+   "candidates": [
+    [
+     231281,
+     "T. Alexander-Arnold",
+     243
+    ],
+    [
+     77414,
+     "T. Arnold",
+     110502
+    ]
+   ],
+   "ea_id": 231281,
+   "how": "s901-exact",
+   "s901_team": 9,
+   "s901_num": 66
+  },
+  {
+   "id": 378,
+   "team_id": 4,
+   "name": "Luke Shaw",
+   "number": "3",
+   "candidates": [
+    [
+     205988,
+     "L. Shaw",
+     11
+    ],
+    [
+     254315,
+     "L. Shaw",
+     1930
+    ]
+   ],
+   "ea_id": 205988,
+   "how": "s901-exact",
+   "s901_team": 11,
+   "s901_num": 3
+  },
+  {
+   "id": 276,
+   "team_id": 5,
+   "name": "Brennan Johnson",
+   "number": "25",
+   "candidates": [
+    [
+     251421,
+     "B. Johnson",
+     18
+    ],
+    [
+     241842,
+     "B. Johnson",
+     94
+    ]
+   ],
+   "ea_id": 251421,
+   "how": "s901-exact",
+   "s901_team": 33,
+   "s901_num": 25
+  },
+  {
+   "id": 283,
+   "team_id": 5,
+   "name": "Ederson",
+   "number": "31",
+   "candidates": [
+    [
+     210257,
+     "Ederson",
+     326
+    ],
+    [
+     266866,
+     "Éderson",
+     39
+    ]
+   ],
+   "ea_id": 210257,
+   "how": "s901-team",
+   "s901_team": 33,
+   "s901_num": 31,
+   "same_name_rows": 2,
+   "ea_team": 33
+  },
+  {
+   "id": 284,
+   "team_id": 5,
+   "name": "Sergej Milinković-Savić",
+   "number": "16",
+   "candidates": [
+    [
+     223848,
+     "S. Milinković-Savić",
+     605
+    ],
+    [
+     204639,
+     "S. Savić",
+     436
+    ]
+   ],
+   "ea_id": 223848,
+   "how": "s901-exact",
+   "s901_team": 33,
+   "s901_num": 16
+  },
+  {
+   "id": 292,
+   "team_id": 5,
+   "name": "Lautaro Martínez",
+   "number": "9",
+   "candidates": [
+    [
+     231478,
+     "L. Martínez",
+     44
+    ],
+    [
+     239301,
+     "L. Martínez",
+     11
+    ],
+    [
+     260044,
+     "Lautaro",
+     114554
+    ],
+    [
+     274564,
+     "L. Martínez",
+     111329
+    ]
+   ],
+   "ea_id": 231478,
+   "how": "s901-exact",
+   "s901_team": 33,
+   "s901_num": 9
+  },
+  {
+   "id": 229,
+   "team_id": 6,
+   "name": "Matthijs de Ligt",
+   "number": "4",
+   "candidates": [
+    [
+     235243,
+     "M. de Ligt",
+     11
+    ],
+    [
+     278560,
+     "M. de Ligt",
+     100646
+    ]
+   ],
+   "ea_id": 235243,
+   "how": "s901-exact",
+   "s901_team": 241,
+   "s901_num": 4
+  },
+  {
+   "id": 231,
+   "team_id": 6,
+   "name": "Rayan Aït-Nouri",
+   "number": "3",
+   "candidates": [
+    [
+     242641,
+     "R. Aït-Nouri",
+     10
+    ],
+    [
+     179543,
+     "A. Nouri",
+     131491
+    ]
+   ],
+   "ea_id": 242641,
+   "how": "s901-exact",
+   "s901_team": 241,
+   "s901_num": 3
+  },
+  {
+   "id": 232,
+   "team_id": 6,
+   "name": "Pape Matar Sarr",
+   "number": "29",
+   "candidates": [
+    [
+     259868,
+     "P. Sarr",
+     18
+    ],
+    [
+     275507,
+     "M. Sarr",
+     76
+    ],
+    [
+     235454,
+     "M. Sarr",
+     64
+    ],
+    [
+     227966,
+     "M. Sarr",
+     110741
+    ]
+   ],
+   "ea_id": 259868,
+   "how": "s901-exact",
+   "s901_team": 241,
+   "s901_num": 29
+  },
+  {
+   "id": 240,
+   "team_id": 6,
+   "name": "Alexander Bah",
+   "number": "6",
+   "candidates": [
+    [
+     245235,
+     "A. Bah",
+     234
+    ],
+    [
+     75148,
+     "A. Bah",
+     72
+    ],
+    [
+     81239,
+     "A. Bah",
+     113222
+    ]
+   ],
+   "ea_id": 245235,
+   "how": "s901-exact",
+   "s901_team": 241,
+   "s901_num": 6
+  },
+  {
+   "id": 443,
+   "team_id": 7,
+   "name": "Alphonso Davies",
+   "number": "19",
+   "candidates": [
+    [
+     234396,
+     "A. Davies",
+     21
+    ],
+    [
+     200715,
+     "A. Davies",
+     1794
+    ],
+    [
+     73111,
+     "A. Davies",
+     1928
+    ]
+   ],
+   "ea_id": 234396,
+   "how": "s901-exact",
+   "s901_team": 13,
+   "s901_num": 19
+  },
+  {
+   "id": 446,
+   "team_id": 7,
+   "name": "Anthony Gordon",
+   "number": "11",
+   "candidates": [
+    [
+     242964,
+     "A. Gordon",
+     13
+    ],
+    [
+     76453,
+     "A. Gordon",
+     112885
+    ]
+   ],
+   "ea_id": 242964,
+   "how": "s901-exact",
+   "s901_team": 13,
+   "s901_num": 11
+  },
+  {
+   "id": 453,
+   "team_id": 7,
+   "name": "Vitinha",
+   "number": "17",
+   "candidates": [
+    [
+     255253,
+     "Vitinha",
+     73
+    ],
+    [
+     263829,
+     "Vitinha",
+     110556
+    ]
+   ],
+   "ea_id": 255253,
+   "how": "s901-exact",
+   "s901_team": 13,
+   "s901_num": 17
+  },
+  {
+   "id": 454,
+   "team_id": 7,
+   "name": "Jonathan David",
+   "number": "18",
+   "candidates": [
+    [
+     243630,
+     "J. David",
+     45
+    ],
+    [
+     244859,
+     "J. David",
+     110176
+    ]
+   ],
+   "ea_id": 243630,
+   "how": "s901-exact",
+   "s901_team": 13,
+   "s901_num": 18
+  },
+  {
+   "id": 91,
+   "team_id": 9,
+   "name": "Mohamed Salah",
+   "number": "11",
+   "candidates": [
+    [
+     209331,
+     "M. Salah",
+     9
+    ],
+    [
+     275683,
+     "M. Salah",
+     113302
+    ]
+   ],
+   "ea_id": 209331,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 11
+  },
+  {
+   "id": 92,
+   "team_id": 9,
+   "name": "Marquinhos",
+   "number": "5",
+   "candidates": [
+    [
+     207865,
+     "Marquinhos",
+     73
+    ],
+    [
+     270478,
+     "Marquinhos",
+     100135
+    ]
+   ],
+   "ea_id": 207865,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 5
+  },
+  {
+   "id": 98,
+   "team_id": 9,
+   "name": "Moussa Diaby",
+   "number": "19",
+   "candidates": [
+    [
+     241852,
+     "M. Diaby",
+     607
+    ],
+    [
+     247034,
+     "M. Diaby",
+     113892
+    ]
+   ],
+   "ea_id": 241852,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 19
+  },
+  {
+   "id": 101,
+   "team_id": 9,
+   "name": "Boubacar Kamara",
+   "number": "44",
+   "candidates": [
+    [
+     236987,
+     "B. Kamara",
+     2
+    ],
+    [
+     224442,
+     "B. Kamara",
+     217
+    ]
+   ],
+   "ea_id": 236987,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 44
+  },
+  {
+   "id": 102,
+   "team_id": 9,
+   "name": "Antonee Robinson",
+   "number": "33",
+   "candidates": [
+    [
+     229348,
+     "A. Robinson",
+     144
+    ],
+    [
+     276845,
+     "A. Robinson",
+     114604
+    ]
+   ],
+   "ea_id": 229348,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 33
+  },
+  {
+   "id": 106,
+   "team_id": 9,
+   "name": "Amadou Onana",
+   "number": "8",
+   "candidates": [
+    [
+     257057,
+     "A. Onana",
+     2
+    ],
+    [
+     226753,
+     "A. Onana",
+     436
+    ]
+   ],
+   "ea_id": 257057,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 8
+  },
+  {
+   "id": 108,
+   "team_id": 9,
+   "name": "José María Giménez",
+   "number": "4",
+   "candidates": [
+    [
+     216460,
+     "J. Giménez",
+     240
+    ],
+    [
+     261161,
+     "M. Giménez",
+     1877
+    ],
+    [
+     272839,
+     "M. Giménez",
+     111019
+    ],
+    [
+     71655,
+     "J. Giménez",
+     110580
+    ]
+   ],
+   "ea_id": 216460,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 4
+  },
+  {
+   "id": 113,
+   "team_id": 9,
+   "name": "Édouard Mendy",
+   "number": "16",
+   "candidates": [
+    [
+     234642,
+     "É. Mendy",
+     112387
+    ],
+    [
+     80901,
+     "E. Mendy",
+     1823
+    ]
+   ],
+   "ea_id": 234642,
+   "how": "s901-exact",
+   "s901_team": 110374,
+   "s901_num": 16
+  },
+  {
+   "id": 54,
+   "team_id": 10,
+   "name": "Mamadou Sarr",
+   "number": "4",
+   "candidates": [
+    [
+     275507,
+     "M. Sarr",
+     76
+    ],
+    [
+     235454,
+     "M. Sarr",
+     64
+    ],
+    [
+     227966,
+     "M. Sarr",
+     110741
+    ]
+   ],
+   "ea_id": 275507,
+   "how": "s901-exact",
+   "s901_team": 5,
+   "s901_num": 4
+  },
+  {
+   "id": 60,
+   "team_id": 10,
+   "name": "João Pedro",
+   "number": "9",
+   "candidates": [
+    [
+     252042,
+     "João Pedro",
+     5
+    ],
+    [
+     70170,
+     "João Pedro",
+     111088
+    ]
+   ],
+   "ea_id": 252042,
+   "how": "s901-exact",
+   "s901_team": 5,
+   "s901_num": 9
+  },
+  {
+   "id": 79,
+   "team_id": 10,
+   "name": "Viktor Johansson",
+   "number": "31",
+   "candidates": [
+    [
+     241643,
+     "V. Johansson",
+     1806
+    ],
+    [
+     81260,
+     "V. Johansson",
+     321
+    ]
+   ],
+   "ea_id": 241643,
+   "how": "s901-exact",
+   "s901_team": 5,
+   "s901_num": 31
+  },
+  {
+   "id": 389,
+   "team_id": 12,
+   "name": "Pablo García",
+   "number": "52",
+   "candidates": [
+    [
+     76739,
+     "Pablo García",
+     449
+    ],
+    [
+     258766,
+     "Pablo García",
+     459
+    ]
+   ],
+   "ea_id": 76739,
+   "how": "s901-exact",
+   "s901_team": 449,
+   "s901_num": 52
+  },
+  {
+   "id": 404,
+   "team_id": 12,
+   "name": "Samu",
+   "number": "29",
+   "candidates": [
+    [
+     277581,
+     "Samu",
+     236
+    ],
+    [
+     223302,
+     "Samu",
+     1887
+    ]
+   ],
+   "ea_id": 277581,
+   "how": "s901-exact",
+   "s901_team": 449,
+   "s901_num": 29
+  },
+  {
+   "id": 409,
+   "team_id": 12,
+   "name": "Antony",
+   "number": "7",
+   "candidates": [
+    [
+     255475,
+     "Antony",
+     449
+    ],
+    [
+     263947,
+     "Antony",
+     111140
+    ]
+   ],
+   "ea_id": 255475,
+   "how": "s901-exact",
+   "s901_team": 449,
+   "s901_num": 7
+  },
+  {
+   "id": 513,
+   "team_id": 13,
+   "name": "Xavi Simons",
+   "number": "7",
+   "candidates": [
+    [
+     245367,
+     "X. Simons",
+     18
+    ],
+    [
+     271668,
+     "X. Simons",
+     4
+    ]
+   ],
+   "ea_id": 245367,
+   "how": "s901-exact",
+   "s901_team": 2,
+   "s901_num": 7
+  },
+  {
+   "id": 525,
+   "team_id": 13,
+   "name": "Emiliano Martínez",
+   "number": "1",
+   "candidates": [
+    [
+     202811,
+     "E. Martínez",
+     2
+    ],
+    [
+     253278,
+     "E. Martínez",
+     101084
+    ]
+   ],
+   "ea_id": 202811,
+   "how": "s901-exact",
+   "s901_team": 2,
+   "s901_num": 1
+  },
+  {
+   "id": 533,
+   "team_id": 13,
+   "name": "Jude Bellingham",
+   "number": "20",
+   "candidates": [
+    [
+     252371,
+     "J. Bellingham",
+     243
+    ],
+    [
+     270964,
+     "J. Bellingham",
+     22
+    ]
+   ],
+   "ea_id": 252371,
+   "how": "s901-exact",
+   "s901_team": 2,
+   "s901_num": 20
+  },
+  {
+   "id": 297,
+   "team_id": 14,
+   "name": "Kouadio Manu Koné",
+   "number": "17",
+   "candidates": [
+    [
+     250723,
+     "K. Koné",
+     52
+    ],
+    [
+     263922,
+     "M. Koné",
+     670
+    ],
+    [
+     78836,
+     "K. Koné",
+     1894
+    ],
+    [
+     278832,
+     "K. Manu",
+     162
+    ]
+   ],
+   "ea_id": 250723,
+   "how": "s901-exact",
+   "s901_team": 21,
+   "s901_num": 17
+  },
+  {
+   "id": 315,
+   "team_id": 14,
+   "name": "Richard Ríos",
+   "number": "16",
+   "candidates": [
+    [
+     262881,
+     "R. Ríos",
+     234
+    ],
+    [
+     261000,
+     "R. Ríos",
+     111006
+    ]
+   ],
+   "ea_id": 262881,
+   "how": "s901-exact",
+   "s901_team": 21,
+   "s901_num": 16
+  },
+  {
+   "id": 328,
+   "team_id": 14,
+   "name": "Nnamdi Collins",
+   "number": "22",
+   "candidates": [
+    [
+     248484,
+     "N. Collins",
+     1925
+    ],
+    [
+     256500,
+     "N. Collins",
+     1824
+    ]
+   ],
+   "ea_id": 256500,
+   "how": "s901-exact",
+   "s901_team": 21,
+   "s901_num": 22
+  },
+  {
+   "id": 546,
+   "team_id": 15,
+   "name": "Martin Ødegaard",
+   "number": "8",
+   "candidates": [
+    [
+     222665,
+     "M. Ødegaard",
+     1
+    ],
+    [
+     202259,
+     "M. Ødegaard",
+     112199
+    ]
+   ],
+   "ea_id": 222665,
+   "how": "s901-exact",
+   "s901_team": 1,
+   "s901_num": 8
+  },
+  {
+   "id": 554,
+   "team_id": 15,
+   "name": "Youssouf Fofana",
+   "number": "19",
+   "candidates": [
+    [
+     245630,
+     "Y. Fofana",
+     47
+    ],
+    [
+     242179,
+     "Y. Fofana",
+     101037
+    ],
+    [
+     70011,
+     "Y. Fofana",
+     379
+    ]
+   ],
+   "ea_id": 245630,
+   "how": "s901-exact",
+   "s901_team": 1,
+   "s901_num": 19
+  },
+  {
+   "id": 560,
+   "team_id": 15,
+   "name": "Hamari Traoré",
+   "number": "27",
+   "candidates": [
+    [
+     240787,
+     "H. Traoré",
+     219
+    ],
+    [
+     219789,
+     "H. Traoré",
+     111817
+    ]
+   ],
+   "ea_id": 219789,
+   "how": "s901-exact",
+   "s901_team": 1,
+   "s901_num": 27
+  },
+  {
+   "id": 350,
+   "team_id": 16,
+   "name": "Andreas Skov Olsen",
+   "number": "7",
+   "candidates": [
+    [
+     240017,
+     "A. Skov Olsen",
+     175
+    ],
+    [
+     273545,
+     "A. Olsen",
+     920
+    ]
+   ],
+   "ea_id": 240017,
+   "how": "s901-exact",
+   "s901_team": 10,
+   "s901_num": 7
+  },
+  {
+   "id": 355,
+   "team_id": 16,
+   "name": "Marius Müller",
+   "number": "12",
+   "candidates": [
+    [
+     208375,
+     "M. Müller",
+     175
+    ],
+    [
+     279220,
+     "M. Müller",
+     576
+    ]
+   ],
+   "ea_id": 208375,
+   "how": "s901-exact",
+   "s901_team": 10,
+   "s901_num": 12
+  },
+  {
+   "id": 165,
+   "team_id": 17,
+   "name": "Julian Brandt",
+   "number": "10",
+   "candidates": [
+    [
+     212194,
+     "J. Brandt",
+     22
+    ],
+    [
+     277842,
+     "J. Brandt",
+     110532
+    ]
+   ],
+   "ea_id": 212194,
+   "how": "s901-exact",
+   "s901_team": 280,
+   "s901_num": 10
+  },
+  {
+   "id": 171,
+   "team_id": 17,
+   "name": "Kaishū Sano",
+   "number": "25",
+   "candidates": [
+    [
+     73078,
+     "K. Sano",
+     169
+    ],
+    [
+     277809,
+     "K. Sano",
+     1910
+    ]
+   ],
+   "ea_id": 73078,
+   "how": "s901-exact",
+   "s901_team": 280,
+   "s901_num": 25
+  },
+  {
+   "id": 31,
+   "team_id": 19,
+   "name": "Enzo Fernández",
+   "number": "8",
+   "candidates": [
+    [
+     247090,
+     "E. Fernández",
+     5
+    ],
+    [
+     262151,
+     "E. Fernández",
+     32
+    ],
+    [
+     263304,
+     "E. Fernandez",
+     86
+    ]
+   ],
+   "ea_id": 247090,
+   "how": "s901-exact",
+   "s901_team": 112172,
+   "s901_num": 8
+  },
+  {
+   "id": 34,
+   "team_id": 19,
+   "name": "Luis Díaz",
+   "number": "7",
+   "candidates": [
+    [
+     241084,
+     "L. Díaz",
+     21
+    ],
+    [
+     214777,
+     "L. Díaz",
+     111708
+    ]
+   ],
+   "ea_id": 241084,
+   "how": "s901-exact",
+   "s901_team": 112172,
+   "s901_num": 7
+  },
+  {
+   "id": 422,
+   "team_id": 20,
+   "name": "Ferland Mendy",
+   "number": "23",
+   "candidates": [
+    [
+     228618,
+     "F. Mendy",
+     243
+    ],
+    [
+     259215,
+     "F. Mendy",
+     1795
+    ]
+   ],
+   "ea_id": 228618,
+   "how": "s901-exact",
+   "s901_team": 243,
+   "s901_num": 23
+  },
+  {
+   "id": 3,
+   "team_id": 21,
+   "name": "Giovanni Di Lorenzo",
+   "number": "22",
+   "candidates": [
+    [
+     217870,
+     "G. Di Lorenzo",
+     48
+    ],
+    [
+     75831,
+     "Lorenzo",
+     1854
+    ]
+   ],
+   "ea_id": 217870,
+   "how": "s901-exact",
+   "s901_team": 131681,
+   "s901_num": 22
+  },
+  {
+   "id": 13,
+   "team_id": 21,
+   "name": "Harry Kane",
+   "number": "9",
+   "candidates": [
+    [
+     202126,
+     "H. Kane",
+     21
+    ],
+    [
+     236247,
+     "H. Kane",
+     1939
+    ]
+   ],
+   "ea_id": 202126,
+   "how": "s901-exact",
+   "s901_team": 131681,
+   "s901_num": 9
+  },
+  {
+   "id": 23,
+   "team_id": 21,
+   "name": "Benjamin White",
+   "number": "5",
+   "candidates": [
+    [
+     231936,
+     "B. White",
+     1
+    ],
+    [
+     243456,
+     "B. White",
+     101112
+    ]
+   ],
+   "ea_id": 231936,
+   "how": "s901-exact",
+   "s901_team": 131681,
+   "s901_num": 5
+  }
+ ],
+ "unresolved": []
+}

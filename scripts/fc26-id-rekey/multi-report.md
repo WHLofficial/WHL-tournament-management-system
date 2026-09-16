@@ -58,3 +58,13 @@
 | AC米兰(CPU) | Benjamin White（5，旧 id 23） | 231936 B. White (FC 队 1)；243456 B. White (FC 队 101112) |
 | AC米兰(CPU) | Giovanni Di Lorenzo（22，旧 id 3） | 217870 G. Di Lorenzo (FC 队 48)；75831 Lorenzo (FC 队 1854) |
 | AC米兰(CPU) | Harry Kane（9，旧 id 13） | 202126 H. Kane (FC 队 21)；236247 H. Kane (FC 队 1939) |
+
+---
+
+## s901 复核解析（2026-09-16）
+
+54 个歧义球员已全部解析：`FC Editor by decoruiz Alpha v21.5_2/player_tables/s901/`（用户阵容真源，按队分文件，列含 playerid/姓名/球衣号/teamid）。
+- 52 个同名在 s901 唯一命中（s901-exact），2 个同名多行用「s901 teamid == 该队 EA id」收窄（s901-team）。
+- 解析明细：`s901-resolve.json`（54 条 resolved / 0 unresolved，字段含旧 id、ea_id、方法、s901 teamid/球衣号）。
+- 补键 SQL：`rekey-fc26-s901.sql`（227 句：defer + match_event/motm_vote/player 四链 ×54 + slots_json 10 处 + roster_json 9 处），经 D1 REST `/query` 单事务执行 98 行变更。
+- 交叉验证：54 与已匹配 516 无 ea_id 撞号；s901 反向抽查已匹配 143 人 ea_id 全一致；终验 players 570/570 均 EA id（id<10000 残留 0）、事件/投票/JSON 孤儿 0、FK check 0 行。
