@@ -855,21 +855,53 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       ctx.fillRect(0, ry, 4, rowH);
     }
     ctx.textBaseline = "middle";
+    // 逐行量宽后协商预算：数字列居中、可向两侧邻列的留白扩界（修两位数名次被截成「1…」），
+    // 名称列右界收到右邻列文本左缘（修长队名压到「赛」列数字上）。
+    const fonts = row.map((_, ci) =>
+      ci === row.length - 1 ? [800, 28] : nameCols.has(ci) ? [700, 26] : [400, 24],
+    );
+    const tw = row.map((cell, ci) => {
+      font(ctx, fonts[ci][0], fonts[ci][1]);
+      return ctx.measureText(cell).width;
+    });
+    const GAP = 10;
+    const cellMax = row.map((_, ci) => colWs[ci] - 16);
+    nameCols.forEach((ci) => {
+      const start = colLeft[ci] + 16;
+      const rightEdge =
+        ci + 1 < row.length && !nameCols.has(ci + 1)
+          ? colLeft[ci + 1] + colWs[ci + 1] / 2 - tw[ci + 1] / 2 - GAP
+          : x + w - 8;
+      cellMax[ci] = Math.max(colWs[ci] - 16, rightEdge - start);
+    });
+    row.forEach((_, ci) => {
+      if (nameCols.has(ci)) return;
+      const c = colLeft[ci] + colWs[ci] / 2;
+      const edgeL =
+        ci === 0
+          ? x + 2
+          : nameCols.has(ci - 1)
+            ? colLeft[ci - 1] + 16 + Math.min(tw[ci - 1], cellMax[ci - 1]) + GAP
+            : colLeft[ci - 1] + colWs[ci - 1] / 2 + tw[ci - 1] / 2 + GAP;
+      const edgeR =
+        ci === row.length - 1
+          ? x + w - 2
+          : nameCols.has(ci + 1)
+            ? colLeft[ci + 1] + 16 - GAP
+            : colLeft[ci + 1] + colWs[ci + 1] / 2 - tw[ci + 1] / 2 - GAP;
+      cellMax[ci] = Math.max(12, 2 * Math.min(c - edgeL, edgeR - c));
+    });
     row.forEach((cell, ci) => {
       ctx.textAlign = nameCols.has(ci) ? "left" : "center";
       const last = ci === row.length - 1;
-      if (last) font(ctx, 800, 28);
-      else if (nameCols.has(ci)) font(ctx, 700, 26);
-      else font(ctx, 400, 24);
-      // 名称列可向右借居中数字列的留白（数值短居中，两侧余量大），长队名少截断
-      const maxCell = nameCols.has(ci) ? colWs[ci] - 16 + 28 : colWs[ci] - 16;
+      font(ctx, fonts[ci][0], fonts[ci][1]);
       ctx.fillStyle =
         zc && (ci === 0 || nameCols.has(ci)) ? zc : last ? INK : ink(0.85);
       if (nameCols.has(ci)) {
         // 名称列：整名优先（字号缩档），极端长名才省略号（用户反馈 Sergej Milinković-Savić 类）
-        ctx.fillText(fitNameCell(ctx, cell, maxCell, 700, 26), cellX(ci), ry + rowH / 2 + 1);
+        ctx.fillText(fitNameCell(ctx, cell, cellMax[ci], 700, 26), cellX(ci), ry + rowH / 2 + 1);
       } else {
-        ctx.fillText(fitText(ctx, cell, maxCell), cellX(ci), ry + rowH / 2 + 1);
+        ctx.fillText(fitText(ctx, cell, cellMax[ci]), cellX(ci), ry + rowH / 2 + 1);
       }
     });
     ry += rowH;
