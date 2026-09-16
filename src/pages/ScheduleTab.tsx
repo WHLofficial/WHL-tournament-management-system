@@ -222,10 +222,12 @@ function StageBlock({
     if (v === (stage.name ?? "")) return;
     setNameErr(null);
     try {
-      await api(
-        `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/name`,
-        { method: "PATCH", body: JSON.stringify({ name: v }) }
-      );
+        // api() 会自己 JSON.stringify，这里传对象即可；pre-stringify 会双重序列化，
+        // 服务端拿到字符串取不到 name，改名被存成空回退默认名
+        await api(
+          `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/name`,
+          { method: "PATCH", body: { name: v } }
+        );
       onRefresh();
     } catch (e) {
       setNameErr(e instanceof Error ? e.message : String(e));
