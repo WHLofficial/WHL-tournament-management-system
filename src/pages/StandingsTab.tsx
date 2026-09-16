@@ -50,17 +50,26 @@ export function StandingsTables({
       {standings.map((st) => {
         const allRows = st.groups.flatMap((g) => g.rows.map((r) => ({ g, r })));
         const multi = st.groups.length > 1;
-        const columns = multi
-          ? ["#", "组", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分"]
-          : ["#", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分"];
-        const colWidths = multi
-          ? [0.6, 1.1, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1]
-          : [0.6, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1];
-        const tableRows = allRows.map(({ g, r }) =>
-          multi
-            ? [String(r.rank), g.name || "-", r.teamName, String(r.played), String(r.won), String(r.drawn), String(r.lost), String(r.goalsFor), String(r.goalsAgainst), String(r.goalsFor - r.goalsAgainst), String(r.pts)]
-            : [String(r.rank), r.teamName, String(r.played), String(r.won), String(r.drawn), String(r.lost), String(r.goalsFor), String(r.goalsAgainst), String(r.goalsFor - r.goalsAgainst), String(r.pts)],
-        );
+        // 分组榜分享卡每组独立小节（组标+自带表头），不再用「组」列
+        const columns = ["#", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分"];
+        const colWidths = [0.6, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1];
+        const rowStr = (r: (typeof allRows)[number]["r"]) => [
+          String(r.rank),
+          r.teamName,
+          String(r.played),
+          String(r.won),
+          String(r.drawn),
+          String(r.lost),
+          String(r.goalsFor),
+          String(r.goalsAgainst),
+          String(r.goalsFor - r.goalsAgainst),
+          String(r.pts),
+        ];
+        const tableRows = allRows.map(({ r }) => rowStr(r));
+        const groupBlocks = st.groups.map((g) => ({
+          label: `${g.name || "-"} 组`,
+          rows: g.rows.map(rowStr),
+        }));
         // 排名段标记在分享卡里的数据（跟随赛事展示样式设置）
         const stageZoneColors = (rowColors: (string | null)[], leg: { color: string; name: string; range: string }[], dividers: { afterRow: number; color: string; name: string }[]) =>
           share && zones.length > 0 ? { style: zoneStyle, rowColors, legend: leg, dividers } : undefined;
@@ -107,8 +116,9 @@ export function StandingsTables({
                     coverUrl: share.coverUrl ?? null,
                     columns,
                     colWidths,
-                    nameCol: multi ? 2 : 1,
-                    rows: tableRows,
+                    nameCol: 1,
+                    rows: multi ? undefined : tableRows,
+                    groups: multi ? groupBlocks : undefined,
                     zones: stageZoneColors(zoneRowColors, zoneLegendForStage, zoneDividers),
                     url: share.url,
                   })

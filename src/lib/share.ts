@@ -217,19 +217,22 @@ export interface TableCardData {
   title: string;
   coverUrl?: string | null;
   columns: string[];
-  rows: string[][];
+  /** 单表行（循环赛/榜单用）；分组榜传 groups 时不传 */
+  rows?: string[][];
   url: string;
   /** 每列相对宽度权重（如队名列加宽），不传则均分 */
   colWidths?: number[];
   /** 左对齐的名称列序号（默认第 1 列；可传多个，如榜单的球员+球队列） */
   nameCol?: number | number[];
-  /** 排名段标记（积分榜）：跟随赛事展示样式设置；rowColors 与 rows 同序 */
+  /** 排名段标记（积分榜）：跟随赛事展示样式设置；rowColors 与全部组的行扁平拼接同序 */
   zones?: {
     style: "strip" | "divider";
     rowColors: (string | null)[];
     legend: { color: string; name: string; range: string }[];
     dividers: { afterRow: number; color: string; name: string }[];
   };
+  /** 多组分组榜：每组独立小节（橙 kicker 组标 + 自带表头），组内名次独立 */
+  groups?: { label: string; rows: string[][] }[];
 }
 
 // 单场卡事件链条几何常量（样稿 ×~2.1）：事件行 63、助攻行 42、节点间 29
@@ -801,19 +804,51 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
   if (!ctx) return;
 
   const rowH = 64;
+  const GROUP_LABEL_H = 52; // 组标行（18 间距 + 34 标高）
+  const GROUP_HEADER_H = 44; // 每组自带表头行
+  const groupsMode = !!data.groups && data.groups.length > 1;
+  const flatAll = groupsMode ? data.groups!.flatMap((g) => g.rows) : data.rows ?? [];
   // 行上限 40（原来 20 截掉了大组积分榜；画布高度随行数自适应，扫码兜底仍留）
-  const rows = data.rows.slice(0, 40);
-  const overflow = data.rows.length > rows.length;
+  const shown = flatAll.slice(0, 40);
+  const overflow = flatAll.length > shown.length;
   const zones = data.zones;
   const rowColors = zones?.rowColors ?? [];
   // 分隔线只跟随展示出来的行；strip 图例单行（名称区间并排）
   const shownDividers =
-    zones?.style === "divider" ? zones.dividers.filter((d) => d.afterRow < rows.length) : [];
+    zones?.style === "divider" ? zones.dividers.filter((d) => d.afterRow < shown.length) : [];
   const legend = zones?.style === "strip" ? zones.legend : [];
   const dividerExtra = shownDividers.length * 26;
   const rowsStart = headerMetrics(ctx, data.tournamentName, data.title) + 22;
+  // 展示序列：单表 = 表头+行；分组 = 每组（组标+表头+行），行 idx 对应扁平序（rowColors/dividers）
+  const items: (
+    | { k: "label"; text: string }
+    | { k: "header" }
+    | { k: "row"; row: string[]; idx: number }
+  )[] = [];
+  if (groupsMode) {
+    let off = 0;
+    let budget = shown.length;
+    for (const g of data.groups!) {
+      const take = Math.min(g.rows.length, budget);
+      if (take <= 0) break;
+      items.push({ k: "label", text: g.label });
+      items.push({ k: "header" });
+      g.rows.slice(0, take).forEach((r, i) => items.push({ k: "row", row: r, idx: off + i }));
+      off += g.rows.length;
+      budget -= take;
+    }
+  } else {
+    items.push({ k: "header" });
+    shown.forEach((r, i) => items.push({ k: "row", row: r, idx: i }));
+  }
   const contentEnd =
-    rowsStart + rows.length * rowH + (overflow ? 44 : 0) + dividerExtra;
+    rowsStart +
+    items.reduce(
+      (s, it) => s + (it.k === "label" ? GROUP_LABEL_H : it.k === "header" ? GROUP_HEADER_H : rowH),
+      0,
+    ) +
+    (overflow ? 44 : 0) +
+    dividerExtra;
   const H = Math.max(MIN_H, contentEnd + FOOT_H);
   canvas.height = H;
   drawBaseBg(ctx, H);
@@ -835,18 +870,27 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
   const nameCols = new Set(Array.isArray(rawName) ? rawName : [rawName]);
   const cellX = (ci: number) => colLeft[ci] + (nameCols.has(ci) ? 16 : colWs[ci] / 2);
 
-  // 表头：素灰 600/22 无底罩
-  font(ctx, 600, 22);
-  ctx.fillStyle = ink(0.6);
   ctx.textBaseline = "middle";
-  data.columns.forEach((c, i) => {
-    ctx.textAlign = nameCols.has(i) ? "left" : "center";
-    ctx.fillText(c, cellX(i), rowsStart - 22);
-  });
-
   let ry = rowsStart;
-  rows.forEach((row, ri) => {
-    const zc = zones?.style === "strip" ? (rowColors[ri] ?? null) : null;
+  for (const it of items) {
+    if (it.k === "label") {
+      sectionLabel(ctx, it.text, ry + 26);
+      ry += GROUP_LABEL_H;
+      continue;
+    }
+    if (it.k === "header") {
+      // 表头：素灰 600/22 无底罩
+      font(ctx, 600, 22);
+      ctx.fillStyle = ink(0.6);
+      data.columns.forEach((c, i) => {
+        ctx.textAlign = nameCols.has(i) ? "left" : "center";
+        ctx.fillText(c, cellX(i), ry + 18);
+      });
+      ry += GROUP_HEADER_H;
+      continue;
+    }
+    const row = it.row;
+    const zc = zones?.style === "strip" ? (rowColors[it.idx] ?? null) : null;
     if (zc) {
       // strip：整行 tint（全出血）+ 左缘 4px 色条
       ctx.fillStyle = hexToRgba(zc, 0.09);
@@ -854,7 +898,6 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       ctx.fillStyle = zc;
       ctx.fillRect(0, ry, 4, rowH);
     }
-    ctx.textBaseline = "middle";
     // 逐行量宽后协商预算：数字列居中、可向两侧邻列的留白扩界（修两位数名次被截成「1…」），
     // 名称列右界收到右邻列文本左缘（修长队名压到「赛」列数字上）。
     const fonts = row.map((_, ci) =>
@@ -911,12 +954,12 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
     // 区间分隔线：名次区间末行之后画线+右侧标签 chip（divider 样式）
     if (zones?.style === "divider") {
       for (const d of shownDividers) {
-        if (d.afterRow !== ri) continue;
+        if (d.afterRow !== it.idx) continue;
         ctx.fillStyle = d.color;
         ctx.fillRect(x, ry + 12, w, 2);
         font(ctx, 600, 18);
-        const tw = ctx.measureText(d.name).width;
-        const pw = tw + 20;
+        const dw = ctx.measureText(d.name).width;
+        const pw = dw + 20;
         roundRectPath(ctx, x + w - pw, ry + 1, pw, 25, 12);
         ctx.fill();
         ctx.fillStyle = "#fff";
@@ -926,12 +969,12 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
         ry += 26;
       }
     }
-  });
+  }
   if (overflow) {
     font(ctx, 400, 20);
     ctx.fillStyle = ink(0.5);
     ctx.textAlign = "center";
-    ctx.fillText(`仅展示前 ${rows.length} 项，扫码看完整榜单`, CARD_W / 2, ry + 12);
+    ctx.fillText(`仅展示前 ${shown.length} 项，扫码看完整榜单`, CARD_W / 2, ry + 12);
     ctx.textAlign = "left";
     ry += 44;
   }
