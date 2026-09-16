@@ -269,6 +269,7 @@ export default function ReportPage() {
                 homeTeam: report.homeTeamName,
                 awayTeam: report.awayTeamName,
                 score: `${report.scoreHome}:${report.scoreAway}`,
+                tournamentName: report.tournamentName,
                 url: `${window.location.origin}/report/${report.matchId}`,
               })
             }
