@@ -116,7 +116,9 @@ export async function buildStandingsStmts(
       away.pts += 3;
       home.lost++;
     } else if (m.pen_home != null && m.pen_away != null && m.pen_home !== m.pen_away) {
-      // 平分点球决胜：点胜 2 分、点负 1 分
+      // 平分点球决胜：仍是平局（胜平负记平），点胜 2 分、点负 1 分
+      home.drawn++;
+      away.drawn++;
       if (m.pen_home > m.pen_away) {
         home.pen_won++;
         home.pts += 2;
