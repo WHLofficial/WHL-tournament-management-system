@@ -581,6 +581,29 @@ button.btn-ghost:hover:not(:disabled) {
 .standings-note { font-size: 12px; margin-top: 6px; }
 .standings-table th.num { white-space: nowrap; }
 
+/* 排名段标记：strip = 命中行左缘色条（不占列宽，用 inset 阴影）；divider = 行间分隔线 */
+.standings-table tr[data-zone] > td:first-child { box-shadow: inset 4px 0 0 0 var(--zone-color, transparent); }
+.standings-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 4px 2px; font-size: 12px; color: var(--muted); }
+.standings-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.standings-divider td { border-bottom: none; padding: 0; background: transparent !important; }
+.standings-divider-line { position: relative; border-top: 3px solid; margin: 2px 0; }
+.standings-divider-label { position: absolute; right: 4px; top: -9px; font-size: 10.5px; line-height: 18px; padding: 0 7px; border-radius: 9px; color: #fff; font-weight: 600; white-space: nowrap; }
+
+/* 管理端「排名段标记」卡 */
+.rank-zone-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.rank-zone-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.rank-zone-name { width: 10em; }
+.rank-zone-range { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12.5px; }
+.rank-zone-range .input { width: 4.2em; }
+.rank-zone-colors { display: inline-flex; align-items: center; gap: 4px; }
+.rank-zone-swatch { width: 20px; height: 20px; border-radius: 5px; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.rank-zone-swatch.active { border-color: var(--text, #333); }
+.rank-zone-picker { width: 26px; height: 24px; padding: 0; border: none; background: none; cursor: pointer; }
+.rank-zone-scope { width: auto; }
+.rank-zone-enabled { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; white-space: nowrap; }
+.rank-zone-ops { display: inline-flex; gap: 4px; }
+.rank-zone-ops .btn { padding: 2px 8px; }
+
 /* ---------- 公开页 ---------- */
 .home-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-top: 14px; }
 .home-card { display: block; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; color: inherit; text-decoration: none; transition: box-shadow .15s, border-color .15s; }

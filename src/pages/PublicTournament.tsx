@@ -20,6 +20,7 @@ import type {
   RoundMetaDTO,
   StageRoundsDTO,
   StageStandingDTO,
+  RankZoneSettings,
   TournamentDetailDTO,
 } from "../../shared/types";
 
@@ -446,11 +447,17 @@ function PublicStandings({
   coverUrl: string | null;
 }) {
   const [standings, setStandings] = useState<StageStandingDTO[] | null>(null);
+  const [rankZones, setRankZones] = useState<RankZoneSettings | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ standings: StageStandingDTO[] }>(`/api/public/tournaments/${tid}/standings`)
-      .then((b) => setStandings(b.standings))
+    api<{ standings: StageStandingDTO[]; rankZones: RankZoneSettings | null }>(
+      `/api/public/tournaments/${tid}/standings`
+    )
+      .then((b) => {
+        setStandings(b.standings);
+        setRankZones(b.rankZones ?? null);
+      })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : "加载积分榜失败"));
   }, [tid]);
 
@@ -461,6 +468,7 @@ function PublicStandings({
   return (
     <StandingsTables
       standings={standings}
+      rankZones={rankZones}
       share={{
         tournamentName,
         url: `${window.location.origin}/t/${tid}?tab=standings`,

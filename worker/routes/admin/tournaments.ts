@@ -20,6 +20,11 @@ import {
   buildToplistsWithSuspension,
 } from "../../lib/suspension";
 import type { SuspensionConfig } from "../../../shared/types";
+import type { RankZoneSettings } from "../../../shared/types";
+import {
+  parseRankZoneSettings,
+  validateRankZoneSettings,
+} from "../../../shared/rankZones";
 import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
 import { putDefaultCover } from "../../lib/defaultCover";
 import { requireSuperadmin } from "../../middleware/auth";
@@ -136,7 +141,7 @@ app.post("/", async (c) => {
 app.get("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
-    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
+    `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key, t.config_json,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
      FROM tournament t WHERE t.id = ?`
   )
@@ -150,6 +155,7 @@ app.get("/:id", async (c) => {
       created_at: string;
       entry_count: number;
       cover_key: string | null;
+      config_json: string | null;
     }>();
   if (!t) return c.json({ message: "赛事不存在" }, 404);
 
@@ -223,6 +229,7 @@ app.get("/:id", async (c) => {
       })
     ),
     tiebreakers,
+    rankZones: parseRankZoneSettings(t.config_json),
   };
   return c.json(detail);
 });
@@ -231,7 +238,14 @@ app.get("/:id", async (c) => {
 app.get("/:id/standings", async (c) => {
   const id = Number(c.req.param("id"));
   const standings = await readStageStandings(c.env.DB, id);
-  return c.json({ standings });
+  const t = await c.env.DB.prepare("SELECT config_json FROM tournament WHERE id = ?")
+    .bind(id)
+    .first<{ config_json: string | null }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+  return c.json({
+    standings,
+    rankZones: parseRankZoneSettings(t.config_json),
+  });
 });
 
 app.patch("/:id", async (c) => {
@@ -242,6 +256,7 @@ app.patch("/:id", async (c) => {
       description?: string;
       config_json?: Record<string, unknown>;
       tiebreakers?: unknown;
+      rankZones?: unknown;
     }>()
     .catch(() => null);
   if (body?.name !== undefined) {
@@ -285,8 +300,65 @@ app.patch("/:id", async (c) => {
       .bind(JSON.stringify(cfg), id)
       .run();
   }
+  // 排名段标记：只动 tournament.config_json.rankZones / rankZoneStyle，不经 syncStageConfigs——
+  // 纯展示配置，开赛后也允许改
+  if (body?.rankZones !== undefined) {
+    const zones = validateRankZoneSettings(body.rankZones);
+    if (typeof zones === "string") return c.json({ message: zones }, 400);
+    const scopeErr = await checkRankZoneScope(c.env, id, zones.zones);
+    if (scopeErr) return c.json({ message: scopeErr }, 400);
+    const row = await c.env.DB.prepare(
+      "SELECT config_json FROM tournament WHERE id = ?"
+    )
+      .bind(id)
+      .first<{ config_json: string | null }>();
+    if (!row) return c.json({ message: "赛事不存在" }, 404);
+    let cfg: Record<string, unknown> = {};
+    try {
+      cfg = (JSON.parse(row.config_json || "{}") ?? {}) as Record<string, unknown>;
+    } catch {
+      cfg = {};
+    }
+    cfg.rankZoneStyle = zones.style;
+    cfg.rankZones = zones.zones;
+    await c.env.DB.prepare("UPDATE tournament SET config_json = ? WHERE id = ?")
+      .bind(JSON.stringify(cfg), id)
+      .run();
+  }
   return c.json({ ok: true });
 });
+
+// 排名段标记的 scope 引用必须属于本赛事（stage/group 存在性）
+async function checkRankZoneScope(
+  env: Bindings,
+  tid: number,
+  zones: RankZoneSettings["zones"]
+): Promise<string | null> {
+  const stageIds = new Set(
+    zones.filter((z) => z.scope.kind === "stage").map((z) => (z.scope as { stageId: number }).stageId)
+  );
+  const groupIds = new Set(
+    zones.filter((z) => z.scope.kind === "group").map((z) => (z.scope as { groupId: number }).groupId)
+  );
+  for (const sid of stageIds) {
+    const row = await env.DB.prepare(
+      "SELECT id FROM stage WHERE id = ? AND tournament_id = ?"
+    )
+      .bind(sid, tid)
+      .first();
+    if (!row) return "排名段标记引用了不属于本赛事的阶段";
+  }
+  for (const gid of groupIds) {
+    const row = await env.DB.prepare(
+      `SELECT g.id FROM "group" g JOIN stage s ON s.id = g.stage_id
+       WHERE g.id = ? AND s.tournament_id = ?`
+    )
+      .bind(gid, tid)
+      .first();
+    if (!row) return "排名段标记引用了不属于本赛事的小组";
+  }
+  return null;
+}
 
 // 赛制参数改动（legs/loops/组数/出线数）同步到各阶段 config；
 // 已有开打或完赛场次时拒绝，避免赛中被改赛制

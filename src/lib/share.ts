@@ -208,6 +208,13 @@ export interface TableCardData {
   colWidths?: number[];
   /** 左对齐的名称列序号（默认第 1 列；可传多个，如榜单的球员+球队列） */
   nameCol?: number | number[];
+  /** 排名段标记（积分榜）：跟随赛事展示样式设置；rowColors 与 rows 同序 */
+  zones?: {
+    style: "strip" | "divider";
+    rowColors: (string | null)[];
+    legend: { color: string; name: string; range: string }[];
+    dividers: { afterRow: number; color: string; name: string }[];
+  };
 }
 
 function colorOf(name: string): string {
@@ -678,7 +685,16 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
   const rowsStart = headerY + headerH + 6;
   const rows = data.rows.slice(0, 20);
   const overflow = data.rows.length > rows.length;
-  const contentEnd = rowsStart + rows.length * rowH + (overflow ? 28 : 0);
+  const zones = data.zones;
+  const rowColors = zones?.rowColors ?? [];
+  // 分隔线只跟随展示出来的行；strip 图例单行（名称区间并排）
+  const shownDividers =
+    zones?.style === "divider" ? zones.dividers.filter((d) => d.afterRow < rows.length) : [];
+  const legend = zones?.style === "strip" ? zones.legend : [];
+  const legendH = legend.length === 0 ? 0 : legend.length <= 5 ? 30 : 52;
+  const dividerExtra = shownDividers.length * 16;
+  const contentEnd =
+    rowsStart + rows.length * rowH + (overflow ? 28 : 0) + dividerExtra + legendH;
   const H = Math.max(CARD_H, contentEnd + 210);
   canvas.height = H;
   drawBaseBg(ctx, H);
@@ -720,18 +736,64 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       roundRectPath(ctx, x, ry, w, rowH - 4, 8);
       ctx.fill();
     }
+    // 排名段色条：行左缘 5px 圆角竖条（strip 样式）
+    const zc = zones?.style === "strip" ? (rowColors[ri] ?? null) : null;
+    if (zc) {
+      ctx.fillStyle = zc;
+      roundRectPath(ctx, x, ry, 5, rowH - 4, 3);
+      ctx.fill();
+    }
     ctx.fillStyle = "rgba(255,255,255,0.88)";
     row.forEach((cell, ci) => {
       ctx.textAlign = nameCols.has(ci) ? "left" : "center";
       ctx.fillText(fitText(ctx, cell, colWs[ci] - 12), cellX(ci), ry + (rowH - 4) / 2);
     });
     ry += rowH;
+    // 区间分隔线：名次区间末行之后画线+线名（divider 样式）
+    if (zones?.style === "divider") {
+      for (const d of shownDividers) {
+        if (d.afterRow !== ri) continue;
+        ctx.fillStyle = d.color;
+        ctx.fillRect(x, ry - 3, w, 3);
+        font(ctx, 600, 12);
+        const tw = ctx.measureText(d.name).width;
+        const pw = tw + 14;
+        ctx.fillStyle = d.color;
+        roundRectPath(ctx, x + w - pw - 6, ry - 11, pw, 17, 8);
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "left";
+        ctx.fillText(d.name, x + w - pw + 1, ry - 2);
+        ry += 16;
+      }
+    }
   });
   if (overflow) {
     font(ctx, 400, 14);
     ctx.fillStyle = "rgba(255,255,255,0.45)";
     ctx.textAlign = "center";
     ctx.fillText(`仅展示前 ${rows.length} 项，扫码看完整榜单`, CARD_W / 2, ry + 6);
+    ry += 28;
+  }
+  if (legend.length > 0) {
+    font(ctx, 500, 14);
+    let lx = x;
+    let ly = ry + 8;
+    for (const item of legend) {
+      const label = `${item.name}（${item.range}）`;
+      const advance = 18 + ctx.measureText(label).width + 18;
+      if (lx > x && lx + advance - 18 > x + w) {
+        lx = x;
+        ly += 22;
+      }
+      ctx.fillStyle = item.color;
+      roundRectPath(ctx, lx, ly - 5, 12, 12, 3);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.textAlign = "left";
+      ctx.fillText(label, lx + 18, ly + 1);
+      lx += advance;
+    }
   }
   drawFootBrand(ctx, H);
   await drawQr(ctx, data.url, H);

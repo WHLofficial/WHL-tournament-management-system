@@ -189,6 +189,31 @@ export const DEFAULT_TOURNAMENT_CONFIG: Partial<Record<TournamentFormat, StageCo
   group_knockout: { group_count: 4, loops: 1, qualify_per_group: 2 },
 };
 
+// ---------- 排名段标记（存 config_json.rankZones / rankZoneStyle） ----------
+
+export type RankZoneStyle = "strip" | "divider"; // 左缘色条+图例 / 区间分隔线
+
+export type RankZoneScope =
+  | { kind: "all" } // 全部积分表
+  | { kind: "stage"; stageId: number } // 指定阶段（循环/小组）
+  | { kind: "group"; groupId: number }; // 指定小组
+
+export interface RankZone {
+  id: string; // 稳定 key（编辑不丢）
+  name: string; // 如「升级区」，图例/线名直接用它
+  from: number; // 名次区间起点（含），1 起
+  to: number; // 名次区间终点（含），from ≤ to
+  color: string; // #rrggbb
+  enabled: boolean; // 停用：不渲染、不参与命中
+  scope: RankZoneScope;
+}
+
+// 解析+校验+命中规则在 shared/rankZones.ts；数组顺序即优先级，越前越高。
+export interface RankZoneSettings {
+  style: RankZoneStyle;
+  zones: RankZone[];
+}
+
 // ---------- API 载荷 ----------
 
 export interface RegisterReq {
@@ -282,6 +307,7 @@ export interface TournamentDetailDTO {
   groups: GroupDTO[];
   entries: EntryDTO[];
   tiebreakers?: TiebreakerKey[];
+  rankZones?: RankZoneSettings | null;
 }
 
 export interface SignupCodeResp {

@@ -11,3 +11,4 @@ dist/
 
 # 用户手册构建产物与截图（约 19MB 本地交付物），不入库
 docs/
+ext .superpowers/

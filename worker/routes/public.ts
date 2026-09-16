@@ -17,6 +17,7 @@ import type {
   TacticXIPlayerDTO,
 } from "../../shared/types";
 import { readStageStandings } from "../lib/standings";
+import { parseRankZoneSettings } from "../../shared/rankZones";
 import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
 import { mediaUrl } from "../lib/media";
@@ -1179,13 +1180,16 @@ app.get("/recent", pubCache(60), async (c) => {
 app.get("/tournaments/:id/standings", pubCache(300), async (c) => {
   const id = Number(c.req.param("id"));
   const t = await c.env.DB.prepare(
-    "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
+    "SELECT id, config_json FROM tournament WHERE id = ? AND status != 'draft'"
   )
     .bind(id)
-    .first<{ id: number }>();
+    .first<{ id: number; config_json: string | null }>();
   if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
   const standings = await readStageStandings(c.env.DB, id);
-  return c.json({ standings });
+  return c.json({
+    standings,
+    rankZones: parseRankZoneSettings(t.config_json),
+  });
 });
 
 // 榜单（球员榜+球队榜）与数据统计：单赛事内；管理端另有不受草稿限制的同名端点

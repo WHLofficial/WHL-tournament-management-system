@@ -16,7 +16,12 @@ import type {
   TournamentStatus,
   SuspensionConfig,
   SuspensionsResp,
+  RankZone,
+  RankZoneScope,
+  RankZoneStyle,
+  StageDTO,
 } from "../../shared/types";
+import { ZONE_PRESET_COLORS } from "../../shared/rankZones";
 
 // 同分规则下拉的选项；value 对应后端 TiebreakerKey，none 表示这一级不启用
 const TB_OPTIONS: Array<{ value: string; label: string }> = [
@@ -443,6 +448,8 @@ function SettingsTab({
       <hr className="divider" />
       <SuspensionCard tid={t.id} />
       <hr className="divider" />
+      <RankZoneCard detail={detail} />
+      <hr className="divider" />
       <h3>封面图</h3>
       <div className="logo-row">
         {t.coverUrl ? (
@@ -615,6 +622,231 @@ function SuspensionCard({ tid }: { tid: number }) {
         )}
       </div>
       {resetMsg && <p className="muted">{resetMsg}</p>}
+    </>
+  );
+}
+
+// 排名段标记卡：配置存 config_json.rankZones / rankZoneStyle（纯展示，开赛后也允许改）。
+// 数组顺序即优先级（上移/下移调整），命中多条时取最前；展示样式整表级二选一。
+function RankZoneCard({ detail }: { detail: TournamentDetailDTO }) {
+  const tid = detail.tournament.id;
+  const [style, setStyle] = useState<RankZoneStyle>(detail.rankZones?.style ?? "strip");
+  const [zones, setZones] = useState<RankZone[]>(
+    () => detail.rankZones?.zones.map((z) => ({ ...z, scope: { ...z.scope } })) ?? [],
+  );
+  const { busy, error, setError, run } = useSubmit();
+  // 作用范围下拉数据：只列会产出积分榜的阶段（循环/小组）及其组
+  const stages = detail.stages.filter((s) => s.kind === "round_robin" || s.kind === "group");
+  const stageLabel = (s: StageDTO) =>
+    s.name || (s.kind === "round_robin" ? `循环赛 #${s.sortOrder}` : `小组赛 #${s.sortOrder}`);
+
+  function update(id: string, patch: Partial<RankZone>) {
+    setZones((zs) => zs.map((z) => (z.id === id ? { ...z, ...patch } : z)));
+  }
+
+  function move(id: string, dir: -1 | 1) {
+    setZones((zs) => {
+      const i = zs.findIndex((z) => z.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= zs.length) return zs;
+      const next = [...zs];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }
+
+  function add() {
+    const id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    setZones((zs) => [
+      ...zs,
+      { id, name: "", from: 1, to: 1, color: "#16a34a", enabled: true, scope: { kind: "all" } },
+    ]);
+  }
+
+  function scopeValue(z: RankZone): string {
+    if (z.scope.kind === "all") return "all";
+    if (z.scope.kind === "stage") return `stage:${z.scope.stageId}`;
+    return `group:${z.scope.groupId}`;
+  }
+
+  function scopeChange(id: string, value: string) {
+    const scope: RankZoneScope =
+      value === "all"
+        ? { kind: "all" }
+        : value.startsWith("stage:")
+          ? { kind: "stage", stageId: Number(value.slice(6)) }
+          : { kind: "group", groupId: Number(value.slice(6)) };
+    update(id, { scope });
+  }
+
+  function save() {
+    for (const z of zones) {
+      const name = z.name.trim();
+      if (!name || name.length > 24) {
+        setError("每个标记的名称不能为空，且不超过 24 字");
+        return;
+      }
+      if (!Number.isInteger(z.from) || !Number.isInteger(z.to) || z.from < 1 || z.to < 1 || z.from > 99 || z.to > 99 || z.from > z.to) {
+        setError(`「${name}」的名次区间须为 1–99 的整数且起点 ≤ 终点`);
+        return;
+      }
+    }
+    void run(async () => {
+      await api(`/api/admin/tournaments/${tid}`, {
+        method: "PATCH",
+        body: {
+          rankZones: {
+            style,
+            zones: zones.map((z) => ({ ...z, name: z.name.trim() })),
+          },
+        },
+      });
+      setError(null);
+    });
+  }
+
+  return (
+    <>
+      <h3>排名段标记</h3>
+      <p className="muted">
+        在积分榜上标出特定名次段（升级区/降级区等）。列表顺序即优先级：名次命中多条时取最前面的标记。
+      </p>
+      <div className="rank-zone-style">
+        <label className="field">
+          展示样式
+          <select
+            className="input"
+            value={style}
+            onChange={(e) => setStyle(e.target.value === "divider" ? "divider" : "strip")}
+          >
+            <option value="strip">行首色条 + 表尾图例</option>
+            <option value="divider">区间分隔线</option>
+          </select>
+        </label>
+      </div>
+      {zones.length === 0 ? (
+        <p className="muted">还没有标记。</p>
+      ) : (
+        <div className="rank-zone-list">
+          {zones.map((z, i) => (
+            <div key={z.id} className="rank-zone-row">
+              <input
+                className="input rank-zone-name"
+                placeholder="名称（如 升级区）"
+                maxLength={24}
+                value={z.name}
+                onChange={(e) => update(z.id, { name: e.target.value })}
+              />
+              <label className="rank-zone-range">
+                名次
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={z.from}
+                  onChange={(e) => update(z.id, { from: Number(e.target.value) })}
+                />
+                –
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={z.to}
+                  onChange={(e) => update(z.id, { to: Number(e.target.value) })}
+                />
+              </label>
+              <div className="rank-zone-colors">
+                {ZONE_PRESET_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`rank-zone-swatch${z.color.toLowerCase() === c ? " active" : ""}`}
+                    style={{ background: c }}
+                    title={c}
+                    onClick={() => update(z.id, { color: c })}
+                  />
+                ))}
+                <input
+                  type="color"
+                  className="rank-zone-picker"
+                  value={z.color}
+                  title="自定义颜色"
+                  onChange={(e) => update(z.id, { color: e.target.value })}
+                />
+              </div>
+              <select
+                className="input rank-zone-scope"
+                value={scopeValue(z)}
+                onChange={(e) => scopeChange(z.id, e.target.value)}
+              >
+                <option value="all">全部积分表</option>
+                {stages.map((s) => (
+                  <option key={s.id} value={`stage:${s.id}`}>
+                    阶段：{stageLabel(s)}
+                  </option>
+                ))}
+                {detail.groups.map((g) => {
+                  const st = stages.find((s) => s.id === g.stageId);
+                  return (
+                    <option key={g.id} value={`group:${g.id}`}>
+                      组：{stageLabel(st ?? { kind: "group", sortOrder: 0 } as StageDTO)}·{g.name}
+                    </option>
+                  );
+                })}
+              </select>
+              <label className="rank-zone-enabled">
+                <input
+                  type="checkbox"
+                  checked={z.enabled}
+                  onChange={(e) => update(z.id, { enabled: e.target.checked })}
+                />
+                启用
+              </label>
+              <div className="rank-zone-ops">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={i === 0}
+                  title="上移（提高优先级）"
+                  onClick={() => move(z.id, -1)}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={i === zones.length - 1}
+                  title="下移（降低优先级）"
+                  onClick={() => move(z.id, 1)}
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setZones((zs) => zs.filter((x) => x.id !== z.id))}
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {error && <p className="error-msg">{error}</p>}
+      <div className="logo-row">
+        <button type="button" className="btn btn-ghost" onClick={add}>
+          添加标记
+        </button>
+        <button type="button" className="btn" disabled={busy} onClick={save}>
+          保存排名段标记
+        </button>
+      </div>
     </>
   );
 }
