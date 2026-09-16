@@ -269,6 +269,16 @@ function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: n
   ctx.closePath();
 }
 
+/** 名称列自适应：优先整名放下（字号从 size 级进缩到 min），缩到底仍放不下才退回省略号 */
+function fitNameCell(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, weight: number | string, size: number, min = 16): string {
+  for (let s = size; s >= min; s -= 2) {
+    font(ctx, weight, s);
+    if (ctx.measureText(text).width <= maxWidth) return text;
+  }
+  font(ctx, weight, min);
+  return fitText(ctx, text, maxWidth);
+}
+
 function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
   if (ctx.measureText(text).width <= maxWidth) return text;
   let t = text;
@@ -791,7 +801,8 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
   if (!ctx) return;
 
   const rowH = 64;
-  const rows = data.rows.slice(0, 20);
+  // 行上限 40（原来 20 截掉了大组积分榜；画布高度随行数自适应，扫码兜底仍留）
+  const rows = data.rows.slice(0, 40);
   const overflow = data.rows.length > rows.length;
   const zones = data.zones;
   const rowColors = zones?.rowColors ?? [];
@@ -854,7 +865,12 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       const maxCell = nameCols.has(ci) ? colWs[ci] - 16 + 28 : colWs[ci] - 16;
       ctx.fillStyle =
         zc && (ci === 0 || nameCols.has(ci)) ? zc : last ? INK : ink(0.85);
-      ctx.fillText(fitText(ctx, cell, maxCell), cellX(ci), ry + rowH / 2 + 1);
+      if (nameCols.has(ci)) {
+        // 名称列：整名优先（字号缩档），极端长名才省略号（用户反馈 Sergej Milinković-Savić 类）
+        ctx.fillText(fitNameCell(ctx, cell, maxCell, 700, 26), cellX(ci), ry + rowH / 2 + 1);
+      } else {
+        ctx.fillText(fitText(ctx, cell, maxCell), cellX(ci), ry + rowH / 2 + 1);
+      }
     });
     ry += rowH;
     // 行底 1px 细线（无斑马纹）
