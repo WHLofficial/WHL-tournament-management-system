@@ -148,6 +148,9 @@ export function Toplists({
   const cardsText = (y: number, r: number) =>
     [y > 0 ? `${y}🟨` : "", r > 0 ? `${r}🟥` : ""].filter(Boolean).join(" ") || "0";
 
+  // 分享卡默认展示前 10（页面表格仍显示全部，行为不变）
+  const cardTop10 = <R,>(rs: R[]) => rs.slice(0, 10);
+
   const playerLists: ListDef[] = [
     {
       key: "scorers",
@@ -155,7 +158,7 @@ export function Toplists({
       title: "射手榜",
       head: ["#", "球员", "球队", "进球"],
       rows: data.scorers.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
-      plain: data.scorers.map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      plain: cardTop10(data.scorers).map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
       colWidths: [0.5, 2.2, 2.0, 1],
       nameCol: [1, 2],
     },
@@ -165,7 +168,7 @@ export function Toplists({
       title: "助攻榜",
       head: ["#", "球员", "球队", "助攻"],
       rows: data.assists.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
-      plain: data.assists.map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      plain: cardTop10(data.assists).map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
       colWidths: [0.5, 2.2, 2.0, 1],
       nameCol: [1, 2],
     },
@@ -183,7 +186,7 @@ export function Toplists({
         r.teamName,
         cards(r.yellows, r.reds),
       ]),
-      plain: data.cardsPlayers.map((r, i) => [
+      plain: cardTop10(data.cardsPlayers).map((r, i) => [
         String(i + 1),
         r.suspended ? `${r.playerName}（停赛中）` : r.playerName,
         r.teamName,
@@ -198,7 +201,7 @@ export function Toplists({
       title: "伤病榜",
       head: ["#", "球员", "球队", "次数"],
       rows: data.injuries.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
-      plain: data.injuries.map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      plain: cardTop10(data.injuries).map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
       colWidths: [0.5, 2.2, 2.0, 1],
       nameCol: [1, 2],
     },
