@@ -438,6 +438,7 @@ function drawFootLegend(
   const cy = h - FOOT_BOTTOM - CHIP / 2;
   const maxRight = chipX() - 24;
   font(ctx, 500, 20);
+  ctx.textBaseline = "middle";
   let lx = HEAD_X;
   for (const item of legend) {
     const label = `${item.name}（${item.range}）`;
@@ -882,6 +883,7 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       // 表头：素灰 600/22 无底罩
       font(ctx, 600, 22);
       ctx.fillStyle = ink(0.6);
+      ctx.textBaseline = "middle";
       data.columns.forEach((c, i) => {
         ctx.textAlign = nameCols.has(i) ? "left" : "center";
         ctx.fillText(c, cellX(i), ry + 18);
@@ -890,6 +892,7 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       continue;
     }
     const row = it.row;
+    ctx.textBaseline = "middle";
     const zc = zones?.style === "strip" ? (rowColors[it.idx] ?? null) : null;
     if (zc) {
       // strip：整行 tint（全出血）+ 左缘 4px 色条
