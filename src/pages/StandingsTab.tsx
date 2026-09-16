@@ -48,6 +48,8 @@ export function StandingsTables({
   return (
     <>
       {standings.map((st) => {
+        // 阶段显示名：管理员自定义名优先（编排页改名后积分榜跟随），否则按赛制默认
+        const stageName = st.name || stageTitle[st.kind];
         const allRows = st.groups.flatMap((g) => g.rows.map((r) => ({ g, r })));
         const multi = st.groups.length > 1;
         // 分组榜分享卡每组独立小节（组标+自带表头），不再用「组」列
@@ -104,15 +106,15 @@ export function StandingsTables({
         return (
         <section key={st.stageId} className="standings-stage">
           <h3 className="stage-head">
-            <span>{stageTitle[st.kind]}</span>
+            <span>{stageName}</span>
             {share && tableRows.length > 0 && (
               <ShareButton
-                title={`分享「${stageTitle[st.kind]}积分榜」`}
+                title={`分享「${stageName}积分榜」`}
                 url={share.url}
                 draw={(c) =>
                   drawTableCard(c, {
                     tournamentName: share.tournamentName,
-                    title: `${stageTitle[st.kind]}积分榜`,
+                    title: `${stageName}积分榜`,
                     coverUrl: share.coverUrl ?? null,
                     columns,
                     colWidths,

@@ -552,11 +552,11 @@ export async function readStageStandings(
   const [stages, chain] = await Promise.all([
     db
       .prepare(
-        `SELECT id, kind, sort_order FROM stage
+        `SELECT id, kind, name, sort_order FROM stage
          WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order`
       )
       .bind(tournamentId)
-      .all<{ id: number; kind: "group" | "round_robin"; sort_order: number }>(),
+      .all<{ id: number; kind: "group" | "round_robin"; name: string | null; sort_order: number }>(),
     getTiebreakers(db, tournamentId),
   ]);
 
@@ -590,7 +590,7 @@ export async function readStageStandings(
       } else {
         groups = [{ groupId: null, name: "", rows }];
       }
-      return { stageId: st.id, kind: st.kind, sortOrder: st.sort_order, groups } satisfies StageStandingDTO;
+      return { stageId: st.id, kind: st.kind, name: st.name, sortOrder: st.sort_order, groups } satisfies StageStandingDTO;
     })
   );
   return computed.filter((s): s is StageStandingDTO => s !== null);

@@ -657,6 +657,8 @@ export interface StandingGroupDTO {
 export interface StageStandingDTO {
   stageId: number;
   kind: "group" | "round_robin";
+  /** 管理员自定义的阶段显示名（编排页可改）；空 = 用 kind 默认名 */
+  name: string | null;
   sortOrder: number;
   groups: StandingGroupDTO[];
 }
