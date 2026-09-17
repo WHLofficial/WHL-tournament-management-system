@@ -1688,10 +1688,6 @@ button.add-stage {
   align-items: center;
   gap: 3px;
 }
-/* 有角标时顶部让出位置：磁贴只有 50px 宽，两个角标并排会压到位置简称 */
-.tac-tile.susp,
-.tac-tile.inj,
-.tac-tile.both { padding-top: 9px; }
 .tac-mk-card {
   width: 7px;
   height: 10px;
