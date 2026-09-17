@@ -62,6 +62,8 @@ export function applyMigrations(sqlite: DatabaseSync): void {
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort();
+  // D1 强制外键（级联删除靠它），node:sqlite 默认关——先开再建表
+  sqlite.exec("PRAGMA foreign_keys = ON");
   for (const file of files) {
     sqlite.exec(readFileSync(dir + file, "utf8"));
   }

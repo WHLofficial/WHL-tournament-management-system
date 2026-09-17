@@ -472,6 +472,16 @@ app.delete("/:id/events/:eventId", async (c) => {
     ]);
     const m = ctx.m;
     if (!ev) return fail(c, 404, "事件不存在");
+    // 伤病事件挂着伤停登记：FK 级联会一起删掉，提前告知（伤停中/缺阵勾选随之消失）
+    let injuryNotice: string | null = null;
+    if (ev.type === "injury_minor" || ev.type === "injury_major") {
+      const inj = await c.env.DB.prepare(
+        "SELECT id FROM injury WHERE event_id = ?"
+      )
+        .bind(eventId)
+        .first<{ id: number }>();
+      if (inj) injuryNotice = "该伤病事件挂着的伤停登记已一并撤销";
+    }
     // 删除 + 审计（+ live 时尾随实时比分查询）一个 batch 办完；完赛补录修正不需要比分
     const live = m.status === "live";
     const batch: D1PreparedStatement[] = [
@@ -493,7 +503,9 @@ app.delete("/:id/events/:eventId", async (c) => {
       scoreHome = score.home;
       scoreAway = score.away;
     }
-    return c.json({ ok: true, scoreHome, scoreAway });
+    const extras2: Record<string, string> = {};
+    if (injuryNotice) extras2.notice = injuryNotice;
+    return c.json({ ok: true, scoreHome, scoreAway, ...extras2 });
   } catch (e) {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
     throw e;
@@ -557,6 +569,17 @@ app.put("/:id/events/:eventId", async (c) => {
         : Promise.resolve(null),
     ]);
     if (!ev) return fail(c, 404, "事件不存在");
+    // 伤病事件挂了伤停登记就不许换类型（severity 派生自事件类型）——先撤登记再改
+    if (
+      body.type !== ev.type &&
+      (ev.type === "injury_minor" || ev.type === "injury_major")
+    ) {
+      const inj = await c.env.DB.prepare("SELECT id FROM injury WHERE event_id = ?")
+        .bind(eventId)
+        .first<{ id: number }>();
+      if (inj)
+        return fail(c, 409, "该事件挂着伤停登记，请先在伤停管理里撤销登记再改类型");
+    }
     const m = ctx.m;
     if (m.status === "pending") return fail(c, 400, "比赛还没开打，开赛后才能编辑事件");
     if (body.entryId !== m.home_entry_id && body.entryId !== m.away_entry_id)
