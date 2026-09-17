@@ -13,6 +13,11 @@ export interface InjuryPlayerRow extends PlayerRow {
   injured?: boolean;
 }
 
+/** 射手榜行：penGoals = 其中的点球数（count 含点球；同分者点球少的排前） */
+export interface ScorerRow extends PlayerRow {
+  penGoals: number;
+}
+
 export interface CardsPlayerRow {
   playerId: number;
   playerName: string;
@@ -37,7 +42,7 @@ export interface CardsTeamRow {
 }
 
 export interface Toplists {
-  scorers: PlayerRow[];
+  scorers: ScorerRow[];
   assists: PlayerRow[];
   cardsPlayers: CardsPlayerRow[];
   injuries: InjuryPlayerRow[];
@@ -205,6 +210,7 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
     name: string;
     teamName: string;
     goals: number;
+    penGoals: number;
     assists: number;
     yellows: number;
     reds: number;
@@ -218,7 +224,8 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
   const players = new Map<number, PlayerBucket>();
   const teams = new Map<number, TeamBucket>();
   const bucket = (id: number, name: string, teamName: string): PlayerBucket =>
-    players.get(id) ?? { name, teamName, goals: 0, assists: 0, yellows: 0, reds: 0, injuries: 0 };
+    players.get(id) ??
+    { name, teamName, goals: 0, penGoals: 0, assists: 0, yellows: 0, reds: 0, injuries: 0 };
 
   // 两黄变一红口径：red_2y 计 1 张红牌；与 red_2y 同场同球员的黄牌不计入黄牌数
   const twoYellow = new Set<string>();
@@ -231,8 +238,10 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
   for (const r of ev.results ?? []) {
     if (r.player_id !== null && r.player_name !== null) {
       const b = bucket(r.player_id, r.player_name, r.team_name);
-      if (r.type === "goal" || r.type === "pen_goal") b.goals += 1;
-      else if (isYellow(r)) b.yellows += 1;
+      if (r.type === "goal" || r.type === "pen_goal") {
+        b.goals += 1;
+        if (r.type === "pen_goal") b.penGoals += 1;
+      } else if (isYellow(r)) b.yellows += 1;
       else if (r.type === "red" || r.type === "red_2y") b.reds += 1;
       else if (r.type === "injury_minor" || r.type === "injury_major") b.injuries += 1;
       players.set(r.player_id, b);
@@ -248,18 +257,26 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
     teams.set(r.team_id, tb);
   }
 
-  const scorers: PlayerRow[] = [];
+  const scorers: ScorerRow[] = [];
   const assists: PlayerRow[] = [];
   const cardsPlayers: CardsPlayerRow[] = [];
   const injuries: PlayerRow[] = [];
   for (const [playerId, b] of players) {
-    if (b.goals > 0) scorers.push({ playerId, playerName: b.name, teamName: b.teamName, count: b.goals });
+    if (b.goals > 0)
+      scorers.push({
+        playerId,
+        playerName: b.name,
+        teamName: b.teamName,
+        count: b.goals,
+        penGoals: b.penGoals,
+      });
     if (b.assists > 0) assists.push({ playerId, playerName: b.name, teamName: b.teamName, count: b.assists });
     if (b.yellows + b.reds > 0)
       cardsPlayers.push({ playerId, playerName: b.name, teamName: b.teamName, yellows: b.yellows, reds: b.reds });
     if (b.injuries > 0) injuries.push({ playerId, playerName: b.name, teamName: b.teamName, count: b.injuries });
   }
-  scorers.sort((a, b) => b.count - a.count || byPlayerName(a, b));
+  // 射手榜：同球数点球少的排前（运动战进球含金量口径）
+  scorers.sort((a, b) => b.count - a.count || a.penGoals - b.penGoals || byPlayerName(a, b));
   assists.sort((a, b) => b.count - a.count || byPlayerName(a, b));
   injuries.sort((a, b) => b.count - a.count || byPlayerName(a, b));
   cardsPlayers.sort((a, b) => b.reds - a.reds || b.yellows - a.yellows || byPlayerName(a, b));

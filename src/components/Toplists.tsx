@@ -18,6 +18,11 @@ interface InjuryRow extends PlayerRow {
   injured?: boolean;
 }
 
+/** 射手榜行：count 为总进球（含点球），penGoals 为其中点球数 */
+interface ScorerRow extends PlayerRow {
+  penGoals: number;
+}
+
 interface CardsPlayerRow {
   playerId: number;
   playerName: string;
@@ -41,7 +46,7 @@ interface CardsTeamRow {
 }
 
 interface ToplistsData {
-  scorers: PlayerRow[];
+  scorers: ScorerRow[];
   assists: PlayerRow[];
   cardsPlayers: CardsPlayerRow[];
   injuries: InjuryRow[];
@@ -172,6 +177,9 @@ export function Toplists({
   const cardsText = (y: number, r: number) =>
     [y > 0 ? `${y}🟨` : "", r > 0 ? `${r}🟥` : ""].filter(Boolean).join(" ") || "0";
 
+  // 射手榜进球列：总数（点球数），没点球就只写总数
+  const goalText = (r: ScorerRow) => (r.penGoals > 0 ? `${r.count}(${r.penGoals})` : String(r.count));
+
   // 分享卡默认展示前 10（页面表格仍显示全部，行为不变）
   const cardTop10 = <R,>(rs: R[]) => rs.slice(0, 10);
 
@@ -181,8 +189,8 @@ export function Toplists({
       name: "射手榜",
       title: "射手榜",
       head: ["#", "球员", "球队", "进球"],
-      rows: data.scorers.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
-      plain: cardTop10(data.scorers).map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      rows: data.scorers.map((r, i) => [i + 1, r.playerName, r.teamName, goalText(r)]),
+      plain: cardTop10(data.scorers).map((r, i) => [String(i + 1), r.playerName, r.teamName, goalText(r)]),
       colWidths: [0.5, 2.2, 2.0, 1],
       nameCol: [1, 2],
     },

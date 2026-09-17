@@ -738,11 +738,11 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
     if (aftermath.length > 0) paragraphs.push(aftermath.slice(0, 3).join(""));
 
     // 6) 球队近况（收尾新段）：整体近 5 场或分主/客，口径轮换（积分/胜场/不败/丢球/净胜/连败），样本 <3 场不写；弃权场不计入
+    // 窗口用 afterList（截至本场、含本场）：本场战绩要算进「近 5 场」
     const formOf = (entryId: number, venue: "all" | "home" | "away") => {
-      const recent = tFinished
+      const recent = afterList
         .filter(
           (x) =>
-            x.id !== m.id &&
             x.walkoverSide === "" &&
             (x.homeEntryId === entryId || x.awayEntryId === entryId) &&
             (venue === "all" || (venue === "home" ? x.homeEntryId === entryId : x.awayEntryId === entryId)),
