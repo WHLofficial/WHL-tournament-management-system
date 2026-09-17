@@ -4,6 +4,13 @@ import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { applyMigrations, createTestD1 } from "./d1";
 import { buildFeed, buildRoundRecap, buildWeekly } from "../worker/lib/feedNews";
+import { INJURY_CLEAR_TAIL, INJURY_OUT_TAIL } from "../worker/lib/copybanks";
+import { pickText } from "../shared/textpick";
+
+/** 尾巴是句库池，断言按「命中池里任一条」而不是钉死某一句 */
+const outTail = (n: number) => INJURY_OUT_TAIL.map((f) => f(n));
+const hasOutTail = (text: string, n: number) => outTail(n).some((t) => text.includes(t));
+const hasClearTail = (text: string) => INJURY_CLEAR_TAIL.some((t) => text.includes(t));
 
 interface FixtureOpts {
   /** 挂伤病事件与登记；false 时整块不建（测无伤情） */
@@ -43,7 +50,7 @@ function freshDb(opts: FixtureOpts = {}) {
       .prepare("INSERT INTO match_event (id, match_id, entry_id, player_id, type, minute, created_by) VALUES (900, 800, 500, 100, 'injury_minor', 30, 1)")
       .run();
     sqlite
-      .prepare("INSERT INTO injury (id, team_id, player_id, event_id, injury_name, created_by, created_at) VALUES (950, 10, 100, 900, '轻微扭伤', 1, ?)")
+      .prepare("INSERT INTO injury (id, team_id, player_id, event_id, injury_name, created_by, created_at) VALUES (950, 10, 100, 900, '踝关节扭伤', 1, ?)")
       .run(finishedAt);
     sqlite.prepare("INSERT INTO injury_miss (injury_id, match_id) VALUES (950, 800)").run();
     if (miss === "both") sqlite.prepare("INSERT INTO injury_miss (injury_id, match_id) VALUES (950, 801)").run();
@@ -68,8 +75,8 @@ describe("伤情快讯与周报", () => {
     // 标题来自句库，均含轮次文案（联赛 第 1 轮）
     expect(inj!.title).toContain("联赛 第 1 轮");
     // 正文：谁（队 · 轻重 · 伤名）+ 仍缺阵人数尾巴
-    expect(inj!.body).toContain("张三（红队 · 轻伤 · 轻微扭伤）");
-    expect(inj!.body).toContain("另有 1 人仍在伤停");
+    expect(inj!.body).toContain("张三（红队 · 轻伤 · 踝关节扭伤）");
+    expect(hasOutTail(inj!.body, 1)).toBe(true);
     // 点击去综述页
     expect(inj!.at).toBeTruthy();
   });
@@ -78,8 +85,10 @@ describe("伤情快讯与周报", () => {
     const { db } = freshDb({ miss: "finished" });
     const items = await buildFeed(db);
     const inj = items.find((i) => i.kind === "injury");
-    expect(inj!.body).toContain("张三（红队 · 轻伤 · 轻微扭伤）");
-    expect(inj!.body).toContain("无人仍在伤停");
+    expect(inj!.body).toContain("张三（红队 · 轻伤 · 踝关节扭伤）");
+    expect(hasClearTail(inj!.body)).toBe(true);
+    // 空口径不做「伤愈／全员健康」的断言——登记表里没有这个事实
+    expect(inj!.body).not.toMatch(/伤愈|全员健康|全员出战/);
   });
 
   it("同一轮同一人两次受伤只算一个人：标题人数、正文简列都不重复", async () => {
@@ -110,7 +119,7 @@ describe("伤情快讯与周报", () => {
       teamName: "红队",
       tournamentId: 7,
       severity: "minor",
-      injuryName: "轻微扭伤",
+      injuryName: "踝关节扭伤",
       outMatches: 1,
     });
     // 同一人一轮两次受伤仍只列一条，轻重按后一次
@@ -132,13 +141,14 @@ describe("伤情快讯与周报", () => {
       teamName: "红队",
       tournamentId: 7,
       severity: "minor",
-      injuryName: "轻微扭伤",
+      injuryName: "踝关节扭伤",
       outMatches: 1,
     });
     const items = await buildFeed(db);
     const weekly = items.find((i) => i.kind === "weekly");
     expect(weekly).toBeTruthy();
-    expect(weekly!.body).toContain("1 人受伤，其中 1 人仍在伤停");
+    expect(hasOutTail(weekly!.body, 1)).toBe(true);
+    expect(weekly!.body).toContain("1 人受伤");
   });
 
   it("本周无人受伤：伤情条与周报伤情节都不出现", async () => {
@@ -148,5 +158,27 @@ describe("伤情快讯与周报", () => {
     expect(items.find((i) => i.kind === "weekly")!.body).not.toContain("人受伤");
     const wk = await buildWeekly(db);
     expect(wk.injuries ?? []).toHaveLength(0);
+  });
+
+  it("缺阵尾巴是句库池：同一口径多种说法，且不越出「不再缺阵」这个事实", () => {
+    // 清空口径：≥6 条、互不重复、不含伤愈／全员健康这类登记表里没有的结论
+    expect(INJURY_CLEAR_TAIL.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(INJURY_CLEAR_TAIL).size).toBe(INJURY_CLEAR_TAIL.length);
+    for (const t of INJURY_CLEAR_TAIL) {
+      expect(t).toMatch(/^，/);
+      expect(t).not.toMatch(/伤愈|全员健康|全员出战|完全康复/);
+    }
+    // 有尾巴口径：同样 ≥6 条互不重复，且都带上人数
+    expect(INJURY_OUT_TAIL.length).toBeGreaterThanOrEqual(6);
+    const sizes = new Set(INJURY_OUT_TAIL.map((f) => f(2)));
+    expect(sizes.size).toBe(INJURY_OUT_TAIL.length);
+    for (const t of sizes) expect(t).toContain("2 人");
+
+    // 换种子要换出不同说法（否则「发散」是假的）
+    const seeded = new Set([
+      ...Array.from({ length: 40 }, (_, i) => pickText(`it:70:${i}`, INJURY_CLEAR_TAIL)),
+      ...Array.from({ length: 40 }, (_, i) => pickText(`it:70:${i}:out`, INJURY_OUT_TAIL)(2)),
+    ]);
+    expect(seeded.size).toBeGreaterThanOrEqual(4);
   });
 });

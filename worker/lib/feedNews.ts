@@ -23,6 +23,8 @@ import {
 import { bestMatchOf, computeMatchFacts, summarizeRound } from "./narrativeFacts";
 import { injuriesInRound, injuriesInWindow, type InjuryFact } from "./injury";
 import {
+  INJURY_CLEAR_TAIL,
+  INJURY_OUT_TAIL,
   INJURY_TITLE,
   LEADER_TITLE,
   MILESTONE_GOALS_TITLE,
@@ -495,10 +497,11 @@ function injuryNames(facts: InjuryFact[]): string {
     .join("、");
 }
 
-// 缺阵尾巴：有多少人还挂着未打完的缺阵场次就说多少人；一个都没有就说无人仍在伤停（不替登记表下「伤愈」的结论）
-function injuryOutTail(facts: InjuryFact[]): string {
+// 缺阵尾巴：有多少人还挂着未打完的缺阵场次就说多少人，一个都没有就说这批人不再缺阵
+// （只换说法，不下「伤愈／全员健康」的结论——登记表里没有复出这个事实）
+function injuryOutTail(facts: InjuryFact[], seed: string): string {
   const out = facts.filter((f) => f.outMatches > 0).length;
-  return out > 0 ? `，另有 ${out} 人仍在伤停` : "，无人仍在伤停";
+  return out > 0 ? pickText(`${seed}:out`, INJURY_OUT_TAIL)(out) : pickText(`${seed}:clear`, INJURY_CLEAR_TAIL);
 }
 
 export async function buildFeed(
@@ -992,7 +995,7 @@ export async function buildFeed(
       stageId: g.stage_id,
       round: g.round,
       title: pickText(`it:${g.stage_id}:${g.round}`, INJURY_TITLE)(rl, facts.length, major),
-      body: `${injuryNames(facts)}${injuryOutTail(facts)}`,
+      body: `${injuryNames(facts)}${injuryOutTail(facts, `it:${g.stage_id}:${g.round}`)}`,
     });
   }
 
@@ -1021,7 +1024,7 @@ export async function buildFeed(
             `本周 ${weekly.played} 战收获 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑射手榜` : ""}`,
           ]) +
           (wkInjuries.length > 0
-            ? `；${wkInjuries.length} 人受伤${wkOut > 0 ? `，其中 ${wkOut} 人仍在伤停` : "，无人仍在伤停"}`
+            ? `；${wkInjuries.length} 人受伤${wkOut > 0 ? pickText(`wko:${weekly.weekStart}`, INJURY_OUT_TAIL)(wkOut) : pickText(`wkc:${weekly.weekStart}`, INJURY_CLEAR_TAIL)}`
             : ""),
       });
     }
