@@ -1562,6 +1562,9 @@ button.add-stage {
   display: flex;
   padding: 10px 10px 0;
   aspect-ratio: 10 / 13;
+  /* 右栏比球场高时，行高会把面板拉高、宽高比再把宽度顶出 400px 的轨道，压到右栏卡片上；
+     夹住宽度，宁可球场略微变长也不越界 */
+  max-width: 100%;
 }
 .tac-pitch {
   position: relative;
