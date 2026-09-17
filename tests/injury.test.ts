@@ -1,13 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { assembleRaw, suggestMissIds, type MissRow } from "../worker/lib/injury";
-import { INJURY_CATALOG, findInjuryCatalog, severityOfEventType } from "../shared/injuries";
+import { assembleRaw, type MissRow } from "../worker/lib/injury";
+import {
+  INJURY_CATALOG,
+  findInjuryCatalog,
+  injuryNamesOf,
+  pickInjuryName,
+  severityOfEventType,
+} from "../shared/injuries";
 
 const baseRow = {
   id: 1,
   team_id: 10,
   player_id: 100,
   event_id: 1000,
-  injury_name: "轻微扭伤",
+  injury_name: "踝关节扭伤",
   note: null,
   created_at: "2026-01-01T00:00:00Z",
   event_type: "injury_minor" as const,
@@ -84,41 +90,53 @@ describe("assembleRaw", () => {
   });
 });
 
-describe("suggestMissIds", () => {
-  const upcoming = [101, 102, 103, 104];
-
-  it("按名库 suggestMiss 预勾前 N 场 pending", () => {
-    expect(suggestMissIds(upcoming, "擦伤")).toEqual([]); // suggestMiss 0
-    expect(suggestMissIds(upcoming, "轻微扭伤")).toEqual([101]);
-    expect(suggestMissIds(upcoming, "脑震荡")).toEqual([101, 102, 103]);
-  });
-
-  it("pending 不足时有多少勾多少；库外名字返回空", () => {
-    expect(suggestMissIds([101], "脑震荡")).toEqual([101]);
-    expect(suggestMissIds(upcoming, "神秘的伤")).toEqual([]);
-    expect(suggestMissIds(upcoming, null)).toEqual([]);
-  });
-});
-
 describe("伤病名库", () => {
-  it("每条都含 name/severity/suggestMiss，名字唯一", () => {
+  it("名字唯一，两个档位都有三档以上常见度", () => {
     const names = new Set(INJURY_CATALOG.map((it) => it.name));
     expect(names.size).toBe(INJURY_CATALOG.length);
+    for (const severity of ["minor", "major"] as const) {
+      const weights = new Set(injuryNamesOf(severity).map((it) => it.weight));
+      expect(weights.size).toBeGreaterThanOrEqual(3);
+    }
     for (const it of INJURY_CATALOG) {
-      expect(it.suggestMiss).toBeGreaterThanOrEqual(0);
-      expect(it.suggestMiss).toBeLessThanOrEqual(4);
+      expect(it.weight).toBeGreaterThanOrEqual(1);
+      expect(it.weight).toBeLessThanOrEqual(4);
     }
   });
 
-  it("轻伤档 suggestMiss ≤1，重伤档 ≥2（两周口径的场次表达）", () => {
-    for (const it of INJURY_CATALOG) {
-      if (it.severity === "minor") expect(it.suggestMiss).toBeLessThanOrEqual(1);
-      else expect(it.suggestMiss).toBeGreaterThanOrEqual(2);
+  it("injuryNamesOf 按常见度降序，且只含本档位", () => {
+    for (const severity of ["minor", "major"] as const) {
+      const list = injuryNamesOf(severity);
+      expect(list.every((it) => it.severity === severity)).toBe(true);
+      expect(list.map((it) => it.weight)).toEqual(
+        [...list.map((it) => it.weight)].sort((a, b) => b - a),
+      );
+      expect(list.length).toBeGreaterThanOrEqual(10);
     }
+  });
+
+  it("pickInjuryName：同档位内抽、同 seed 固定、常见伤抽中明显多于少见伤", () => {
+    const count = new Map<string, number>();
+    for (let i = 0; i < 4000; i++) {
+      const n = pickInjuryName("minor", `i${i}`);
+      expect(findInjuryCatalog(n)!.severity).toBe("minor");
+      count.set(n, (count.get(n) ?? 0) + 1);
+    }
+    expect(pickInjuryName("major", "seed-x")).toBe(pickInjuryName("major", "seed-x"));
+    // 踝关节扭伤 weight 4，牙齿折断 weight 1：期望 4:1，弱断言留足余量
+    const common = count.get("踝关节扭伤") ?? 0;
+    const rare = count.get("牙齿折断") ?? 0;
+    expect(common).toBeGreaterThan(rare * 2);
+    // 档位内的伤名应该大多能被抽到，而不是集中在一两条
+    expect(count.size).toBeGreaterThanOrEqual(12);
+    // 重档抽查：只出重档名，且含常见的跖骨骨折
+    const majors = new Set(Array.from({ length: 200 }, (_, i) => pickInjuryName("major", `m${i}`)));
+    expect([...majors].every((n) => findInjuryCatalog(n)!.severity === "major")).toBe(true);
+    expect(majors.has("跖骨骨折")).toBe(true);
   });
 
   it("findInjuryCatalog 与 severityOfEventType", () => {
-    expect(findInjuryCatalog("骨折")?.severity).toBe("major");
+    expect(findInjuryCatalog("跖骨骨折")?.severity).toBe("major");
     expect(findInjuryCatalog("不存在")).toBeNull();
     expect(severityOfEventType("injury_minor")).toBe("minor");
     expect(severityOfEventType("injury_major")).toBe("major");

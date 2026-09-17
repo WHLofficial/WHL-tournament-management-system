@@ -3,7 +3,7 @@
 // 比赛页（挂在事件行下）建登记 / 改登记，球队页（挂在已有登记下）改登记 / 撤销。
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { INJURY_CATALOG, suggestMissIds } from "../../shared/injuries";
+import { injuryNamesOf, pickInjuryName } from "../../shared/injuries";
 import type {
   InjuryCandidatesResp,
   InjuryMissCandidateDTO,
@@ -43,8 +43,6 @@ export function InjuryRegPanel({
   );
   const [cand, setCand] = useState<InjuryMissCandidateDTO[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  // 没手动改过勾选时跟随伤病名库的 suggestMiss 预勾（仅是辅助，随时可改）
-  const [auto, setAuto] = useState(existing === undefined);
 
   useEffect(() => {
     let dead = false;
@@ -60,18 +58,13 @@ export function InjuryRegPanel({
     };
   }, [teamId]);
 
-  // 档位来自事件类型：轻伤事件只列轻伤名，重伤事件只列重伤名（后端同样校验）
-  const options = INJURY_CATALOG.filter((it) => it.severity === severity);
+  // 档位来自事件类型：轻伤事件只列轻伤名，重伤事件只列重伤名（后端同样校验）；
+  // 顺序按常见度从高到低——常见伤排前面，省得每次翻少见伤。
+  const options = injuryNamesOf(severity);
+  // 随机伤名的 seed 只用本地计数器：同一事件连点两次要出不同结果，且不用 Math.random
+  const [roll, setRoll] = useState(0);
 
-  // 没手动改过勾选时跟随伤病名库的 suggestMiss 预勾（仅是辅助，随时可改）。
-  // 写成 effect 而不是选名时顺手勾，是为了盖住时序：先选名、候选比赛后到，也能预勾。
-  useEffect(() => {
-    if (!cand || !auto) return;
-    const open = cand.filter((x) => x.status !== "finished").map((x) => x.matchId);
-    setPicked(new Set(suggestMissIds(open, name)));
-  }, [cand, name, auto]);
-
-  // existing 是异步拉来的（MatchesTab 先渲染面板、登记稍后到）：晚到时把登记内容灌进本地状态，
+  // existing 是异步拉来的（列表页先渲染面板、登记稍后到）：晚到时把登记内容灌进本地状态，
   // 否则保存会拿空表单走 PUT，把已有的伤名/备注/勾选清空。只在换了另一条登记时同步（按 id），
   // 保存后父组件重拉仍是同一条，用户刚填的内容不会被冲掉。
   const existingId = existing?.id ?? null;
@@ -79,15 +72,17 @@ export function InjuryRegPanel({
     setName(existing?.injuryName ?? "");
     setNote(existing?.note ?? "");
     setPicked(new Set((existing?.misses ?? []).map((x) => x.matchId)));
-    setAuto(existing === undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingId]);
 
   const pickName = (n: string) => {
     setName(n);
   };
+  const rollName = () => {
+    setRoll((r) => r + 1);
+    setName(pickInjuryName(severity, `${existingId ?? eventId ?? 0}:${roll + 1}`));
+  };
   const toggle = (id: number) => {
-    setAuto(false);
     setPicked((prev) => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id);
@@ -139,10 +134,19 @@ export function InjuryRegPanel({
           <option value="">具体伤名（可选）</option>
           {options.map((it) => (
             <option key={it.name} value={it.name}>
-              {it.name}（建议缺阵 {it.suggestMiss} 场）
+              {it.name}
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={busy}
+          onClick={rollName}
+          title="按常见度随机选一个同档位的伤名（常见的更容易抽中）"
+        >
+          随机伤名
+        </button>
         <input
           className="input"
           value={note}

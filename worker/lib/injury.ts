@@ -589,6 +589,3 @@ function toPublic(inj: AssembledInjury): PublicAbsenceDTO {
     recoverPercent: inj.recoverPercent,
   };
 }
-
-// 预勾选建议实现放在 shared（管理端 UI 也要用），此处转出口保持既有引用不变
-export { suggestMissIds } from "../../shared/injuries";

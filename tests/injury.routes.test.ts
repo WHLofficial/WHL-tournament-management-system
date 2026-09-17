@@ -79,7 +79,7 @@ describe("伤停登记路由", () => {
     const { env, sqlite } = freshEnv();
     const res = await post(env, "/api/admin/injuries", {
       eventId: 900,
-      injuryName: "轻微扭伤",
+      injuryName: "踝关节扭伤",
       note: "下场可能复出",
       missMatchIds: [801, 810], // 联赛 pending + 冠军杯 pending（跨赛事）
     });
@@ -92,7 +92,7 @@ describe("伤停登记路由", () => {
     };
     expect(inj.team_id).toBe(10);
     expect(inj.player_id).toBe(100);
-    expect(inj.injury_name).toBe("轻微扭伤");
+    expect(inj.injury_name).toBe("踝关节扭伤");
     const misses = sqlite.prepare("SELECT match_id FROM injury_miss WHERE injury_id = ? ORDER BY match_id").all(inj.id) as unknown as { match_id: number }[];
     expect(misses.map((m) => m.match_id)).toEqual([801, 810]);
     expect(sqlite.prepare("SELECT action FROM audit_log WHERE action='injury_create'").get()).toBeTruthy();
@@ -120,7 +120,7 @@ describe("伤停登记路由", () => {
     sqlite.prepare("INSERT INTO match_event (id, match_id, entry_id, player_id, type, minute, created_by) VALUES (901, 800, 500, 100, 'goal', 60, 1)").run();
     expect((await post(env, "/api/admin/injuries", { eventId: 901 })).status).toBe(404);
 
-    const r1 = await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "骨折" });
+    const r1 = await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "跖骨骨折" });
     expect(r1.status).toBe(400);
     expect((await r1.json()).message).toContain("轻伤");
 
@@ -141,13 +141,13 @@ describe("伤停登记路由", () => {
 
   it("PUT 重勾缺阵整体替换 + 换名；DELETE 撤销", async () => {
     const { env, sqlite } = freshEnv();
-    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", missMatchIds: [801, 810] });
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "踝关节扭伤", missMatchIds: [801, 810] });
     const id = (sqlite.prepare("SELECT id FROM injury WHERE event_id = 900").get() as { id: number }).id;
 
-    const u = await put(env, `/api/admin/injuries/${id}`, { injuryName: "抽筋", note: null, missMatchIds: [810] });
+    const u = await put(env, `/api/admin/injuries/${id}`, { injuryName: "肌肉抽筋", note: null, missMatchIds: [810] });
     expect(u.status).toBe(200);
     const row = sqlite.prepare("SELECT injury_name, note FROM injury WHERE id = ?").get(id) as { injury_name: string; note: string | null };
-    expect(row.injury_name).toBe("抽筋");
+    expect(row.injury_name).toBe("肌肉抽筋");
     expect(row.note).toBeNull();
     expect((sqlite.prepare("SELECT match_id FROM injury_miss WHERE injury_id = ?").all(id) as unknown as { match_id: number }[]).map((r) => r.match_id)).toEqual([810]);
 
@@ -200,7 +200,7 @@ describe("伤停公开露出", () => {
 
   it("单场详情带缺阵名单：按队分组、进度与伤名照登记走", async () => {
     const { env } = freshEnv();
-    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", missMatchIds: [800, 801] });
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "踝关节扭伤", missMatchIds: [800, 801] });
 
     const res = await pub(env, "/api/public/tournaments/7/matches/800");
     expect(res.status).toBe(200);
@@ -212,7 +212,7 @@ describe("伤停公开露出", () => {
       playerId: 100,
       playerName: "张三",
       severity: "minor",
-      injuryName: "轻微扭伤",
+      injuryName: "踝关节扭伤",
       recoverPercent: 50, // 勾了 800(finished)+801(pending)
     });
     expect(body.absences.away).toEqual([]);
@@ -226,7 +226,7 @@ describe("伤停公开露出", () => {
 
   it("赛事伤停动态：只列该届参赛队、跨赛事登记同一条、已伤愈不入列", async () => {
     const { env, sqlite } = freshEnv();
-    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", missMatchIds: [800, 801] });
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "踝关节扭伤", missMatchIds: [800, 801] });
 
     const res = await pub(env, "/api/public/tournaments/7/injuries");
     expect(res.status).toBe(200);
@@ -253,7 +253,7 @@ describe("伤停公开露出", () => {
 
   it("伤病榜行带伤停中徽标（跨赛事派生）", async () => {
     const { env, sqlite } = freshEnv();
-    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", missMatchIds: [801] });
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "踝关节扭伤", missMatchIds: [801] });
 
     const res = await pub(env, "/api/public/tournaments/7/toplists");
     expect(res.status).toBe(200);
@@ -274,7 +274,7 @@ describe("伤停公开露出", () => {
 describe("伤停集中页接口", () => {
   it("GET /injuries 不带 teamId 返回全部登记，带队伍名", async () => {
     const { env } = freshEnv();
-    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", note: "待观察", missMatchIds: [801] });
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "踝关节扭伤", note: "待观察", missMatchIds: [801] });
 
     const res = await get(env, "/api/admin/injuries");
     expect(res.status).toBe(200);
@@ -286,7 +286,7 @@ describe("伤停集中页接口", () => {
       playerName: "张三",
       teamName: "红队",
       severity: "minor",
-      injuryName: "轻微扭伤",
+      injuryName: "踝关节扭伤",
     });
     expect(body.injuries[0].misses).toHaveLength(1);
   });
