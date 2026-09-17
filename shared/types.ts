@@ -1,4 +1,5 @@
 // 前后端共享的类型与常量。
+import type { InjurySeverity } from "./injuries";
 
 export type Role = "coach" | "admin" | "superadmin";
 export type TournamentStatus = "draft" | "registering" | "running" | "archived";
@@ -143,6 +144,40 @@ export interface SuspensionStatusDTO {
 export interface SuspensionsResp {
   config: SuspensionConfig;
   players: SuspensionStatusDTO[]; // 只含有红黄牌记录的球员
+}
+
+// ---------- 伤停登记（injury / injury_miss 表，状态查询时派生） ----------
+
+// 一条伤停登记关联的缺阵比赛（跨赛事；赛事名标注用）
+export interface InjuryMissDTO {
+  matchId: number;
+  tournamentId: number;
+  tournamentName: string;
+  round: number;
+  stageKind: "elim" | "round_robin" | "group";
+  status: "pending" | "live" | "finished";
+}
+
+// 管理端单条伤停登记
+export interface InjuryStatusDTO {
+  id: number;
+  teamId: number;
+  teamName: string;
+  playerId: number;
+  playerName: string;
+  eventId: number; // 挂靠的伤病事件（injury_minor / injury_major）
+  severity: InjurySeverity; // 派生自事件类型；改事件类型会被拒绝（先删登记）
+  injuryName: string | null;
+  note: string | null;
+  createdAt: string;
+  fromMatchId: number; // 受伤那一场（event 所属比赛）
+  fromLabel: string; // 受伤那场的可读标签（赛事名 · 第几轮）
+  misses: InjuryMissDTO[];
+  recoverPercent: number; // 伤愈进度 = 已打完的缺阵场 / 总勾选缺阵场
+}
+
+export interface InjuryListResp {
+  injuries: InjuryStatusDTO[];
 }
 
 // ---------- 配置（存 config_json 的形状） ----------

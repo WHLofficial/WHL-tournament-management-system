@@ -1,0 +1,402 @@
+// 伤停派生层：与 suspension.ts 同思路，纯派生不落状态列。
+// 「伤停中」= 某条登记勾选的缺阵比赛里仍有 pending/live 场；
+// 「伤愈进度」= 已完赛的缺阵场 / 总勾选场（勾了 0 场视为已伤愈，仅存档）。
+// 删事件、改勾选、补录后下次计算自动生效，无反冲逻辑。
+import type {
+  InjuryMissDTO,
+  InjurySeverity,
+  InjuryStatusDTO,
+  MatchEventType,
+} from "../../shared/types";
+import { findInjuryCatalog, severityOfEventType } from "../../shared/injuries";
+
+interface InjuryRow {
+  id: number;
+  team_id: number;
+  player_id: number;
+  event_id: number;
+  injury_name: string | null;
+  note: string | null;
+  created_at: string;
+  event_type: "injury_minor" | "injury_major";
+  event_minute: number | null;
+  player_name: string;
+  from_match_id: number;
+  from_tournament_id: number;
+  from_tournament_name: string;
+  from_round: number;
+  from_stage_kind: "elim" | "round_robin" | "group";
+}
+
+export interface MissRow {
+  injury_id: number;
+  match_id: number;
+  tournament_id: number;
+  tournament_name: string;
+  round: number;
+  stage_kind: "elim" | "round_robin" | "group";
+  status: "pending" | "live" | "finished";
+}
+
+// 某队（可跨赛事）全部伤停登记。teamId 为 entry 维度背后的 team id；
+// fromLabel 组装成「赛事名 · 第N轮」供管理端展示。
+export async function listTeamInjuries(
+  db: D1Database,
+  teamId: number
+): Promise<InjuryStatusDTO[]> {
+  const [injuries, misses] = await Promise.all([
+    db
+      .prepare(
+        `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
+                me.type AS event_type, me.minute AS event_minute,
+                p.name AS player_name,
+                fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
+                fm.round AS from_round, fs.kind AS from_stage_kind
+         FROM injury i
+         JOIN match_event me ON me.id = i.event_id
+         JOIN player p ON p.id = i.player_id
+         JOIN match fm ON fm.id = me.match_id
+         JOIN stage fs ON fs.id = fm.stage_id
+         JOIN tournament ft ON ft.id = fs.tournament_id
+         WHERE i.team_id = ?
+         ORDER BY i.created_at DESC, i.id DESC`
+      )
+      .bind(teamId)
+      .all<InjuryRow>(),
+    missesForTeams(db, [teamId]),
+  ]);
+  return assemble(injuries.results ?? [], misses.results ?? [], (r) => `${r.from_tournament_name} · 第${r.from_round}轮`);
+}
+
+// 公开端：单场比赛（赛前情报/详情页）双方当前缺阵名单。
+// 每条登记若勾选了该场即入列，附带伤情（名称/档位/伤愈进度）。
+export interface PublicAbsenceDTO {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  severity: InjurySeverity;
+  injuryName: string | null;
+  note: string | null;
+  recoverPercent: number; // 伤愈进度；该场若是最后一场则 100
+}
+
+// 两队伤停，按队分组返回（home/away 各一列）
+export async function listMatchAbsences(
+  db: D1Database,
+  matchId: number,
+  homeTeamId: number,
+  awayTeamId: number
+): Promise<{ home: PublicAbsenceDTO[]; away: PublicAbsenceDTO[] }> {
+  const teamIds = [homeTeamId, awayTeamId].filter((x) => x != null);
+  if (teamIds.length === 0) return { home: [], away: [] };
+  const [injuries, misses] = await Promise.all([
+    db
+      .prepare(
+        `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
+                me.type AS event_type, me.minute AS event_minute,
+                p.name AS player_name,
+                fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
+                fm.round AS from_round, fs.kind AS from_stage_kind
+         FROM injury i
+         JOIN match_event me ON me.id = i.event_id
+         JOIN player p ON p.id = i.player_id
+         JOIN match fm ON fm.id = me.match_id
+         JOIN stage fs ON fs.id = fm.stage_id
+         JOIN tournament ft ON ft.id = fs.tournament_id
+         WHERE i.team_id IN (${teamIds.map(() => "?").join(",")})`
+      )
+      .bind(...teamIds)
+      .all<InjuryRow>(),
+    missesForTeams(db, teamIds),
+  ]);
+  const byId = assembleRaw(injuries.results ?? [], misses.results ?? []);
+  const home: PublicAbsenceDTO[] = [];
+  const away: PublicAbsenceDTO[] = [];
+  for (const inj of byId.values()) {
+    if (!inj.misses.some((m) => m.matchId === matchId)) continue;
+    const dto = toPublic(inj);
+    if (inj.teamId === homeTeamId) home.push(dto);
+    else if (inj.teamId === awayTeamId) away.push(dto);
+  }
+  home.sort((a, b) => b.recoverPercent - a.recoverPercent || a.playerName.localeCompare(b.playerName, "zh"));
+  away.sort((a, b) => b.recoverPercent - a.recoverPercent || a.playerName.localeCompare(b.playerName, "zh"));
+  return { home, away };
+}
+
+// 伤停动态板块（榜单 tab）：全平台（或某队）「伤停中」球员，按队分组。
+// 每条登记若还有未打完的缺阵场即在列；跨赛事标注赛事名。
+export interface InjuryWatchDTO {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  teamName: string;
+  severity: InjurySeverity;
+  injuryName: string | null;
+  note: string | null;
+  recoverPercent: number;
+  misses: InjuryMissDTO[]; // 剩余未打完的缺阵场在前
+  injuredInLabel: string; // 「赛事名 · 第N轮」
+}
+
+export async function listActiveInjuries(
+  db: D1Database,
+  teamId?: number
+): Promise<InjuryWatchDTO[]> {
+  const [injuries, misses] = await Promise.all([
+    teamId != null
+      ? db
+          .prepare(
+            `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
+                    me.type AS event_type, me.minute AS event_minute,
+                    p.name AS player_name, t.name AS team_name,
+                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
+                    fm.round AS from_round, fs.kind AS from_stage_kind
+             FROM injury i
+             JOIN match_event me ON me.id = i.event_id
+             JOIN player p ON p.id = i.player_id
+             JOIN team t ON t.id = i.team_id
+             JOIN match fm ON fm.id = me.match_id
+             JOIN stage fs ON fs.id = fm.stage_id
+             JOIN tournament ft ON ft.id = fs.tournament_id
+             WHERE i.team_id = ?`
+          )
+          .bind(teamId)
+          .all<InjuryRow & { team_name: string }>()
+      : db
+          .prepare(
+            `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
+                    me.type AS event_type, me.minute AS event_minute,
+                    p.name AS player_name, t.name AS team_name,
+                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
+                    fm.round AS from_round, fs.kind AS from_stage_kind
+             FROM injury i
+             JOIN match_event me ON me.id = i.event_id
+             JOIN player p ON p.id = i.player_id
+             JOIN team t ON t.id = i.team_id
+             JOIN match fm ON fm.id = me.match_id
+             JOIN stage fs ON fs.id = fm.stage_id
+             JOIN tournament ft ON ft.id = fs.tournament_id`
+          )
+          .all<InjuryRow & { team_name: string }>(),
+    teamId != null ? missesForTeams(db, [teamId]) : missesAll(db),
+  ]);
+  const out: InjuryWatchDTO[] = [];
+  for (const inj of assembleRaw(injuries.results ?? [], misses.results ?? [], (r) => (r as InjuryRow & { team_name: string }).team_name).values()) {
+    const remaining = inj.misses.filter((m) => m.status !== "finished");
+    if (remaining.length === 0) continue; // 已伤愈，不在「伤停中」
+    out.push({
+      playerId: inj.playerId,
+      playerName: inj.playerName,
+      teamId: inj.teamId,
+      teamName: inj.teamName,
+      severity: inj.severity,
+      injuryName: inj.injuryName,
+      note: inj.note,
+      recoverPercent: inj.recoverPercent,
+      misses: [...remaining, ...inj.misses.filter((m) => m.status === "finished")],
+      injuredInLabel: inj.fromLabel,
+    });
+  }
+  out.sort((a, b) => {
+    // 重伤档在前（更值得关注），同档按进度低在前（刚伤的先看）
+    if (a.severity !== b.severity) return a.severity === "major" ? -1 : 1;
+    return a.recoverPercent - b.recoverPercent || a.playerName.localeCompare(b.playerName, "zh");
+  });
+  return out;
+}
+
+// 某事件时间窗内新出现的伤病（新闻周报/轮条用）：
+// 窗口 = 赛事在该窗口内完赛的比赛（与 buildWeekly 口径一致按 finished_at），
+// 挂在这些比赛上的 injury_minor/injury_major 事件且已建登记。
+export interface InjuryFact {
+  playerId: number;
+  playerName: string;
+  teamName: string;
+  severity: InjurySeverity;
+  injuryName: string | null;
+  matchId: number;
+  finishedAt: string | null;
+}
+
+export async function injuriesInWindow(
+  db: D1Database,
+  tournamentId: number,
+  fromIso: string, // 含（>=）
+  toIso: string // 含（<=）
+): Promise<InjuryFact[]> {
+  const r = await db
+    .prepare(
+      `SELECT me.player_id, p.name AS player_name, t.name AS team_name,
+              me.type, i.injury_name, m.id AS match_id, m.finished_at
+       FROM match_event me
+       JOIN match m ON m.id = me.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN entry e ON e.id = me.entry_id
+       JOIN team t ON t.id = e.team_id
+       JOIN player p ON p.id = me.player_id
+       JOIN injury i ON i.event_id = me.id
+       WHERE s.tournament_id = ? AND m.finished_at >= ? AND m.finished_at <= ?
+         AND me.type IN ('injury_minor', 'injury_major')
+       ORDER BY m.finished_at, me.id`
+    )
+    .bind(tournamentId, fromIso, toIso)
+    .all<{
+      player_id: number;
+      player_name: string;
+      team_name: string;
+      type: MatchEventType;
+      injury_name: string | null;
+      match_id: number;
+      finished_at: string | null;
+    }>();
+  return (r.results ?? []).map((row) => ({
+    playerId: row.player_id,
+    playerName: row.player_name,
+    teamName: row.team_name,
+    severity: severityOfEventType(row.type as "injury_minor" | "injury_major"),
+    injuryName: row.injury_name,
+    matchId: row.match_id,
+    finishedAt: row.finished_at,
+  }));
+}
+
+// ---------- 组装（纯函数，可单测） ----------
+
+function missesForTeams(db: D1Database, teamIds: number[]): Promise<D1Result<MissRow>> {
+  return db
+    .prepare(
+      `SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,
+              m.round, s.kind AS stage_kind, m.status
+       FROM injury_miss im
+       JOIN injury i ON i.id = im.injury_id
+       JOIN match m ON m.id = im.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t2 ON t2.id = s.tournament_id
+       WHERE i.team_id IN (${teamIds.map(() => "?").join(",")})
+       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id`
+    )
+    .bind(...teamIds)
+    .all<MissRow>();
+}
+
+function missesAll(db: D1Database): Promise<D1Result<MissRow>> {
+  return db
+    .prepare(
+      `SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,
+              m.round, s.kind AS stage_kind, m.status
+       FROM injury_miss im
+       JOIN match m ON m.id = im.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t2 ON t2.id = s.tournament_id
+       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id`
+    )
+    .all<MissRow>();
+}
+
+// 原始行 → 组装（导出供单测）；teamNameOf 可注入队名（listActiveInjuries 需要）
+export function assembleRaw(
+  rows: (InjuryRow & { team_name?: string })[],
+  misses: MissRow[],
+  teamNameOf?: (r: InjuryRow & { team_name?: string }) => string
+): Map<number, AssembledInjury> {
+  const byId = new Map<number, AssembledInjury>();
+  for (const r of rows) {
+    byId.set(r.id, {
+      id: r.id,
+      teamId: r.team_id,
+      teamName: teamNameOf ? teamNameOf(r) : "",
+      playerId: r.player_id,
+      playerName: r.player_name,
+      severity: severityOfEventType(r.event_type),
+      injuryName: r.injury_name,
+      note: r.note,
+      createdAt: r.created_at,
+      misses: [],
+      recoverPercent: 0,
+      fromLabel: `${r.from_tournament_name} · 第${r.from_round}轮`,
+      eventId: r.event_id,
+      fromMatchId: r.from_match_id,
+    });
+  }
+  for (const m of misses) {
+    const inj = byId.get(m.injury_id);
+    if (!inj) continue;
+    inj.misses.push({
+      matchId: m.match_id,
+      tournamentId: m.tournament_id,
+      tournamentName: m.tournament_name,
+      round: m.round,
+      stageKind: m.stage_kind,
+      status: m.status,
+    });
+  }
+  for (const inj of byId.values()) {
+    const total = inj.misses.length;
+    const done = inj.misses.filter((m) => m.status === "finished").length;
+    inj.recoverPercent = total === 0 ? 0 : Math.round((done / total) * 100);
+  }
+  return byId;
+}
+
+interface AssembledInjury {
+  id: number;
+  teamId: number;
+  teamName: string;
+  playerId: number;
+  playerName: string;
+  severity: InjurySeverity;
+  injuryName: string | null;
+  note: string | null;
+  createdAt: string;
+  misses: InjuryMissDTO[];
+  recoverPercent: number;
+  fromLabel: string;
+  eventId: number;
+  fromMatchId: number;
+}
+
+function assemble(
+  rows: InjuryRow[],
+  misses: MissRow[],
+  fromLabelOf: (r: InjuryRow) => string
+): InjuryStatusDTO[] {
+  return [...assembleRaw(rows, misses).values()].map((inj) => ({
+    id: inj.id,
+    teamId: inj.teamId,
+    teamName: inj.teamName,
+    playerId: inj.playerId,
+    playerName: inj.playerName,
+    eventId: inj.eventId,
+    severity: inj.severity,
+    injuryName: inj.injuryName,
+    note: inj.note,
+    createdAt: inj.createdAt,
+    fromMatchId: inj.fromMatchId,
+    fromLabel: inj.fromLabel || fromLabelOf(rows.find((r) => r.id === inj.id)!),
+    misses: inj.misses,
+    recoverPercent: inj.recoverPercent,
+  }));
+}
+
+function toPublic(inj: AssembledInjury): PublicAbsenceDTO {
+  return {
+    playerId: inj.playerId,
+    playerName: inj.playerName,
+    teamId: inj.teamId,
+    severity: inj.severity,
+    injuryName: inj.injuryName,
+    note: inj.note,
+    recoverPercent: inj.recoverPercent,
+  };
+}
+
+// 预勾选建议：登记弹窗按伤病名库 suggestMiss 预选接下来 N 场 pending 比赛
+export function suggestMissIds(
+  upcomingPendingMatchIds: number[],
+  catalogName: string | null
+): number[] {
+  if (!catalogName) return [];
+  const item = findInjuryCatalog(catalogName);
+  if (!item) return [];
+  return upcomingPendingMatchIds.slice(0, item.suggestMiss);
+}
