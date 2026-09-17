@@ -351,12 +351,6 @@
 .wk-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
 .wk-card b { display: block; font-size: 14px; margin-bottom: 4px; }
 .wk-stat-inj .n { color: #c2410c; }
-.wk-inj { list-style: none; margin: 8px 0 0; padding: 0; }
-.wk-inj li { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; padding: 6px 0; border-top: 1px dashed var(--border); font-size: 13px; }
-.wk-inj li:first-child { border-top: 0; }
-.wk-inj-name { font-weight: 700; }
-.wk-inj-hurt { color: #9a3412; }
-.wk-inj-rest { font-size: 12px; color: var(--muted); }
 .st-mini { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
 .st-mini th, .st-mini td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
 .st-mini tr:last-child td { border-bottom: none; }

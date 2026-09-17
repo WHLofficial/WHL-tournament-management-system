@@ -43,6 +43,8 @@ export default function RecapPage() {
     );
   }
 
+  const injuries = data.injuries ?? [];
+
   return (
     <main className="container">
       <article className="art">
@@ -86,6 +88,25 @@ export default function RecapPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {injuries.length > 0 && (
+          <div className="art-sec">
+            <h3>本轮伤情（{injuries.length} 人）</h3>
+            <ul className="inj-line">
+              {injuries.map((f) => (
+                <li key={f.playerId}>
+                  <span className="inj-line-name">{f.playerName}</span>
+                  <span className="muted">（{f.teamName}）</span>
+                  <span className={`iw-sev${f.severity === "major" ? " iw-sev-major" : ""}`}>
+                    {f.severity === "major" ? "重伤" : "轻伤"}
+                  </span>
+                  {f.injuryName && <span className="inj-line-hurt">{f.injuryName}</span>}
+                  {f.outMatches > 0 && <span className="inj-line-rest">还缺 {f.outMatches} 场</span>}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

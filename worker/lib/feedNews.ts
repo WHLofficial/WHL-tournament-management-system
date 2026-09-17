@@ -3,7 +3,7 @@
 // 同数据同输出（确定性 item_id + 稳定排序），数据变动自动重算，无陈旧新闻。
 // 时效梯度：红牌(live 即时报) → 战报(终场) → 综述(全轮) → 周报(周末)。
 import type { D1Database } from "@cloudflare/workers-types";
-import type { FeedItemDTO, RecapDTO, WeeklyDTO, WeeklyMatchDTO } from "../../shared/news";
+import type { FeedItemDTO, InjuryLineDTO, RecapDTO, WeeklyDTO, WeeklyMatchDTO } from "../../shared/news";
 import type { RawEvent, FinishedMatch } from "./context";
 import { chance, pickText } from "../../shared/textpick";
 import {
@@ -195,16 +195,7 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
   const matches: WeeklyMatchDTO[] = list.map(toWeeklyMatch);
 
   // 本周伤情：与本周比赛同窗口（左闭右开）；同一人一周内多条伤情按最后一条留（同一人只占一行）
-  const injuries = dedupePlayerFacts(await injuriesInWindow(db, weekKey(start), weekKey(end))).map((f) => ({
-    playerId: f.playerId,
-    playerName: f.playerName,
-    teamName: f.teamName,
-    tournamentId: f.tournamentId,
-    tournamentName: f.tournamentName,
-    severity: f.severity,
-    injuryName: f.injuryName,
-    outMatches: f.outMatches,
-  }));
+  const injuries = dedupePlayerFacts(await injuriesInWindow(db, weekKey(start), weekKey(end))).map(toInjuryLine);
 
   return {
     weekStart: weekKey(start),
@@ -478,6 +469,20 @@ function dedupePlayerFacts(facts: InjuryFact[]): InjuryFact[] {
   const byPlayer = new Map<number, InjuryFact>();
   for (const f of facts) byPlayer.set(f.playerId, f);
   return [...byPlayer.values()];
+}
+
+// 事实 → 一条伤情行（周报与综述共用同一份字段口径）
+function toInjuryLine(f: InjuryFact): InjuryLineDTO {
+  return {
+    playerId: f.playerId,
+    playerName: f.playerName,
+    teamName: f.teamName,
+    tournamentId: f.tournamentId,
+    tournamentName: f.tournamentName,
+    severity: f.severity,
+    injuryName: f.injuryName,
+    outMatches: f.outMatches,
+  };
 }
 
 // 伤情逐名简列（快讯条正文用）：谁、哪队、轻重、伤名（有登记才有）
@@ -1169,6 +1174,9 @@ export async function buildRoundRecap(
     );
   if (bits.length > 0) paragraphs.push(bits.join("。") + "。");
 
+  // 本轮伤情：快讯条点进来要能看见对应内容（同一人一轮多次受伤只列一条）
+  const injuries = dedupePlayerFacts(await injuriesInRound(db, stageId, round)).map(toInjuryLine);
+
   return {
     tournamentId,
     tournamentName: tour.name,
@@ -1183,6 +1191,7 @@ export async function buildRoundRecap(
     topScorer,
     standings,
     paragraphs,
+    injuries,
     matches: finished.map(toWeeklyMatch),
   };
 }

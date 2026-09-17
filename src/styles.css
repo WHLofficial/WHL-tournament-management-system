@@ -679,6 +679,13 @@ button.btn-ghost:hover:not(:disabled) {
 }
 .iw-bar i { display: block; height: 100%; background: #ea580c; }
 .iw-from { font-size: 11px; color: var(--muted); }
+/* 伤情逐名简列（周报「本周伤情」与轮次综述「本轮伤情」共用同一版式） */
+.inj-line { list-style: none; margin: 8px 0 0; padding: 0; }
+.inj-line li { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; padding: 6px 0; border-top: 1px dashed var(--border); font-size: 13px; }
+.inj-line li:first-child { border-top: 0; }
+.inj-line-name { font-weight: 700; }
+.inj-line-hurt { color: #9a3412; }
+.inj-line-rest { font-size: 12px; color: var(--muted); }
 
 /* ---------- 积分榜 ---------- */
 .standings-stage { margin-bottom: 18px; }

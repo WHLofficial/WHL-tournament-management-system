@@ -74,12 +74,12 @@ export interface WeeklyDTO {
   topScorer: { name: string; teamName: string; goals: number } | null;
   bestDefense: { teamName: string; conceded: number } | null;
   bestMatch?: { matchId: number; label: string; score: string; dramaScore: number } | null; // 本周最佳比赛（dramaScore 最高）；旧缓存读出无此字段
-  injuries?: WeeklyInjuryDTO[]; // 本周伤情（按受伤时刻升序）；旧缓存读出无此字段
+  injuries?: InjuryLineDTO[]; // 本周伤情（按受伤时刻升序）；旧缓存读出无此字段
   matches: WeeklyMatchDTO[];
 }
 
-// 周报伤情条的一行：本周受伤的人，以及他是否还在缺阵
-export interface WeeklyInjuryDTO {
+// 伤情条的一行（周报「本周伤情」与轮次综述「本轮伤情」共用）：谁受了伤，以及他是否还在缺阵
+export interface InjuryLineDTO {
   playerId: number;
   playerName: string;
   teamName: string;
@@ -125,6 +125,7 @@ export interface RecapDTO {
   topScorer: { name: string; teamName: string; goals: number } | null;
   standings: { rank: number; teamName: string; played: number; pts: number }[]; // 单表联赛阶段前 5；淘汰赛/多组小组赛为空
   paragraphs: string[]; // 概述句
+  injuries?: InjuryLineDTO[]; // 本轮伤情（快讯条「点击去综述页」的落点）；旧缓存读出无此字段
   matches: WeeklyMatchDTO[];
 }
 

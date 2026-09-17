@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { applyMigrations, createTestD1 } from "./d1";
-import { buildFeed, buildWeekly } from "../worker/lib/feedNews";
+import { buildFeed, buildRoundRecap, buildWeekly } from "../worker/lib/feedNews";
 
 interface FixtureOpts {
   /** 挂伤病事件与登记；false 时整块不建（测无伤情） */
@@ -98,6 +98,28 @@ describe("伤情快讯与周报", () => {
     const wk = await buildWeekly(db);
     expect(wk.injuries).toHaveLength(1);
     expect(wk.injuries![0].severity).toBe("major");
+  });
+
+  it("轮次综述带本轮伤情：与快讯条同一份去重结果（点进去看得见）", async () => {
+    const { db } = freshDb();
+    const recap = await buildRoundRecap(db, 7, 70, 1);
+    expect(recap.injuries).toHaveLength(1);
+    expect(recap.injuries![0]).toMatchObject({
+      playerId: 100,
+      playerName: "张三",
+      teamName: "红队",
+      tournamentId: 7,
+      severity: "minor",
+      injuryName: "轻微扭伤",
+      outMatches: 1,
+    });
+    // 同一人一轮两次受伤仍只列一条，轻重按后一次
+    const dup = await buildRoundRecap(freshDb({ dup: true }).db, 7, 70, 1);
+    expect(dup.injuries).toHaveLength(1);
+    expect(dup.injuries![0].severity).toBe("major");
+    // 本轮无人受伤则是空数组，页面据此不渲染
+    const none = await buildRoundRecap(freshDb({ injury: false }).db, 7, 70, 1);
+    expect(none.injuries ?? []).toHaveLength(0);
   });
 
   it("周报带伤情节：injuries 去重逐名 + 正文尾巴", async () => {
