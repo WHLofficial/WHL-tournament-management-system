@@ -18,10 +18,16 @@ export const KIND_LABEL: Record<FeedKind, string> = {
   milestone: "里程碑",
   rescore: "更正",
   discipline: "红牌",
+  injury: "伤情",
   weekly: "周报",
 };
-// 暖色徽标的非常规条目（改判/红牌/弃权）
-export const KIND_HOT: Partial<Record<FeedKind, boolean>> = { walkover: true, rescore: true, discipline: true };
+// 暖色徽标的非常规条目（改判/红牌/弃权/伤情）
+export const KIND_HOT: Partial<Record<FeedKind, boolean>> = {
+  walkover: true,
+  rescore: true,
+  discipline: true,
+  injury: true,
+};
 
 const EMOJIS: { key: "fire" | "thumb" | "mind" | "cry"; label: string }[] = [
   { key: "fire", label: "🔥" },
@@ -31,13 +37,15 @@ const EMOJIS: { key: "fire" | "thumb" | "mind" | "cry"; label: string }[] = [
 ];
 const REACT_LS = (itemId: string) => `whl.react.${itemId}`;
 
-// 条目点击去向：战报/弃权→战报文章页；综述→综述页；周报→周报页；榜首/纪录→积分榜；里程碑→榜单；红牌/更正→单场
+// 条目点击去向：战报/弃权→战报文章页；综述/伤情→综述页（伤情条按轮给）；周报→周报页；
+// 榜首/纪录→积分榜；里程碑→榜单；红牌/更正→单场
 export function itemHref(i: FeedItemDTO): string {
   switch (i.kind) {
     case "match":
     case "walkover":
       return `/report/${i.matchId}`;
     case "recap":
+    case "injury":
       return `/recap/${i.tournamentId}/${i.stageId}/${i.round}`;
     case "weekly":
       return `/weekly?week=${i.weekStart}`;

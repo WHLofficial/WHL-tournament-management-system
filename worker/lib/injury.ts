@@ -234,55 +234,112 @@ export async function listTournamentActiveInjuries(
 // 窗口 = 赛事在该窗口内完赛的比赛（与 buildWeekly 口径一致按 finished_at），
 // 挂在这些比赛上的 injury_minor/injury_major 事件且已建登记。
 export interface InjuryFact {
+  eventId: number;
+  injuryId: number | null; // 有伤停登记才有值
   playerId: number;
   playerName: string;
+  teamId: number;
   teamName: string;
   severity: InjurySeverity;
   injuryName: string | null;
   matchId: number;
+  stageId: number;
+  round: number;
+  tournamentId: number;
+  tournamentName: string;
   finishedAt: string | null;
+  outMatches: number; // 登记里还挂着的未完赛缺阵场次；无登记为 0
 }
 
-export async function injuriesInWindow(
+// 伤情事实底表：伤病事件为事实源，登记（injury）只补伤名与缺阵状态。
+// 事件没记球员/所属队就列不出名字，与伤病榜口径一致，直接不取。
+const INJURY_FACT_SELECT = `
+  SELECT me.id AS event_id, i.id AS injury_id,
+         me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name,
+         me.type, i.injury_name,
+         m.id AS match_id, m.stage_id, m.round, m.finished_at,
+         s.tournament_id, tt.name AS tournament_name,
+         (SELECT COUNT(*) FROM injury_miss im
+            JOIN match m2 ON m2.id = im.match_id
+           WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches
+  FROM match_event me
+  JOIN match m ON m.id = me.match_id
+  JOIN stage s ON s.id = m.stage_id
+  JOIN tournament tt ON tt.id = s.tournament_id
+  JOIN entry e ON e.id = me.entry_id
+  JOIN team t ON t.id = e.team_id
+  JOIN player p ON p.id = me.player_id
+  LEFT JOIN injury i ON i.event_id = me.id
+  WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft'`;
+
+async function injuryFacts(
   db: D1Database,
-  tournamentId: number,
-  fromIso: string, // 含（>=）
-  toIso: string // 含（<=）
+  where: string,
+  binds: (string | number)[]
 ): Promise<InjuryFact[]> {
   const r = await db
-    .prepare(
-      `SELECT me.player_id, p.name AS player_name, t.name AS team_name,
-              me.type, i.injury_name, m.id AS match_id, m.finished_at
-       FROM match_event me
-       JOIN match m ON m.id = me.match_id
-       JOIN stage s ON s.id = m.stage_id
-       JOIN entry e ON e.id = me.entry_id
-       JOIN team t ON t.id = e.team_id
-       JOIN player p ON p.id = me.player_id
-       JOIN injury i ON i.event_id = me.id
-       WHERE s.tournament_id = ? AND m.finished_at >= ? AND m.finished_at <= ?
-         AND me.type IN ('injury_minor', 'injury_major')
-       ORDER BY m.finished_at, me.id`
-    )
-    .bind(tournamentId, fromIso, toIso)
+    .prepare(`${INJURY_FACT_SELECT} AND ${where} ORDER BY m.finished_at, me.id`)
+    .bind(...binds)
     .all<{
+      event_id: number;
+      injury_id: number | null;
       player_id: number;
       player_name: string;
+      team_id: number;
       team_name: string;
       type: MatchEventType;
       injury_name: string | null;
       match_id: number;
+      stage_id: number;
+      round: number;
+      tournament_id: number;
+      tournament_name: string;
       finished_at: string | null;
+      out_matches: number;
     }>();
   return (r.results ?? []).map((row) => ({
+    eventId: row.event_id,
+    injuryId: row.injury_id,
     playerId: row.player_id,
     playerName: row.player_name,
+    teamId: row.team_id,
     teamName: row.team_name,
     severity: severityOfEventType(row.type as "injury_minor" | "injury_major"),
     injuryName: row.injury_name,
     matchId: row.match_id,
+    stageId: row.stage_id,
+    round: row.round,
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name,
     finishedAt: row.finished_at,
+    outMatches: row.out_matches ?? 0,
   }));
+}
+
+// 某一轮里的伤情（轮次伤情快讯条用；轮次的完赛判定由调用方负责）
+export function injuriesInRound(
+  db: D1Database,
+  stageId: number,
+  round: number
+): Promise<InjuryFact[]> {
+  return injuryFacts(db, "m.stage_id = ? AND m.round = ?", [stageId, round]);
+}
+
+// 时间窗口里的伤情（按完赛时刻，与 fetchFinishedWindow / weekMatches 同口径：左闭右开）；
+// 传 tournamentId 只取该届，不传则跨赛事（周报用）
+export function injuriesInWindow(
+  db: D1Database,
+  fromIso: string, // 含（>=）
+  toIso: string, // 不含（<）
+  tournamentId?: number
+): Promise<InjuryFact[]> {
+  return tournamentId == null
+    ? injuryFacts(db, "m.finished_at >= ? AND m.finished_at < ?", [fromIso, toIso])
+    : injuryFacts(db, "s.tournament_id = ? AND m.finished_at >= ? AND m.finished_at < ?", [
+        tournamentId,
+        fromIso,
+        toIso,
+      ]);
 }
 
 // 某队可勾选为缺阵的比赛：跨赛事全量（含已完赛，支持补录），登记面板用。

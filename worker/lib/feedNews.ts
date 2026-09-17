@@ -21,7 +21,9 @@ import {
   subtractMatchContribution,
 } from "./context";
 import { bestMatchOf, computeMatchFacts, summarizeRound } from "./narrativeFacts";
+import { injuriesInRound, injuriesInWindow, type InjuryFact } from "./injury";
 import {
+  INJURY_TITLE,
   LEADER_TITLE,
   MILESTONE_GOALS_TITLE,
   MILESTONE_TOP_TITLE,
@@ -192,6 +194,21 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
 
   const matches: WeeklyMatchDTO[] = list.map(toWeeklyMatch);
 
+  // 本周伤情：与本周比赛同窗口（左闭右开）；同一人一周内多条伤情按最后一条留（同一人只占一行）
+  const injuryRows = await injuriesInWindow(db, weekKey(start), weekKey(end));
+  const byPlayer = new Map<number, (typeof injuryRows)[number]>();
+  for (const f of injuryRows) byPlayer.set(f.playerId, f);
+  const injuries = [...byPlayer.values()].map((f) => ({
+    playerId: f.playerId,
+    playerName: f.playerName,
+    teamName: f.teamName,
+    tournamentId: f.tournamentId,
+    tournamentName: f.tournamentName,
+    severity: f.severity,
+    injuryName: f.injuryName,
+    outMatches: f.outMatches,
+  }));
+
   return {
     weekStart: weekKey(start),
     label: `${fmtMD(weekKey(start))} – ${fmtMD(weekKey(end))}`,
@@ -204,6 +221,7 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
     topScorer,
     bestDefense,
     bestMatch,
+    injuries,
     matches,
   };
 }
@@ -457,6 +475,22 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
   ];
 }
 
+// 伤情逐名简列（快讯条正文用）：谁、哪队、轻重、伤名（有登记才有）
+function injuryNames(facts: InjuryFact[]): string {
+  return facts
+    .map(
+      (f) =>
+        `${f.playerName}（${f.teamName} · ${f.severity === "major" ? "重伤" : "轻伤"}${f.injuryName ? ` · ${f.injuryName}` : ""}）`,
+    )
+    .join("、");
+}
+
+// 缺阵尾巴：有多少人还挂着未打完的缺阵场次就说多少人；一个都没有就说没人继续缺阵（不替登记表下「伤愈」的结论）
+function injuryOutTail(facts: InjuryFact[]): string {
+  const out = facts.filter((f) => f.outMatches > 0).length;
+  return out > 0 ? `，另有 ${out} 人仍在伤停` : "，无人继续缺阵";
+}
+
 export async function buildFeed(
   db: D1Database,
   opts: { limit?: number; before?: string } = {},
@@ -584,14 +618,15 @@ export async function buildFeed(
       ]);
       return { rows, banSuffixes, redMaxRounds };
     })(),
-    // 综述后置：轮数与各轮完赛名单并行
+    // 综述后置：轮数、各轮完赛名单与各轮伤情并行
     (async () => {
       const rows = (await recapP).results ?? [];
-      const [recapMaxRounds, recapLists] = await Promise.all([
+      const [recapMaxRounds, recapLists, recapInjuries] = await Promise.all([
         fetchStageMaxRounds(db, rows.map((r) => r.stage_id)),
         Promise.all(rows.map((r) => fetchRoundFinished(db, r.stage_id, r.round))),
+        Promise.all(rows.map((r) => injuriesInRound(db, r.stage_id, r.round))),
       ]);
-      return { rows, recapMaxRounds, recapLists };
+      return { rows, recapMaxRounds, recapLists, recapInjuries };
     })(),
   ]);
   const factsByTid = new Map(factsEntries);
@@ -898,6 +933,7 @@ export async function buildFeed(
   const recapRows = recap.rows;
   const recapMaxRounds = recap.recapMaxRounds;
   const recapLists = recap.recapLists;
+  const recapInjuries = recap.recapInjuries;
   for (let i = 0; i < recapRows.length; i++) {
     const g = recapRows[i];
     const agg = roundAgg(recapLists[i]);
@@ -927,11 +963,36 @@ export async function buildFeed(
     });
   }
 
+  // 3.6) 轮次伤情条：与综述条同一批「全轮完赛」轮次，该轮有人受伤才出条（详情走综述页）
+  for (let i = 0; i < recapRows.length; i++) {
+    const g = recapRows[i];
+    const facts = recapInjuries[i] ?? [];
+    if (facts.length === 0) continue;
+    const rl = roundLabel(
+      { stageKind: g.stage_kind, stageName: g.stage_name, round: g.round, tournamentName: g.tournament_name },
+      recapMaxRounds.get(g.stage_id) ?? g.round,
+    );
+    const major = facts.filter((f) => f.severity === "major").length;
+    items.push({
+      id: `injury:${g.stage_id}:${g.round}`,
+      kind: "injury",
+      at: g.last_at,
+      tournamentId: g.tournament_id,
+      tournamentName: g.tournament_name,
+      stageId: g.stage_id,
+      round: g.round,
+      title: pickText(`it:${g.stage_id}:${g.round}`, INJURY_TITLE)(rl, facts.length, major),
+      body: `${injuryNames(facts)}${injuryOutTail(facts)}`,
+    });
+  }
+
   // 4) 周报条（本周/回退周有比赛才出）——与波 1 同时开算，此处只等结果
   const weekly = await weeklyP;
   if (weekly.played > 0) {
     const weeklyAt = weekly.matches[0]?.finishedAt ?? `${weekly.weekStart}T00:00:00Z`;
     if (!before || (weeklyAt && weeklyAt < before)) {
+      const wkInjuries = weekly.injuries ?? [];
+      const wkOut = wkInjuries.filter((f) => f.outMatches > 0).length;
       items.push({
         id: `weekly:${weekly.weekStart}`,
         kind: "weekly",
@@ -944,10 +1005,14 @@ export async function buildFeed(
           topScorerName: weekly.topScorer?.name,
           topScorerGoals: weekly.topScorer?.goals,
         }),
-        body: pickText(`wk:${weekly.weekStart}`, [
-          `${weekly.played} 场比赛共打进 ${weekly.goals} 球${weekly.topScorer ? `，射手王是 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
-          `本周 ${weekly.played} 战收获 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑射手榜` : ""}`,
-        ]),
+        body:
+          pickText(`wk:${weekly.weekStart}`, [
+            `${weekly.played} 场比赛共打进 ${weekly.goals} 球${weekly.topScorer ? `，射手王是 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
+            `本周 ${weekly.played} 战收获 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑射手榜` : ""}`,
+          ]) +
+          (wkInjuries.length > 0
+            ? `；${wkInjuries.length} 人受伤${wkOut > 0 ? `，其中 ${wkOut} 人仍在伤停` : "，无人继续缺阵"}`
+            : ""),
       });
     }
   }

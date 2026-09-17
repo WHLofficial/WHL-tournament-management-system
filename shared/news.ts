@@ -10,13 +10,14 @@ export type FeedKind =
   | "milestone" // 里程碑（进球档位/射手榜易主）
   | "rescore" // 更正启事
   | "discipline" // 红牌即时快讯
+  | "injury" // 轮次伤情快讯（整轮完赛后出条）
   | "weekly"; // 周报
 
 // 快讯条目：纯派生物（读时现算），确定性 id 保证同数据同输出。
 // 点击去向由 kind + 可选字段在前端推导，不存冗余 URL。
 export interface FeedItemDTO {
   // match:{mid} / wo:{mid} / recap:{sid}:{r} / leader:{mid} / streak:{mid}:{entryId}
-  // / milestone:{mid}:{playerId} / rescore:{auditId} / discipline:{eventId} / weekly:{weekStart}
+  // / milestone:{mid}:{playerId} / rescore:{auditId} / discipline:{eventId} / injury:{sid}:{r} / weekly:{weekStart}
   id: string;
   kind: FeedKind;
   at: string | null; // 条目事实时间（ISO UTC），橱窗/档案页排序键
@@ -73,7 +74,20 @@ export interface WeeklyDTO {
   topScorer: { name: string; teamName: string; goals: number } | null;
   bestDefense: { teamName: string; conceded: number } | null;
   bestMatch?: { matchId: number; label: string; score: string; dramaScore: number } | null; // 本周最佳比赛（dramaScore 最高）；旧缓存读出无此字段
+  injuries?: WeeklyInjuryDTO[]; // 本周伤情（按受伤时刻升序）；旧缓存读出无此字段
   matches: WeeklyMatchDTO[];
+}
+
+// 周报伤情条的一行：本周受伤的人，以及他是否还在缺阵
+export interface WeeklyInjuryDTO {
+  playerId: number;
+  playerName: string;
+  teamName: string;
+  tournamentId: number;
+  tournamentName: string;
+  severity: "minor" | "major";
+  injuryName: string | null;
+  outMatches: number; // 登记里还挂着的未完成缺阵场次；0 = 没勾缺阵或已走完（可视为复出）
 }
 
 // 单场战报文章：倒金字塔五段由后端预渲染，数据不动文章一字不动

@@ -544,6 +544,18 @@ export function weeklyTitle(
   return pickText(seed, pool);
 }
 
+// ---------- 轮次伤情快讯标题（整轮完赛后出条） ----------
+// 轻伤为主时只报人数；有重伤就把重伤人数摆出来，不形容伤势程度。
+export const INJURY_TITLE: ((rl: string, n: number, major: number) => string)[] = [
+  (rl, n, major) => `${rl}伤情：${n} 人受伤${major > 0 ? `，含 ${major} 人重伤` : ""}`,
+  (rl, n, major) => `${rl}伤情通报，${n} 人进入伤停名单${major > 0 ? `（重伤 ${major} 人）` : ""}`,
+  (rl, n, major) => `${n} 人在 ${rl}受伤${major > 0 ? `，其中 ${major} 人伤得不轻` : ""}`,
+  (rl, n, major) => `${rl}打完，${n} 人挂彩${major > 0 ? `，${major} 人伤势较重` : ""}`,
+  (rl, n, major) => `${rl}｜新增伤员 ${n} 人${major > 0 ? `，重伤 ${major} 人` : ""}`,
+  (rl, n, major) => `${rl}的代价：${n} 人伤停${major > 0 ? `，${major} 人短期难回` : ""}`,
+  (rl, n, major) => `${rl}伤退 ${n} 人${major > 0 ? `，重伤 ${major} 人` : ""}`,
+];
+
 // ---------- 战报剧情句（背景块 2.5 节）：本场戏剧性一句话，最多命中 1 句 ----------
 // 优先级：大逆转 > 绝杀 > 小逆转 > 红牌顶住 > 红牌崩盘 > 点球决胜 > 一人扛队 > 乌龙定胜负；
 // 每槽独立 chance(RATES.reportDrama)，条件满足不一定触发

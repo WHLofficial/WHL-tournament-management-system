@@ -90,6 +90,10 @@ export default function WeeklyPage() {
   const off = cards.length > 0 ? seedH % cards.length : 0;
   const rotatedCards = [...cards.slice(off), ...cards.slice(0, off)];
 
+  // 本周伤情：只列本周确实发生的受伤，概览给人数，逐名给轻重与伤名（兼容旧缓存无该字段）
+  const injuries = data.injuries ?? [];
+  const injuryCount = injuries.length;
+
   return (
     <main className="container">
       <article className="art">
@@ -125,9 +129,36 @@ export default function WeeklyPage() {
             <div className="n">{data.ownGoals}</div>
             <div className="l">乌龙球</div>
           </div>
+          {injuryCount > 0 && (
+            <div className="wk-stat wk-stat-inj">
+              <div className="n">{injuryCount}</div>
+              <div className="l">伤员</div>
+            </div>
+          )}
         </div>
 
         <div className="wk-high">{rotatedCards}</div>
+
+        {injuryCount > 0 && (
+          <div className="art-sec">
+            <h3>本周伤情（{injuryCount} 人）</h3>
+            <ul className="wk-inj">
+              {injuries.map((f) => (
+                <li key={f.playerId}>
+                  <span className="wk-inj-name">{f.playerName}</span>
+                  <span className="muted">
+                    （{f.teamName} · {f.tournamentName}）
+                  </span>
+                  <span className={`iw-sev${f.severity === "major" ? " iw-sev-major" : ""}`}>
+                    {f.severity === "major" ? "重伤" : "轻伤"}
+                  </span>
+                  {f.injuryName && <span className="wk-inj-hurt">{f.injuryName}</span>}
+                  {f.outMatches > 0 && <span className="wk-inj-rest">还缺 {f.outMatches} 场</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {data.matches.length > 0 && (
           <div className="art-sec">
