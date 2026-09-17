@@ -166,23 +166,28 @@ export function InjuryRegPanel({
         <div key={gid}>
           <div className="injury-reg-group">{g.name}</div>
           <div className="injury-reg-matches">
-            {g.list.map((x) => (
-              <label key={x.matchId}>
-                <input
-                  type="checkbox"
-                  checked={picked.has(x.matchId)}
-                  disabled={busy}
-                  onChange={() => toggle(x.matchId)}
-                />
-                <span>
-                  第 {x.round} 轮 · {x.homeTeamName ?? "待定"} vs {x.awayTeamName ?? "待定"}
-                </span>
-                <span className="ir-status">
-                  {MATCH_STATUS[x.status]}
-                  {x.status === "finished" ? "（补录）" : ""}
-                </span>
-              </label>
-            ))}
+            {g.list.map((x) => {
+              // 候选比赛只对登记这支球队有意义：显示对手 + 本队是主是客
+              const isHome = x.homeTeamId === teamId;
+              const opponent = isHome ? x.awayTeamName : x.homeTeamName;
+              return (
+                <label key={x.matchId}>
+                  <input
+                    type="checkbox"
+                    checked={picked.has(x.matchId)}
+                    disabled={busy}
+                    onChange={() => toggle(x.matchId)}
+                  />
+                  <span>
+                    第 {x.round} 轮 · {`vs ${opponent ?? "待定"}（${isHome ? "主" : "客"}）`}
+                  </span>
+                  <span className="ir-status">
+                    {MATCH_STATUS[x.status]}
+                    {x.status === "finished" ? "（补录）" : ""}
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </div>
       ))}

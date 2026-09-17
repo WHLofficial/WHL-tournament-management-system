@@ -185,6 +185,8 @@ export interface InjuryListResp {
 
 // 可勾选为「缺阵」的比赛：该队跨赛事全量（含已完赛，支持补录）
 export interface InjuryMissCandidateDTO extends InjuryMissDTO {
+  homeTeamId: number; // 与登记球队的 teamId 比对，决定显示「主」还是「客」
+  awayTeamId: number | null; // 对手未编排时为 null
   homeTeamName: string | null;
   awayTeamName: string | null;
 }

@@ -39,6 +39,13 @@ export function AdminInjuries() {
     setList(a.injuries);
     setEvents(b.events);
   }
+
+  // 待登记卡片整块可点：再按一次收起。没记球员的事件打不开（登记要有人）
+  function togglePending(e: InjuryEventCandidateDTO) {
+    if (e.playerId == null) return;
+    setOpenInj(null);
+    setOpenEvent((cur) => (cur === e.eventId ? null : e.eventId));
+  }
   useEffect(() => {
     reload().catch((e: unknown) => {
       setList([]);
@@ -240,7 +247,7 @@ export function AdminInjuries() {
       <div className="card">
         <h3>待登记（{pending.length}）</h3>
         <p className="muted">
-          已经记过伤病事件、但还没建伤停登记的事件。这里点了建登记，就不用回赛程页翻。
+          已经记过伤病事件、但还没建伤停登记的事件。点开卡片就能直接建登记，不用回赛程页翻。
         </p>
         {events === null ? (
           <p className="muted">加载中…</p>
@@ -252,51 +259,64 @@ export function AdminInjuries() {
           </p>
         ) : (
           <ul className="inj-pending">
-            {pending.map((e) => (
-              <li key={e.eventId}>
-                <div className="ev-line">
-                  <span className={`iw-sev${e.severity === "major" ? " iw-sev-major" : ""}`}>
-                    {e.severity === "major" ? "重伤" : "轻伤"}
-                  </span>
-                  <b>{e.playerName ?? "未记球员"}</b>
-                  <span className="muted">
-                    {e.teamName}
-                    {e.opponentName ? ` vs ${e.opponentName}` : ""}
-                  </span>
-                  <span className="muted">
-                    {e.tournamentName} · 第 {e.round} 轮
-                    {e.minute != null ? ` · 第 ${e.minute} 分钟` : ""}
-                  </span>
-                  <span className="ir-status">{MATCH_STATUS[e.matchStatus]}</span>
-                  {e.playerId == null ? (
-                    <span className="muted">该事件没记球员，先去赛程里补上球员</span>
-                  ) : (
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      disabled={busy}
-                      onClick={() => {
-                        setOpenInj(null);
-                        setOpenEvent(openEvent === e.eventId ? null : e.eventId);
-                      }}
-                    >
-                      {openEvent === e.eventId ? "收起" : "建登记"}
-                    </button>
+            {pending.map((e) => {
+              const canOpen = e.playerId != null;
+              const open = canOpen && openEvent === e.eventId;
+              return (
+                <li key={e.eventId} className={`${canOpen ? "clickable" : ""}${open ? " open" : ""}`}>
+                  <div
+                    className={`ev-line inj-pending-head${canOpen ? " clickable" : ""}`}
+                    onClick={canOpen ? () => togglePending(e) : undefined}
+                    role={canOpen ? "button" : undefined}
+                    tabIndex={canOpen ? 0 : undefined}
+                    aria-expanded={canOpen ? open : undefined}
+                    onKeyDown={
+                      canOpen
+                        ? (ev) => {
+                            if (ev.key === "Enter" || ev.key === " ") {
+                              ev.preventDefault();
+                              togglePending(e);
+                            }
+                          }
+                        : undefined
+                    }
+                  >
+                    <span className={`iw-sev${e.severity === "major" ? " iw-sev-major" : ""}`}>
+                      {e.severity === "major" ? "重伤" : "轻伤"}
+                    </span>
+                    <b>{e.playerName ?? "未记球员"}</b>
+                    <span className="muted">
+                      {e.teamName}
+                      {e.opponentName ? ` vs ${e.opponentName}` : ""}
+                    </span>
+                    <span className="muted">
+                      {e.tournamentName} · 第 {e.round} 轮
+                      {e.minute != null ? ` · 第 ${e.minute} 分钟` : ""}
+                    </span>
+                    <span className="ir-status">{MATCH_STATUS[e.matchStatus]}</span>
+                    {canOpen ? (
+                      <span className="inj-pending-caret" aria-hidden="true">
+                        ›
+                      </span>
+                    ) : (
+                      <span className="muted">该事件没记球员，先去赛程里补上球员</span>
+                    )}
+                  </div>
+                  {open && (
+                    <InjuryRegPanel
+                      eventId={e.eventId}
+                      teamId={e.teamId}
+                      severity={e.severity}
+                      playerName={e.playerName ?? ""}
+                      existing={undefined}
+                      busy={busy}
+                      act={act}
+                      onSaved={() => void reload()}
+                    />
                   )}
-                </div>
-                {openEvent === e.eventId && e.playerId != null && (
-                  <InjuryRegPanel
-                    eventId={e.eventId}
-                    teamId={e.teamId}
-                    severity={e.severity}
-                    playerName={e.playerName ?? ""}
-                    existing={undefined}
-                    busy={busy}
-                    act={act}
-                    onSaved={() => void reload()}
-                  />
-                )}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

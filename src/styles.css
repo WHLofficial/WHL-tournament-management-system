@@ -597,6 +597,15 @@ button.btn-ghost:hover:not(:disabled) {
 .inj-pending > li {
   border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
 }
+/* 待登记卡片整块可点：按下展开、再按下收起（登记面板本身不触发收起） */
+.inj-pending > li.clickable:hover { background: #f7faf7; }
+.inj-pending > li.open { background: #f7faf7; }
+.inj-pending-head.clickable { cursor: pointer; }
+.inj-pending-caret {
+  margin-left: auto; color: var(--muted); font-size: 15px; line-height: 1;
+  transition: transform 0.15s ease;
+}
+.inj-pending > li.open .inj-pending-caret { transform: rotate(90deg); }
 .susp-badge {
   margin-left: 6px;
   font-size: 11px;

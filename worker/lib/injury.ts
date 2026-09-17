@@ -445,7 +445,8 @@ export async function listTeamMissCandidates(
     .prepare(
       `SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name,
               m.round, s.kind AS stage_kind, m.status,
-              eh.name AS home_team_name, ea.name AS away_team_name
+              eh.id AS home_team_id, eh.name AS home_team_name,
+              ea.id AS away_team_id, ea.name AS away_team_name
        FROM match m
        JOIN stage s ON s.id = m.stage_id
        JOIN tournament t2 ON t2.id = s.tournament_id
@@ -464,7 +465,9 @@ export async function listTeamMissCandidates(
       round: number;
       stage_kind: "elim" | "round_robin" | "group";
       status: "pending" | "live" | "finished";
+      home_team_id: number;
       home_team_name: string;
+      away_team_id: number | null;
       away_team_name: string | null;
     }>();
   return (r.results ?? []).map((x) => ({
@@ -474,6 +477,8 @@ export async function listTeamMissCandidates(
     round: x.round,
     stageKind: x.stage_kind,
     status: x.status,
+    homeTeamId: x.home_team_id,
+    awayTeamId: x.away_team_id,
     homeTeamName: x.home_team_name,
     awayTeamName: x.away_team_name,
   }));

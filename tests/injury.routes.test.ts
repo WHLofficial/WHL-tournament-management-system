@@ -347,8 +347,9 @@ describe("伤停集中页接口", () => {
 
 // 候选缺阵比赛：字段名必须是驼峰——D1 按 SQL 别名原样返列名，漏转会给出 undefined 的
 // matchId（前端所有复选框共用一个 undefined 状态，点一场就全选）与待定的队名。
+// 主客两侧的 team id 也要给：前端拿它跟登记球队比对，显示「vs 对手（主|客）」。
 describe("缺阵候选比赛接口", () => {
-  it("跨赛事返回该队全部场次，字段是驼峰且带队名", async () => {
+  it("跨赛事返回该队全部场次，字段是驼峰且带主客队名与 id", async () => {
     const { env } = freshEnv();
     const body = (await (await get(env, "/api/admin/injuries/candidates?teamId=10")).json()) as {
       candidates: {
@@ -358,6 +359,8 @@ describe("缺阵候选比赛接口", () => {
         round: number;
         stageKind: string;
         status: string;
+        homeTeamId: number;
+        awayTeamId: number | null;
         homeTeamName: string | null;
         awayTeamName: string | null;
       }[];
@@ -368,26 +371,33 @@ describe("缺阵候选比赛接口", () => {
     expect(body.candidates.every((x) => Number.isInteger(x.matchId) && x.matchId > 0)).toBe(true);
     expect(body.candidates.every((x) => typeof x.tournamentName === "string" && x.tournamentName !== "")).toBe(true);
     expect(body.candidates.every((x) => typeof x.homeTeamName === "string" && x.homeTeamName !== "")).toBe(true);
+    expect(body.candidates.every((x) => Number.isInteger(x.homeTeamId))).toBe(true);
     expect(body.candidates.find((x) => x.matchId === 800)).toMatchObject({
       tournamentId: 7,
       tournamentName: "联赛",
       round: 1,
       stageKind: "round_robin",
       status: "finished",
+      homeTeamId: 10,
       homeTeamName: "红队",
+      awayTeamId: 11,
       awayTeamName: "蓝队",
     });
-    // 未编排对手的场次（away_entry_id 为 NULL）也要能勾，不参与时的对手名允许为空
+    // 未编排对手的场次（away_entry_id 为 NULL）也要能勾，对手侧允许为空
     expect(body.candidates.find((x) => x.matchId === 810)).toMatchObject({
       tournamentId: 9,
       tournamentName: "冠军杯",
       status: "pending",
+      homeTeamId: 10,
       homeTeamName: "红队",
+      awayTeamId: null,
       awayTeamName: null,
     });
-    // 客队身份参赛的场次（801 蓝队主场红队客场）也在列表里，且队名取自主客两侧各自的 entry
+    // 客场身份参赛的场次（801 蓝队主场红队客场）：id/队名按主客两侧各自的 entry 给
     expect(body.candidates.find((x) => x.matchId === 801)).toMatchObject({
+      homeTeamId: 11,
       homeTeamName: "蓝队",
+      awayTeamId: 10,
       awayTeamName: "红队",
     });
   });
