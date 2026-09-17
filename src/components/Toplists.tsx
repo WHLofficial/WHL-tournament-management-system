@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { ShareButton } from "./ShareButton";
+import { TeamLogo } from "./TeamLogo";
 import { drawTableCard } from "../lib/share";
 import { CardIcon } from "./Cards";
+import { recoverStageLabel } from "../../shared/injuries";
+import type { InjuryWatchGroupDTO } from "../../shared/types";
 
 interface PlayerRow {
   playerId: number;
   playerName: string;
   teamName: string;
   count: number;
+}
+
+interface InjuryRow extends PlayerRow {
+  injured?: boolean;
 }
 
 interface CardsPlayerRow {
@@ -37,7 +44,7 @@ interface ToplistsData {
   scorers: PlayerRow[];
   assists: PlayerRow[];
   cardsPlayers: CardsPlayerRow[];
-  injuries: PlayerRow[];
+  injuries: InjuryRow[];
   teamGoals: TeamRow[];
   teamConceded: TeamRow[];
   cleanSheets: TeamRow[];
@@ -109,6 +116,7 @@ export function Toplists({
 }) {
   const [data, setData] = useState<ToplistsData | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [watch, setWatch] = useState<InjuryWatchGroupDTO[] | null>(null);
   const [seg, setSeg] = useState<Seg>("player");
   const [sel, setSel] = useState("scorers");
 
@@ -120,6 +128,22 @@ export function Toplists({
       })
       .catch((e) => {
         if (on) setErr(e instanceof Error ? e.message : "加载失败");
+      });
+    return () => {
+      on = false;
+    };
+  }, [tid, base]);
+
+  // 伤停动态是板块、不是榜单：单独拉一次，失败静默（不挡榜单本身）
+  useEffect(() => {
+    let on = true;
+    setWatch(null);
+    api<{ groups: InjuryWatchGroupDTO[] }>(`${base}/tournaments/${tid}/injuries`)
+      .then((d) => {
+        if (on) setWatch(d.groups);
+      })
+      .catch(() => {
+        if (on) setWatch([]);
       });
     return () => {
       on = false;
@@ -200,8 +224,21 @@ export function Toplists({
       name: "伤病榜",
       title: "伤病榜",
       head: ["#", "球员", "球队", "次数"],
-      rows: data.injuries.map((r, i) => [i + 1, r.playerName, r.teamName, r.count]),
-      plain: cardTop10(data.injuries).map((r, i) => [String(i + 1), r.playerName, r.teamName, String(r.count)]),
+      rows: data.injuries.map((r, i) => [
+        i + 1,
+        <>
+          {r.playerName}
+          {r.injured && <span className="injury-badge">伤停中</span>}
+        </>,
+        r.teamName,
+        r.count,
+      ]),
+      plain: cardTop10(data.injuries).map((r, i) => [
+        String(i + 1),
+        r.injured ? `${r.playerName}（伤停中）` : r.playerName,
+        r.teamName,
+        String(r.count),
+      ]),
       colWidths: [0.5, 2.2, 2.0, 1],
       nameCol: [1, 2],
     },
@@ -260,7 +297,16 @@ export function Toplists({
       data.cleanSheets.length +
       data.cardsTeams.length ===
     0;
-  if (allEmpty) return <p className="muted">还没有比赛数据，打完比赛这里就有榜了。</p>;
+  const watchSection = <InjuryWatchSection groups={watch ?? []} />;
+  // 还没打完任何比赛，但可能已经有人登记伤停了——那种情况下板块仍要显示
+  if (allEmpty) {
+    return (
+      <>
+        <p className="muted">还没有比赛数据，打完比赛这里就有榜了。</p>
+        {watchSection}
+      </>
+    );
+  }
 
   const lists = seg === "player" ? playerLists : teamLists;
   const current = lists.find((l) => l.key === sel) ?? lists[0];
@@ -333,6 +379,53 @@ export function Toplists({
           )}
         </div>
       </div>
+      {watchSection}
     </div>
+  );
+}
+
+// 伤停动态：按队分组列出仍在伤停中的球员。
+// 对外文案不写裸百分比（「伤愈 75%」很怪），用自然阶段词 + 进度条表达。
+function InjuryWatchSection({ groups }: { groups: InjuryWatchGroupDTO[] }) {
+  if (groups.length === 0) return null;
+  return (
+    <section className="inj-watch">
+      <h3>伤停动态</h3>
+      <p className="muted inj-watch-note">还在伤停中的球员。伤停按缺阵场次记。</p>
+      <div className="inj-watch-groups">
+        {groups.map((g) => (
+          <div className="inj-watch-group" key={g.teamId}>
+            <b className="inj-watch-team">
+              <TeamLogo name={g.teamName} url={g.logoUrl} size={16} />
+              {g.teamName}
+            </b>
+            <ul>
+              {g.injuries.map((w) => {
+                const rest = w.misses.filter((m) => m.status !== "finished").length;
+                const stage = recoverStageLabel(w.recoverPercent);
+                return (
+                  <li key={w.playerId}>
+                    <div className="iw-line">
+                      <span className="iw-name">{w.playerName}</span>
+                      <span className={`iw-sev${w.severity === "major" ? " iw-sev-major" : ""}`}>
+                        {w.severity === "major" ? "重伤" : "轻伤"}
+                      </span>
+                      {w.injuryName && <span className="iw-hurt">{w.injuryName}</span>}
+                      <span className="iw-rest">
+                        还缺 {rest} 场 · {stage}
+                      </span>
+                    </div>
+                    <div className="iw-bar" title={stage}>
+                      <i style={{ width: `${Math.min(100, Math.max(5, w.recoverPercent))}%` }} />
+                    </div>
+                    <div className="iw-from">伤于 {w.injuredInLabel}</div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

@@ -586,6 +586,99 @@ button.btn-ghost:hover:not(:disabled) {
   padding: 0 5px;
   white-space: nowrap;
 }
+/* 伤停中：与停赛（红）区分开，用橙 */
+.injury-badge {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #c2410c;
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+/* ---------- 单场详情「因伤缺阵」 ---------- */
+.md-abs {
+  margin: 10px 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fffaf5;
+}
+.md-abs-head { font-size: 13px; color: #c2410c; }
+.md-abs-grid { display: flex; flex-wrap: wrap; gap: 10px 24px; margin-top: 6px; }
+.md-abs-col { flex: 1 1 200px; }
+.md-abs-away { text-align: right; }
+.md-abs-team { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+.md-abs-col ul { list-style: none; margin: 0; padding: 0; }
+.md-abs-col li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.md-abs-away li { justify-content: flex-end; }
+.md-abs-name { font-weight: 600; }
+.md-abs-hurt { font-size: 12px; color: var(--muted); }
+.md-abs-sev {
+  font-size: 11px;
+  font-weight: 700;
+  color: #9a3412;
+  background: #ffedd5;
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.md-abs-sev-major { color: #fff; background: #c2410c; }
+.md-abs-stage { font-size: 12px; color: #c2410c; }
+
+/* 赛前情报里的伤停清单：沿用停赛块的结构，只换个提醒色 */
+.pl-inj ul { color: #9a3412; }
+
+/* ---------- 伤停动态（榜单 tab 板块） ---------- */
+.inj-watch {
+  margin-top: 22px;
+  border-top: 1px dashed var(--border);
+  padding-top: 14px;
+}
+.inj-watch-note { font-size: 12px; margin: 2px 0 10px; }
+.inj-watch-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.inj-watch-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.inj-watch-team { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.inj-watch-group ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.inj-watch-group li { padding: 5px 0; border-top: 1px dashed var(--border); }
+.inj-watch-group li:first-child { border-top: 0; }
+.iw-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.iw-name { font-weight: 600; }
+.iw-sev {
+  font-size: 11px;
+  font-weight: 700;
+  color: #9a3412;
+  background: #ffedd5;
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.iw-sev-major { color: #fff; background: #c2410c; }
+.iw-hurt { color: var(--muted); font-size: 12px; }
+.iw-rest { margin-left: auto; font-size: 12px; color: #c2410c; font-weight: 600; }
+.iw-bar {
+  height: 4px;
+  margin: 4px 0 2px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.iw-bar i { display: block; height: 100%; background: #ea580c; }
+.iw-from { font-size: 11px; color: var(--muted); }
 
 /* ---------- 积分榜 ---------- */
 .standings-stage { margin-bottom: 18px; }

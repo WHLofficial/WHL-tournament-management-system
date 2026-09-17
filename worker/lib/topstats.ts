@@ -8,6 +8,11 @@ export interface PlayerRow {
   count: number;
 }
 
+/** 伤病榜行：injured = 当前仍在伤停中（跨赛事派生自伤停登记，与停赛标记同源思路） */
+export interface InjuryPlayerRow extends PlayerRow {
+  injured?: boolean;
+}
+
 export interface CardsPlayerRow {
   playerId: number;
   playerName: string;
@@ -35,7 +40,7 @@ export interface Toplists {
   scorers: PlayerRow[];
   assists: PlayerRow[];
   cardsPlayers: CardsPlayerRow[];
-  injuries: PlayerRow[];
+  injuries: InjuryPlayerRow[];
   teamGoals: TeamRow[];
   teamConceded: TeamRow[];
   cleanSheets: TeamRow[];

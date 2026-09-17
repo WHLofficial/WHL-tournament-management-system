@@ -5,12 +5,15 @@ import { api } from "../api";
 import { TeamLogo } from "./TeamLogo";
 import { CardIcon } from "./Cards";
 import { FORMS, POS_ZH, formTitle } from "../../shared/tactics";
+import { recoverStageLabel } from "../../shared/injuries";
 import { tilePositions } from "../lib/pitch";
 import type {
   H2HDTO,
   H2HFormItem,
   LineupStatsDTO,
+  MatchAbsencesResp,
   MatchDTO,
+  PublicAbsenceDTO,
   TeamTacticsDTO,
   TacticXIPlayerDTO,
 } from "../../shared/types";
@@ -71,7 +74,15 @@ function useFetch<T>(url: string | null): { data: T | null; fail: boolean } {
   return { data, fail };
 }
 
-export function PreMatchTabs({ tid, match }: { tid: number; match: MatchDTO }) {
+export function PreMatchTabs({
+  tid,
+  match,
+  absences,
+}: {
+  tid: number;
+  match: MatchDTO;
+  absences?: MatchAbsencesResp | null;
+}) {
   const [tab, setTab] = useState<TabKey>("h2h");
   return (
     <div className="pmt-wrap">
@@ -89,7 +100,7 @@ export function PreMatchTabs({ tid, match }: { tid: number; match: MatchDTO }) {
         ))}
       </div>
       {tab === "h2h" && <H2HPanel tid={tid} match={match} />}
-      {tab === "players" && <PlayersPanel tid={tid} match={match} />}
+      {tab === "players" && <PlayersPanel tid={tid} match={match} absences={absences} />}
       {tab === "lineup" && <LineupPanel tid={tid} match={match} />}
     </div>
   );
@@ -221,7 +232,15 @@ function FormStrip({ label, form, right }: { label: string; form: H2HFormItem[];
 
 // ---------- 球员 ----------
 
-function PlayersPanel({ tid, match }: { tid: number; match: MatchDTO }) {
+function PlayersPanel({
+  tid,
+  match,
+  absences,
+}: {
+  tid: number;
+  match: MatchDTO;
+  absences?: MatchAbsencesResp | null;
+}) {
   const { data: d, fail } = useFetch<ToplistsData>(`/api/public/tournaments/${tid}/toplists`);
   if (fail) return null;
   if (!d) return <Loading />;
@@ -230,11 +249,25 @@ function PlayersPanel({ tid, match }: { tid: number; match: MatchDTO }) {
   const top = (rows: TopRow[], name: string) => rows.find((r) => r.teamName === name) ?? null;
   const card = (name: string) => d.cardsTeams.find((r) => r.teamName === name) ?? null;
   const susp = d.cardsPlayers.filter((p) => p.suspended && (p.teamName === hn || p.teamName === an));
+  // 伤停按队分成两段，标出是哪一队的人
+  const injuries: { teamName: string; a: PublicAbsenceDTO }[] = [
+    ...(absences?.home ?? []).map((a) => ({ teamName: hn, a })),
+    ...(absences?.away ?? []).map((a) => ({ teamName: an, a })),
+  ];
   const hs = top(d.scorers, hn);
   const as = top(d.scorers, an);
   const ha = top(d.assists, hn);
   const aa = top(d.assists, an);
-  if (!hs && !as && !ha && !aa && !card(hn) && !card(an) && susp.length === 0) {
+  if (
+    !hs &&
+    !as &&
+    !ha &&
+    !aa &&
+    !card(hn) &&
+    !card(an) &&
+    susp.length === 0 &&
+    injuries.length === 0
+  ) {
     return <p className="muted pmt-empty">本届还没有球员数据。</p>;
   }
   return (
@@ -243,6 +276,20 @@ function PlayersPanel({ tid, match }: { tid: number; match: MatchDTO }) {
         <PlayerCol teamName={hn} logoUrl={match.homeLogoUrl ?? null} scorer={hs} assist={ha} cards={card(hn)} />
         <PlayerCol teamName={an} logoUrl={match.awayLogoUrl ?? null} scorer={as} assist={aa} cards={card(an)} away />
       </div>
+      {injuries.length > 0 && (
+        <div className="pl-susp pl-inj">
+          <b>🩹 伤停情报</b>
+          <ul>
+            {injuries.map(({ teamName, a }) => (
+              <li key={`${a.teamId}-${a.playerId}`}>
+                {teamName} · {a.playerName} 伤停中
+                {a.injuryName ? `（${a.injuryName}` : "（"}
+                {a.severity === "major" ? "重伤" : "轻伤"} · {recoverStageLabel(a.recoverPercent)}）
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {susp.length > 0 && (
         <div className="pl-susp">
           <b>⛔ 停赛情报</b>

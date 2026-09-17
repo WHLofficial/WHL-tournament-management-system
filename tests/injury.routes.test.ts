@@ -185,3 +185,87 @@ describe("伤停登记路由", () => {
     expect(bad.status).toBe(400);
   });
 });
+
+// 公开端三处数据露出：单场「因伤缺阵」名单、赛事级伤停动态分组、伤病榜「伤停中」徽标。
+// pubCache 中间件用 caches.default + executionCtx.waitUntil，测试环境这里补最小桩。
+(globalThis as unknown as { caches: unknown }).caches = {
+  default: { match: async () => undefined, put: async () => {} },
+};
+const execCtx = { waitUntil: () => {}, passThroughOnException: () => {} };
+
+describe("伤停公开露出", () => {
+  const pub = (env: Record<string, unknown>, path: string) =>
+    app.request(path, {}, env, execCtx as never);
+
+  it("单场详情带缺阵名单：按队分组、进度与伤名照登记走", async () => {
+    const { env } = freshEnv();
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", missMatchIds: [800, 801] });
+
+    const res = await pub(env, "/api/public/tournaments/7/matches/800");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      absences: { home: { playerId: number; playerName: string; severity: string; injuryName: string; recoverPercent: number }[]; away: unknown[] };
+    };
+    expect(body.absences.home.length).toBe(1);
+    expect(body.absences.home[0]).toMatchObject({
+      playerId: 100,
+      playerName: "张三",
+      severity: "minor",
+      injuryName: "轻微扭伤",
+      recoverPercent: 50, // 勾了 800(finished)+801(pending)
+    });
+    expect(body.absences.away).toEqual([]);
+
+    // 没勾的场次（801 是蓝队主场）蓝队一侧仍空
+    const res2 = await pub(env, "/api/public/tournaments/7/matches/801");
+    const b2 = (await res2.json()) as { absences: { home: unknown[]; away: { playerName: string }[] } };
+    expect(b2.absences.home).toEqual([]);
+    expect(b2.absences.away.map((a) => a.playerName)).toEqual(["张三"]);
+  });
+
+  it("赛事伤停动态：只列该届参赛队、跨赛事登记同一条、已伤愈不入列", async () => {
+    const { env, sqlite } = freshEnv();
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", missMatchIds: [800, 801] });
+
+    const res = await pub(env, "/api/public/tournaments/7/injuries");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      groups: { teamId: number; teamName: string; injuries: { playerName: string; injuredInLabel: string; recoverPercent: number; misses: { status: string }[] }[] }[];
+    };
+    expect(body.groups.length).toBe(1); // 蓝队没伤停，空组被滤掉
+    expect(body.groups[0].teamId).toBe(10);
+    expect(body.groups[0].injuries[0].playerName).toBe("张三");
+    expect(body.groups[0].injuries[0].injuredInLabel).toBe("联赛 · 第1轮");
+    expect(body.groups[0].injuries[0].recoverPercent).toBe(50);
+
+    // 同一份登记也出现在另一届（红队是冠军杯参赛队）——跨赛事可见
+    const cup = await pub(env, "/api/public/tournaments/9/injuries");
+    const cupBody = (await cup.json()) as { groups: { teamId: number; injuries: unknown[] }[] };
+    expect(cupBody.groups.map((g) => g.teamId)).toEqual([10]);
+    expect(cupBody.groups[0].injuries.length).toBe(1);
+
+    // 缺阵场次全部打完 → 不再算伤停中，动态板清空
+    sqlite.prepare("UPDATE match SET status='finished' WHERE id IN (800, 801)").run();
+    const done = await pub(env, "/api/public/tournaments/7/injuries");
+    expect(((await done.json()) as { groups: unknown[] }).groups).toEqual([]);
+  });
+
+  it("伤病榜行带伤停中徽标（跨赛事派生）", async () => {
+    const { env, sqlite } = freshEnv();
+    await post(env, "/api/admin/injuries", { eventId: 900, injuryName: "轻微扭伤", missMatchIds: [801] });
+
+    const res = await pub(env, "/api/public/tournaments/7/toplists");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { injuries: { playerName: string; injured?: boolean }[] };
+    const row = body.injuries.find((r) => r.playerName === "张三");
+    expect(row).toBeTruthy();
+    expect(row?.injured).toBe(true);
+
+    // 撤销登记 → 徽标消失
+    const id = (sqlite.prepare("SELECT id FROM injury WHERE event_id = 900").get() as { id: number }).id;
+    expect((await del(env, `/api/admin/injuries/${id}`)).status).toBe(200);
+    const after = await pub(env, "/api/public/tournaments/7/toplists");
+    const afterBody = (await after.json()) as { injuries: { playerName: string; injured?: boolean }[] };
+    expect(afterBody.injuries.find((r) => r.playerName === "张三")?.injured).toBeFalsy();
+  });
+});

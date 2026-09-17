@@ -193,6 +193,47 @@ export interface InjuryCandidatesResp {
   candidates: InjuryMissCandidateDTO[];
 }
 
+// 公开端「因伤缺阵」名单：某场比赛中被登记为缺阵的球员（按队分组）
+export interface PublicAbsenceDTO {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  severity: InjurySeverity;
+  injuryName: string | null;
+  note: string | null;
+  recoverPercent: number; // 只给进度条用；对外文案用 recoverStageLabel 的自然阶段词
+}
+
+export interface MatchAbsencesResp {
+  home: PublicAbsenceDTO[];
+  away: PublicAbsenceDTO[];
+}
+
+// 公开端「伤停动态」：仍在伤停中的登记（剩余缺阵场在前，跨赛事标注赛事名）
+export interface InjuryWatchDTO {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  teamName: string;
+  severity: InjurySeverity;
+  injuryName: string | null;
+  note: string | null;
+  recoverPercent: number;
+  misses: InjuryMissDTO[];
+  injuredInLabel: string; // 受伤那一场的可读标签（赛事名 · 第几轮）
+}
+
+export interface InjuryWatchGroupDTO {
+  teamId: number;
+  teamName: string;
+  logoUrl: string | null;
+  injuries: InjuryWatchDTO[];
+}
+
+export interface TournamentInjuriesResp {
+  groups: InjuryWatchGroupDTO[];
+}
+
 // ---------- 配置（存 config_json 的形状） ----------
 
 // 非首阶段声明"从上一阶段拿谁"

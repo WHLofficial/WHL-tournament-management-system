@@ -20,6 +20,7 @@ import {
   buildToplistsWithSuspension,
 } from "../../lib/suspension";
 import type { SuspensionConfig } from "../../../shared/types";
+import { listTournamentActiveInjuries } from "../../lib/injury";
 import type { RankZoneSettings } from "../../../shared/types";
 import {
   parseRankZoneSettings,
@@ -736,6 +737,19 @@ app.get(
       .first<{ id: number }>();
     if (!t) return c.json({ message: "赛事不存在" }, 404);
     return c.json(await buildToplistsWithSuspension(c.env.DB, id));
+  }
+);
+
+// 伤停动态（榜单 tab 板块）：与公开端同口径，草稿赛事管理端也要能看
+app.get(
+  "/:id/injuries",
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ id: number }>();
+    if (!t) return c.json({ message: "赛事不存在" }, 404);
+    return c.json({ groups: await listTournamentActiveInjuries(c.env.DB, id) });
   }
 );
 

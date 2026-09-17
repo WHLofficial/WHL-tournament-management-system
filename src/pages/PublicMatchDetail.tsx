@@ -8,13 +8,72 @@ import { ShareButton } from "../components/ShareButton";
 import { PreMatchTabs } from "../components/PreMatchPanels";
 import { drawMatchCard, matchToShare } from "../lib/share";
 import { LineupGrid } from "../components/LineupView";
-import type { MatchDTO, MatchLineupDTO } from "../../shared/types";
+import { recoverStageLabel } from "../../shared/injuries";
+import type {
+  MatchAbsencesResp,
+  MatchDTO,
+  MatchLineupDTO,
+  PublicAbsenceDTO,
+} from "../../shared/types";
 
 const STAGE_TITLE: Record<string, string> = {
   elim: "淘汰赛",
   round_robin: "循环赛",
   group: "小组赛",
 };
+
+// 「因伤缺阵」名单：登记里勾了这一场的球员。有人的一侧才显示，两侧都没有就整块不出。
+function AbsenceBlock({
+  home,
+  away,
+  homeTeamName,
+  awayTeamName,
+}: {
+  home: PublicAbsenceDTO[];
+  away: PublicAbsenceDTO[];
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+}) {
+  if (home.length === 0 && away.length === 0) return null;
+  return (
+    <div className="md-abs">
+      <b className="md-abs-head">🩹 因伤缺阵</b>
+      <div className="md-abs-grid">
+        <AbsenceCol teamName={homeTeamName} list={home} />
+        <AbsenceCol teamName={awayTeamName} list={away} away />
+      </div>
+    </div>
+  );
+}
+
+function AbsenceCol({
+  teamName,
+  list,
+  away,
+}: {
+  teamName: string | null;
+  list: PublicAbsenceDTO[];
+  away?: boolean;
+}) {
+  if (list.length === 0) return null;
+  return (
+    <div className={`md-abs-col${away ? " md-abs-away" : ""}`}>
+      <b className="md-abs-team">{teamName ?? "该队"}</b>
+      <ul>
+        {list.map((a) => (
+          <li key={a.playerId}>
+            <span className="md-abs-name">{a.playerName}</span>
+            {a.injuryName && <span className="md-abs-hurt">{a.injuryName}</span>}
+            <span className={`md-abs-sev${a.severity === "major" ? " md-abs-sev-major" : ""}`}>
+              {a.severity === "major" ? "重伤" : "轻伤"}
+            </span>
+            <span className="md-abs-stage">{recoverStageLabel(a.recoverPercent)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 // 公开比赛详情页：大比分 + 完整事件时间线，30 秒轮询（后台标签页暂停）
 export default function PublicMatchDetail() {
@@ -25,6 +84,7 @@ export default function PublicMatchDetail() {
   const [tInfo, setTInfo] = useState<{ name: string; coverUrl: string | null } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [lineup, setLineup] = useState<MatchLineupDTO | null>(null);
+  const [absences, setAbsences] = useState<MatchAbsencesResp | null>(null);
 
   // 分享卡标题需要赛事名，进来时顺手拉一次
   useEffect(() => {
@@ -38,11 +98,12 @@ export default function PublicMatchDetail() {
   const gotData = useRef(false);
   const refetch = useCallback(async () => {
     try {
-      const b = await api<{ match: MatchDTO }>(
+      const b = await api<{ match: MatchDTO; absences: MatchAbsencesResp }>(
         `/api/public/tournaments/${tid}/matches/${matchId}`,
       );
       gotData.current = true;
       setM(b.match);
+      setAbsences(b.absences ?? { home: [], away: [] });
       setErr(null);
     } catch (e) {
       if (!gotData.current) setErr(e instanceof Error ? e.message : "加载失败");
@@ -163,10 +224,20 @@ export default function PublicMatchDetail() {
             {m.walkoverSide && m.note && m.note !== "轮空" && (
               <p className="muted md-wo-note">{m.note}</p>
             )}
+            {m.note !== "轮空" && absences && (
+              <AbsenceBlock
+                home={absences.home}
+                away={absences.away}
+                homeTeamName={m.homeTeamName}
+                awayTeamName={m.awayTeamName}
+              />
+            )}
             {m.status === "pending" &&
               m.homeEntryId != null &&
               m.awayEntryId != null &&
-              m.note !== "轮空" && <PreMatchTabs tid={tid} match={m} />}
+              m.note !== "轮空" && (
+                <PreMatchTabs tid={tid} match={m} absences={absences} />
+              )}
             <EventTimeline events={m.events ?? []} showAll />
             {(m.events ?? []).length === 0 && m.note !== "轮空" && m.status !== "pending" && (
               <p className="muted md-empty">还没有事件记录。</p>

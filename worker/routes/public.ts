@@ -20,6 +20,7 @@ import { readStageStandings } from "../lib/standings";
 import { parseRankZoneSettings } from "../../shared/rankZones";
 import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
+import { listMatchAbsences, listTournamentActiveInjuries } from "../lib/injury";
 import { mediaUrl } from "../lib/media";
 import { fetchMatchLineup, LineupError, parseSlotsJson } from "../lib/lineup";
 import { FORMS } from "../../shared/tactics";
@@ -482,6 +483,7 @@ app.get("/tournaments/:id/matches/:mid", pubCache(60), async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
        m.home_entry_id, m.away_entry_id,
+       he.team_id AS home_team_id, ae.team_id AS away_team_id,
        ht.name AS home_team_name, at.name AS away_team_name,
        ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
        m.score_home, m.score_away, m.pen_home, m.pen_away,
@@ -498,6 +500,7 @@ app.get("/tournaments/:id/matches/:mid", pubCache(60), async (c) => {
     .first<{
       id: number; stage_id: number; round: number; slot: number; leg: number | null;
       home_entry_id: number | null; away_entry_id: number | null;
+      home_team_id: number | null; away_team_id: number | null;
       home_team_name: string | null; away_team_name: string | null;
       home_logo_key: string | null; away_logo_key: string | null;
       score_home: number | null; score_away: number | null;
@@ -512,8 +515,8 @@ app.get("/tournaments/:id/matches/:mid", pubCache(60), async (c) => {
   if (row.home_entry_id !== null) sideByEvent.set(`${row.id}:${row.home_entry_id}`, "home");
   if (row.away_entry_id !== null) sideByEvent.set(`${row.id}:${row.away_entry_id}`, "away");
 
-  // live 比分、事件、改判标记互不依赖，并行发
-  const [liveScores, eventsByMatch, rescored] = await Promise.all([
+  // live 比分、事件、改判标记、因伤缺阵名单互不依赖，并行发
+  const [liveScores, eventsByMatch, rescored, absences] = await Promise.all([
     row.status === "live"
       ? fetchLiveScores(c.env.DB, tid, sideByEvent)
       : Promise.resolve(new Map<number, { home: number; away: number }>()),
@@ -525,6 +528,9 @@ app.get("/tournaments/:id/matches/:mid", pubCache(60), async (c) => {
       )
       .bind(row.id)
       .first<{ n: number }>(),
+    // 因伤缺阵：登记里勾了这一场的人。赛前也返回——赛前情报要看对手伤停，
+    // 与「阵容赛前不亮牌」不冲突（伤停是公开事实，不是战术底牌）
+    listMatchAbsences(c.env.DB, row.id, row.home_team_id, row.away_team_id),
   ]);
   const live = liveScores.get(row.id);
   const match: MatchDTO = {
@@ -551,7 +557,7 @@ app.get("/tournaments/:id/matches/:mid", pubCache(60), async (c) => {
     homeLogoUrl: mediaUrl(row.home_logo_key),
     awayLogoUrl: mediaUrl(row.away_logo_key),
   };
-  return c.json({ match });
+  return c.json({ match, absences });
 });
 
 // 已提交战术阵容：开赛（live/finished）后公开；未开打或草稿赛事一律双方 null（赛前不亮牌）
@@ -1202,6 +1208,19 @@ app.get("/tournaments/:id/toplists", pubCache(300), async (c) => {
     .first<{ id: number }>();
   if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
   return c.json(await buildToplistsWithSuspension(c.env.DB, id));
+});
+
+// 伤停动态（榜单 tab 的板块）：本届参赛队里仍在伤停中的球员，按队分组。
+// 伤停跨赛事，所以每条登记自带「受伤那一场」的赛事名标注
+app.get("/tournaments/:id/injuries", pubCache(300), async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare(
+    "SELECT id FROM tournament WHERE id = ? AND status != 'draft'"
+  )
+    .bind(id)
+    .first<{ id: number }>();
+  if (!t) return c.json({ message: "赛事不存在或未发布" }, 404);
+  return c.json({ groups: await listTournamentActiveInjuries(c.env.DB, id) });
 });
 
 app.get("/tournaments/:id/stats", pubCache(300), async (c) => {

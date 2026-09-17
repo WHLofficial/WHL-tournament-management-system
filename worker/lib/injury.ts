@@ -7,9 +7,11 @@ import type {
   InjuryMissDTO,
   InjurySeverity,
   InjuryStatusDTO,
+  InjuryWatchGroupDTO,
   MatchEventType,
 } from "../../shared/types";
 import { severityOfEventType } from "../../shared/injuries";
+import { mediaUrl } from "./media";
 
 interface InjuryRow {
   id: number;
@@ -71,15 +73,14 @@ export async function listTeamInjuries(
 
 // 公开端：单场比赛（赛前情报/详情页）双方当前缺阵名单。
 // 每条登记若勾选了该场即入列，附带伤情（名称/档位/伤愈进度）。
-export interface PublicAbsenceDTO {
-  playerId: number;
-  playerName: string;
-  teamId: number;
-  severity: InjurySeverity;
-  injuryName: string | null;
-  note: string | null;
-  recoverPercent: number; // 伤愈进度；该场若是最后一场则 100
-}
+// 公开端 DTO（PublicAbsenceDTO / InjuryWatchDTO / InjuryWatchGroupDTO）定义在 shared/types.ts，
+// 前端与管理端共用一份形状；这里转出，老的 `from "../lib/injury"` 导入不受影响
+export type {
+  InjuryWatchDTO,
+  InjuryWatchGroupDTO,
+  PublicAbsenceDTO,
+  TournamentInjuriesResp,
+} from "../../shared/types";
 
 // 两队伤停，按队分组返回（home/away 各一列）
 export async function listMatchAbsences(
@@ -126,19 +127,6 @@ export async function listMatchAbsences(
 
 // 伤停动态板块（榜单 tab）：全平台（或某队）「伤停中」球员，按队分组。
 // 每条登记若还有未打完的缺阵场即在列；跨赛事标注赛事名。
-export interface InjuryWatchDTO {
-  playerId: number;
-  playerName: string;
-  teamId: number;
-  teamName: string;
-  severity: InjurySeverity;
-  injuryName: string | null;
-  note: string | null;
-  recoverPercent: number;
-  misses: InjuryMissDTO[]; // 剩余未打完的缺阵场在前
-  injuredInLabel: string; // 「赛事名 · 第N轮」
-}
-
 export async function listActiveInjuries(
   db: D1Database,
   teamId?: number
@@ -204,6 +192,42 @@ export async function listActiveInjuries(
     return a.recoverPercent - b.recoverPercent || a.playerName.localeCompare(b.playerName, "zh");
   });
   return out;
+}
+
+// 伤病榜「伤停中」徽标用：全平台仍在伤停中的球员 id 集合（跨赛事，球员在哪儿伤的都算）
+export async function listActiveInjuryPlayerIds(db: D1Database): Promise<Set<number>> {
+  const list = await listActiveInjuries(db);
+  return new Set(list.map((i) => i.playerId));
+}
+
+// 公开端「伤停动态」板块：某届赛事的参赛队里，仍在伤停中的登记，按队分组。
+// 伤停本身跨赛事（某队可能在别处伤人），这里只按「参赛队」筛，赛事名在每条里标注。
+export async function listTournamentActiveInjuries(
+  db: D1Database,
+  tid: number
+): Promise<InjuryWatchGroupDTO[]> {
+  const [all, teams] = await Promise.all([
+    listActiveInjuries(db),
+    db
+      .prepare(
+        `SELECT DISTINCT t.id, t.name, t.logo_key
+         FROM entry e JOIN team t ON t.id = e.team_id
+         WHERE e.tournament_id = ?`
+      )
+      .bind(tid)
+      .all<{ id: number; name: string; logo_key: string | null }>(),
+  ]);
+  const groups = new Map<number, InjuryWatchGroupDTO>();
+  for (const t of teams.results ?? []) {
+    groups.set(t.id, { teamId: t.id, teamName: t.name, logoUrl: mediaUrl(t.logo_key), injuries: [] });
+  }
+  for (const inj of all) {
+    groups.get(inj.teamId)?.injuries.push(inj);
+  }
+  // 有伤停的队排前面（按队名稳定排序），空队不返回
+  return [...groups.values()]
+    .filter((g) => g.injuries.length > 0)
+    .sort((a, b) => a.teamName.localeCompare(b.teamName, "zh"));
 }
 
 // 某事件时间窗内新出现的伤病（新闻周报/轮条用）：

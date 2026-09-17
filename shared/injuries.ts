@@ -55,3 +55,13 @@ export function suggestMissIds(
   if (!item) return [];
   return upcomingPendingMatchIds.slice(0, item.suggestMiss);
 }
+
+// 对外文案用自然阶段，不写裸百分比（「伤愈 75%」读起来很怪）；
+// 管理端表格里仍可直接显示百分比。
+export function recoverStageLabel(percent: number): string {
+  if (percent >= 100) return "已伤愈";
+  if (percent >= 75) return "接近复出";
+  if (percent >= 40) return "恢复中";
+  if (percent > 0) return "刚受伤不久";
+  return "刚开始缺阵";
+}

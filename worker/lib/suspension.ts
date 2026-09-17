@@ -7,6 +7,7 @@
 // 锚点前完整重放（清零前已生效停赛继续执行），锚点后黄牌从零重计，补录按 created_at 归段。
 import type { SuspensionConfig, SuspensionStatusDTO } from "../../shared/types";
 import { buildToplists, type Toplists } from "./topstats";
+import { listActiveInjuryPlayerIds } from "./injury";
 
 export const DEFAULT_SUSPENSION: SuspensionConfig = {
   redBan: 2,
@@ -251,18 +252,21 @@ export async function computeSuspensions(
   return out;
 }
 
-// 榜单 + 停赛标记：公开端与管理端 toplists 共用
+// 榜单 + 停赛/伤停标记：公开端与管理端 toplists 共用。
+// 停赛标记给红黄牌榜，伤停标记给伤病榜——两者都只加标记，不改榜单口径。
 export async function buildToplistsWithSuspension(
   db: D1Database,
   tid: number
 ): Promise<Toplists> {
-  // buildToplists 与 computeSuspensions 互不依赖（后者只等配置），重叠执行
+  // buildToplists 与停赛/伤停派生互不依赖，三个查询重叠执行
   const listsP = buildToplists(db, tid);
   const suspP = getSuspensionConfig(db, tid).then((cfg) => computeSuspensions(db, tid, cfg));
-  const [lists, susp] = await Promise.all([listsP, suspP]);
+  const injuredP = listActiveInjuryPlayerIds(db);
+  const [lists, susp, injured] = await Promise.all([listsP, suspP, injuredP]);
   const off = new Set(susp.filter((s) => s.remaining > 0).map((s) => s.playerId));
   return {
     ...lists,
     cardsPlayers: lists.cardsPlayers.map((r) => ({ ...r, suspended: off.has(r.playerId) })),
+    injuries: lists.injuries.map((r) => ({ ...r, injured: injured.has(r.playerId) })),
   };
 }
