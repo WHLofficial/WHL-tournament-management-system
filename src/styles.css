@@ -1719,7 +1719,7 @@ button.add-stage {
   height: 3px;
   width: 10px;
 }
-/* 伤停与停赛卡（战术板右侧）：赛事下拉 + 停赛/黄牌临界/伤停三组清单 */
+/* 伤停与停赛卡（战术板右侧）：停赛/黄牌临界/伤停三组清单 */
 .tac-status h2 {
   font-size: 13px;
   font-weight: 700;
@@ -1732,19 +1732,6 @@ button.add-stage {
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
-}
-.tac-status-pick {
-  display: block;
-  margin-bottom: 6px;
-}
-.tac-status-pick > span {
-  display: block;
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-.tac-status-pick select {
-  width: 100%;
 }
 .tac-status-list {
   list-style: none;
@@ -1769,6 +1756,18 @@ button.add-stage {
 .tac-status-note {
   font-size: 12px;
   color: var(--muted);
+}
+/* 该球员缺阵所选比赛（伤停登记里勾了这场） */
+.tac-out-badge {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #c92a2a;
+  background: rgba(201, 42, 42, 0.12);
+  border: 1px solid rgba(201, 42, 42, 0.5);
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
 }
 .yc-badge {
   margin-left: 6px;
@@ -1815,7 +1814,8 @@ button.add-stage {
 }
 .tac-settings h2,
 .tac-bench h2,
-.tac-archives h2 {
+.tac-archives h2,
+.tac-submit h2 {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 1.2px;
@@ -1824,7 +1824,8 @@ button.add-stage {
   margin: 0 0 10px;
 }
 .tac-bench h2 small,
-.tac-archives h2 small {
+.tac-archives h2 small,
+.tac-submit h2 small {
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
@@ -2285,7 +2286,7 @@ button.add-stage {
 
 /* ---------- 战术阵容提交 ---------- */
 .tac-submit {
-  margin-top: 14px;
+  margin-bottom: 16px;
 }
 .tac-submit-head {
   display: flex;

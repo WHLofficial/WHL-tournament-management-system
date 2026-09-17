@@ -105,7 +105,7 @@ export default function Tactics() {
   const [toast, setToast] = useState<string | null>(null);
   const [armReset, setArmReset] = useState(false);
   const [teamPlayers, setTeamPlayers] = useState<TeamPlayer[] | null>(null);
-  const [subOpen, setSubOpen] = useState(false);
+  const [subOpen, setSubOpen] = useState(true);
   const [subMatches, setSubMatches] = useState<CoachPendingMatchDTO[] | null>(null);
   const [subMatchId, setSubMatchId] = useState<number | null>(null);
   const [mine, setMine] = useState<TeamLineupDTO | null>(null);
@@ -117,7 +117,6 @@ export default function Tactics() {
   const [archBusy, setArchBusy] = useState(false);
   const [armDel, setArmDel] = useState<number | null>(null);
   const [status, setStatus] = useState<CoachStatusResp | null>(null);
-  const [statusTid, setStatusTid] = useState<number | null>(null);
   const toastTimer = useRef<number | null>(null);
   const armTimer = useRef<number | null>(null);
   const subArmTimer = useRef<number | null>(null);
@@ -164,11 +163,56 @@ export default function Tactics() {
     };
   }, [teamPlayers]);
 
-  // 伤停/停赛跟随赛事：绑队后拉本队概览（停赛按赛事算，切赛事重拉；伤停跨赛事恒定）
+  // 待选比赛：绑队后拉一次，默认选中未开赛的第一场（端点只返 pending 场）
+  useEffect(() => {
+    if (!teamPlayers) {
+      setSubMatches(null);
+      setSubMatchId(null);
+      return;
+    }
+    let dead = false;
+    api<{ matches: CoachPendingMatchDTO[] }>("/api/coach/me/matches")
+      .then((b) => {
+        if (dead) return;
+        const list = b.matches ?? [];
+        setSubMatches(list);
+        setSubMatchId((cur) => (cur != null && list.some((m) => m.id === cur) ? cur : list[0]?.id ?? null));
+      })
+      .catch(() => {
+        if (!dead) setSubMatches([]);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [teamPlayers]);
+
+  // 所选比赛的我方已提交阵容：自动选中与手动切换共用
+  useEffect(() => {
+    if (subMatchId == null) {
+      setMine(null);
+      return;
+    }
+    let dead = false;
+    api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${subMatchId}/lineup`)
+      .then((b) => {
+        if (!dead) setMine(b.lineup);
+      })
+      .catch(() => {
+        if (!dead) setMine(null);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [subMatchId]);
+
+  // 停赛口径跟随所选比赛所在赛事
+  const pickedMatch = (subMatches ?? []).find((m) => m.id === subMatchId) ?? null;
+  const statusTid = pickedMatch?.tournamentId ?? null;
+
+  // 伤停/停赛：绑队后拉本队概览，换比赛重拉
   useEffect(() => {
     if (!teamPlayers) {
       setStatus(null);
-      setStatusTid(null);
       return;
     }
     let dead = false;
@@ -497,11 +541,7 @@ export default function Tactics() {
     setMine(null);
     setSubMsg(null);
     disarmSubmit();
-    if (id != null) {
-      api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${id}/lineup`)
-        .then((b) => setMine(b.lineup))
-        .catch(() => setMine(null));
-    }
+    setSelected(null);
   }
 
   // 提交前的前端预检：首发 11 人齐、无重复（后端还会再校验一遍）
@@ -576,7 +616,9 @@ export default function Tactics() {
   const sel = selected != null ? players.find((p) => p.lid === selected) ?? null : null;
   const selRisk = sel ? riskLine(statOf(names[String(sel.lid)])) : "";
   const risks = lineupRisks();
-  // 状态清单卡：停赛（本赛事）/ 黄牌临界 / 伤停（跨赛事）
+  // 状态清单卡：停赛（按所选比赛的赛事）/ 黄牌临界 / 伤停
+  const statusTName =
+    (status?.tournaments ?? []).find((t) => t.tournamentId === status?.tournamentId)?.name ?? "";
   const suspList = (status?.players ?? []).filter((p) => p.remaining > 0);
   const nearList = (status?.players ?? []).filter(
     (p) => p.remaining <= 0 && suspThreshold > 0 && p.yellows === suspThreshold - 1,
@@ -588,6 +630,7 @@ export default function Tactics() {
       injuryName: i.injuryName,
       rest: i.misses.filter((x) => x.status !== "finished").length,
       pct: i.recoverPercent,
+      out: subMatchId != null && i.misses.some((x) => x.matchId === subMatchId),
     }))
     .filter((i) => i.rest > 0);
 
@@ -612,6 +655,59 @@ export default function Tactics() {
           {armReset ? "确认清空?" : "重置"}
         </button>
       </header>
+
+      {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛口径跟着它走 */}
+      {teamPlayers && (
+        <section className="card tac-submit">
+          <div className="tac-submit-head">
+            <h2>
+              选择目标比赛 <small>赛前备案 · 开赛后公开</small>
+            </h2>
+            <button className="btn" onClick={toggleSubmit}>
+              {subOpen ? "收起" : "展开"}
+            </button>
+          </div>
+          {subOpen && (
+            <div className="tac-submit-body">
+              <select
+                aria-label="选择目标比赛"
+                value={subMatchId ?? ""}
+                onChange={(e) => pickSubMatch(e.target.value)}
+              >
+                <option value="">选择目标比赛…</option>
+                {(subMatches ?? []).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
+                    {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
+                    {m.opponentName ?? "待定"}
+                    {m.submitted ? "（已提交）" : ""}
+                  </option>
+                ))}
+              </select>
+              {subMatches != null && subMatches.length === 0 && (
+                <p className="tac-hint">你的球队当前没有待开的比赛。</p>
+              )}
+              {mine && (
+                <p className="tac-hint">
+                  该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
+                  {formTitle(mine.form)}），再次提交将覆盖。
+                </p>
+              )}
+              {risks.length > 0 && (
+                <p className="tac-warn">名单里有状态异常的球员：{risks.join("、")}</p>
+              )}
+              {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
+              <button
+                className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
+                disabled={subMatchId == null || subBusy}
+                onClick={submitLineup}
+              >
+                {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="tac-layout">
         <section className="card tac-pitch-panel">
@@ -689,32 +785,12 @@ export default function Tactics() {
             </div>
           </section>
 
-          {/* 伤停与停赛：停赛按赛事算（可切赛事），伤停跨赛事；全部只提示不拦截 */}
+          {/* 伤停与停赛：停赛按所选比赛的赛事算 */}
           {status && (status.tournaments.length > 0 || injList.length > 0) && (
             <section className="card tac-status">
               <h2>
-                伤停与停赛 <small>只提示不拦截</small>
+                伤停与停赛 {statusTName ? <small>{statusTName}</small> : null}
               </h2>
-              {status.tournaments.length > 0 && (
-                <label className="tac-status-pick">
-                  <span>停赛赛事口径（伤停跨赛事）</span>
-                  <select
-                    aria-label="停赛赛事"
-                    value={status.tournamentId ?? ""}
-                    onChange={(e) => {
-                      setStatusTid(Number(e.target.value));
-                      setSelected(null);
-                    }}
-                  >
-                    {status.tournaments.map((t) => (
-                      <option key={t.tournamentId} value={t.tournamentId}>
-                        {t.name}
-                        {t.default ? "（本队下一场）" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
               {suspList.length === 0 && nearList.length === 0 && injList.length === 0 ? (
                 <p className="tac-hint">本队无异常。</p>
               ) : (
@@ -735,6 +811,7 @@ export default function Tactics() {
                     <li key={`i${i.playerId}`}>
                       <span className="tac-status-name">{i.playerName}</span>
                       <span className="injury-badge">伤停</span>
+                      {i.out ? <span className="tac-out-badge">缺本场</span> : null}
                       <span className="tac-status-note">
                         {i.injuryName ?? "伤病"} · 剩{i.rest}场 · 恢复{i.pct}%
                       </span>
@@ -909,7 +986,7 @@ export default function Tactics() {
                       ))}
                   </select>
                 </label>
-                {selRisk && <p className="tac-warn">{selRisk}。仅作提示，不拦上场。</p>}
+                {selRisk && <p className="tac-warn">{selRisk}。</p>}
               </section>
             )}
           </div>
@@ -1032,60 +1109,6 @@ export default function Tactics() {
           </div>
         </section>
       </div>
-
-      {teamPlayers && (
-        <section className="card tac-submit">
-          <div className="tac-submit-head">
-            <h2>
-              提交阵容 <small>赛前备案 · 开赛后公开</small>
-            </h2>
-            <button className="btn" onClick={toggleSubmit}>
-              {subOpen ? "收起" : "展开"}
-            </button>
-          </div>
-          {subOpen && (
-            <div className="tac-submit-body">
-              <select
-                aria-label="选择比赛"
-                value={subMatchId ?? ""}
-                onChange={(e) => pickSubMatch(e.target.value)}
-              >
-                <option value="">选择比赛…</option>
-                {(subMatches ?? []).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
-                    {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
-                    {m.opponentName ?? "待定"}
-                    {m.submitted ? "（已提交）" : ""}
-                  </option>
-                ))}
-              </select>
-              {subMatches != null && subMatches.length === 0 && (
-                <p className="tac-hint">你的球队当前没有待开的比赛。</p>
-              )}
-              {mine && (
-                <p className="tac-hint">
-                  该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
-                  {formTitle(mine.form)}），再次提交将覆盖。
-                </p>
-              )}
-              {risks.length > 0 && (
-                <p className="tac-warn">
-                  名单里有状态异常的球员：{risks.join("、")}。仅作提示，仍可提交。
-                </p>
-              )}
-              {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
-              <button
-                className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
-                disabled={subMatchId == null || subBusy}
-                onClick={submitLineup}
-              >
-                {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
-              </button>
-            </div>
-          )}
-        </section>
-      )}
 
       <footer className="tac-foot">
         代码不包含球员名，名字只存在你的浏览器里。
