@@ -195,10 +195,7 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
   const matches: WeeklyMatchDTO[] = list.map(toWeeklyMatch);
 
   // 本周伤情：与本周比赛同窗口（左闭右开）；同一人一周内多条伤情按最后一条留（同一人只占一行）
-  const injuryRows = await injuriesInWindow(db, weekKey(start), weekKey(end));
-  const byPlayer = new Map<number, (typeof injuryRows)[number]>();
-  for (const f of injuryRows) byPlayer.set(f.playerId, f);
-  const injuries = [...byPlayer.values()].map((f) => ({
+  const injuries = dedupePlayerFacts(await injuriesInWindow(db, weekKey(start), weekKey(end))).map((f) => ({
     playerId: f.playerId,
     playerName: f.playerName,
     teamName: f.teamName,
@@ -473,6 +470,14 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
     goals.slice(0, cap).map((e, i) => phrase(e, i, true, usedT)).join("，") + tail,
     goals.slice(0, cap).map((e, i) => phrase(e, i, false, usedN)).join("，") + tail,
   ];
+}
+
+// 同一名球员在同一窗口可能出现多条伤病事件（一轮多场、一周多轮）：
+// 按球员去重留最后一条，否则「N 人受伤」数的其实是事件数，正文还会把同一个人列两遍
+function dedupePlayerFacts(facts: InjuryFact[]): InjuryFact[] {
+  const byPlayer = new Map<number, InjuryFact>();
+  for (const f of facts) byPlayer.set(f.playerId, f);
+  return [...byPlayer.values()];
 }
 
 // 伤情逐名简列（快讯条正文用）：谁、哪队、轻重、伤名（有登记才有）
@@ -966,7 +971,7 @@ export async function buildFeed(
   // 3.6) 轮次伤情条：与综述条同一批「全轮完赛」轮次，该轮有人受伤才出条（详情走综述页）
   for (let i = 0; i < recapRows.length; i++) {
     const g = recapRows[i];
-    const facts = recapInjuries[i] ?? [];
+    const facts = dedupePlayerFacts(recapInjuries[i] ?? []);
     if (facts.length === 0) continue;
     const rl = roundLabel(
       { stageKind: g.stage_kind, stageName: g.stage_name, round: g.round, tournamentName: g.tournament_name },

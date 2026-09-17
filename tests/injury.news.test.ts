@@ -10,6 +10,8 @@ interface FixtureOpts {
   injury?: boolean;
   /** 勾选为缺阵的场次：'finished' 只勾已完赛场、'both' 再加一场未开赛（制造「仍在伤停」） */
   miss?: "finished" | "both";
+  /** 同一轮再给同一名球员记一次重伤事件（线上真出现过：一轮多场同一人两次受伤） */
+  dup?: boolean;
 }
 
 // 单届联赛：红 3:1 蓝（刚刚完赛，落在本周）+ 同轮一场未开赛（供勾缺阵）
@@ -45,6 +47,10 @@ function freshDb(opts: FixtureOpts = {}) {
       .run(finishedAt);
     sqlite.prepare("INSERT INTO injury_miss (injury_id, match_id) VALUES (950, 800)").run();
     if (miss === "both") sqlite.prepare("INSERT INTO injury_miss (injury_id, match_id) VALUES (950, 801)").run();
+    if (opts.dup)
+      sqlite
+        .prepare("INSERT INTO match_event (id, match_id, entry_id, player_id, type, minute, created_by) VALUES (901, 800, 500, 100, 'injury_major', 70, 1)")
+        .run();
   }
   return { db: createTestD1(sqlite), sqlite };
 }
@@ -74,6 +80,24 @@ describe("伤情快讯与周报", () => {
     const inj = items.find((i) => i.kind === "injury");
     expect(inj!.body).toContain("张三（红队 · 轻伤 · 轻微扭伤）");
     expect(inj!.body).toContain("无人继续缺阵");
+  });
+
+  it("同一轮同一人两次受伤只算一个人：标题人数、正文简列都不重复", async () => {
+    const { db } = freshDb({ dup: true });
+    const items = await buildFeed(db);
+    const inj = items.find((i) => i.kind === "injury");
+    expect(inj).toBeTruthy();
+    expect(inj!.title).not.toContain("2 人");
+    expect(inj!.title).toContain("1 人");
+    // 留的是后一条事件（901 重伤），所以标题带重伤口径
+    expect(inj!.title).toMatch(/重伤|伤得不轻|伤势较重|短期难回/);
+    // 正文里张三只出现一次，且按后一条事件的轻重写
+    expect(inj!.body.split("张三").length - 1).toBe(1);
+    expect(inj!.body).toContain("张三（红队 · 重伤）");
+    // 周报同理：同一周同一人也只算一条
+    const wk = await buildWeekly(db);
+    expect(wk.injuries).toHaveLength(1);
+    expect(wk.injuries![0].severity).toBe("major");
   });
 
   it("周报带伤情节：injuries 去重逐名 + 正文尾巴", async () => {
