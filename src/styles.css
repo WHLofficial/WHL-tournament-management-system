@@ -1722,7 +1722,7 @@ button.add-stage {
   height: 3px;
   width: 10px;
 }
-/* 伤停与停赛卡（战术板右侧）：停赛/黄牌临界/伤停三组清单 */
+/* 伤停与停赛清单（在「选择目标比赛」卡右侧栏）：停赛/黄牌临界/伤停三组 */
 .tac-status h2 {
   font-size: 13px;
   font-weight: 700;
@@ -2117,6 +2117,15 @@ button.add-stage {
     aspect-ratio: auto;
     align-self: stretch;
   }
+  .tac-submit-cols {
+    grid-template-columns: 1fr;
+  }
+  .tac-submit-status {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    padding-left: 0;
+    padding-top: 12px;
+  }
   .tac-page {
     padding: 12px 12px 14px;
   }
@@ -2307,6 +2316,21 @@ button.add-stage {
 }
 .tac-submit-body select {
   width: 100%;
+}
+/* 通栏卡里并排：左边选比赛/提交，右边伤停与停赛清单（清单原本占右栏一张卡的高度） */
+.tac-submit-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+.tac-submit-main {
+  display: grid;
+  gap: 10px;
+}
+.tac-submit-status {
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
 }
 
 .md-lineups {

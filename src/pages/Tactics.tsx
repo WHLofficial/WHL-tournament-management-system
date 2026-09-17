@@ -669,41 +669,82 @@ export default function Tactics() {
           </div>
           {subOpen && (
             <div className="tac-submit-body">
-              <select
-                aria-label="选择目标比赛"
-                value={subMatchId ?? ""}
-                onChange={(e) => pickSubMatch(e.target.value)}
-              >
-                <option value="">选择目标比赛…</option>
-                {(subMatches ?? []).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
-                    {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
-                    {m.opponentName ?? "待定"}
-                    {m.submitted ? "（已提交）" : ""}
-                  </option>
-                ))}
-              </select>
-              {subMatches != null && subMatches.length === 0 && (
-                <p className="tac-hint">你的球队当前没有待开的比赛。</p>
-              )}
-              {mine && (
-                <p className="tac-hint">
-                  该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
-                  {formTitle(mine.form)}），再次提交将覆盖。
-                </p>
-              )}
-              {risks.length > 0 && (
-                <p className="tac-warn">名单里有状态异常的球员：{risks.join("、")}</p>
-              )}
-              {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
-              <button
-                className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
-                disabled={subMatchId == null || subBusy}
-                onClick={submitLineup}
-              >
-                {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
-              </button>
+              <div className="tac-submit-cols">
+                <div className="tac-submit-main">
+                  <select
+                    aria-label="选择目标比赛"
+                    value={subMatchId ?? ""}
+                    onChange={(e) => pickSubMatch(e.target.value)}
+                  >
+                    <option value="">选择目标比赛…</option>
+                    {(subMatches ?? []).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
+                        {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
+                        {m.opponentName ?? "待定"}
+                        {m.submitted ? "（已提交）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {subMatches != null && subMatches.length === 0 && (
+                    <p className="tac-hint">你的球队当前没有待开的比赛。</p>
+                  )}
+                  {mine && (
+                    <p className="tac-hint">
+                      该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
+                      {formTitle(mine.form)}），再次提交将覆盖。
+                    </p>
+                  )}
+                  {risks.length > 0 && (
+                    <p className="tac-warn">名单里有状态异常的球员：{risks.join("、")}</p>
+                  )}
+                  {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
+                  <button
+                    className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
+                    disabled={subMatchId == null || subBusy}
+                    onClick={submitLineup}
+                  >
+                    {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
+                  </button>
+                </div>
+
+                {/* 伤停与停赛：停赛按所选比赛的赛事算 */}
+                {status && (status.tournaments.length > 0 || injList.length > 0) && (
+                  <div className="tac-status tac-submit-status">
+                    <h2>
+                      伤停与停赛 {statusTName ? <small>{statusTName}</small> : null}
+                    </h2>
+                    {suspList.length === 0 && nearList.length === 0 && injList.length === 0 ? (
+                      <p className="tac-hint">本队无异常。</p>
+                    ) : (
+                      <ul className="tac-status-list">
+                        {suspList.map((p) => (
+                          <li key={`s${p.playerId}`}>
+                            <span className="tac-status-name">{p.playerName}</span>
+                            <span className="susp-badge">停赛 剩{p.remaining}场</span>
+                          </li>
+                        ))}
+                        {nearList.map((p) => (
+                          <li key={`y${p.playerId}`}>
+                            <span className="tac-status-name">{p.playerName}</span>
+                            <span className="yc-badge">再1黄停赛（已{p.yellows}张）</span>
+                          </li>
+                        ))}
+                        {injList.map((i) => (
+                          <li key={`i${i.playerId}`}>
+                            <span className="tac-status-name">{i.playerName}</span>
+                            <span className="injury-badge">伤停</span>
+                            {i.out ? <span className="tac-out-badge">缺本场</span> : null}
+                            <span className="tac-status-note">
+                              {i.injuryName ?? "伤病"} · 剩{i.rest}场 · 恢复{i.pct}%
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -784,43 +825,6 @@ export default function Tactics() {
               </button>
             </div>
           </section>
-
-          {/* 伤停与停赛：停赛按所选比赛的赛事算 */}
-          {status && (status.tournaments.length > 0 || injList.length > 0) && (
-            <section className="card tac-status">
-              <h2>
-                伤停与停赛 {statusTName ? <small>{statusTName}</small> : null}
-              </h2>
-              {suspList.length === 0 && nearList.length === 0 && injList.length === 0 ? (
-                <p className="tac-hint">本队无异常。</p>
-              ) : (
-                <ul className="tac-status-list">
-                  {suspList.map((p) => (
-                    <li key={`s${p.playerId}`}>
-                      <span className="tac-status-name">{p.playerName}</span>
-                      <span className="susp-badge">停赛 剩{p.remaining}场</span>
-                    </li>
-                  ))}
-                  {nearList.map((p) => (
-                    <li key={`y${p.playerId}`}>
-                      <span className="tac-status-name">{p.playerName}</span>
-                      <span className="yc-badge">再1黄停赛（已{p.yellows}张）</span>
-                    </li>
-                  ))}
-                  {injList.map((i) => (
-                    <li key={`i${i.playerId}`}>
-                      <span className="tac-status-name">{i.playerName}</span>
-                      <span className="injury-badge">伤停</span>
-                      {i.out ? <span className="tac-out-badge">缺本场</span> : null}
-                      <span className="tac-status-note">
-                        {i.injuryName ?? "伤病"} · 剩{i.rest}场 · 恢复{i.pct}%
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
 
           <section className="card tac-import-panel">
             <div className="tac-import-row">
