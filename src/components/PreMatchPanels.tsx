@@ -292,7 +292,7 @@ function PlayersPanel({
       )}
       {susp.length > 0 && (
         <div className="pl-susp">
-          <b>⛔ 停赛情报</b>
+          <b>🟥 停赛情报</b>
           <ul>
             {susp.map((p) => (
               <li key={p.playerId}>

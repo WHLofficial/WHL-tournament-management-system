@@ -1675,8 +1675,11 @@ button.add-stage {
 /* 磁贴状态角标：停赛=红牌（竖条），伤病=红十字；两者同时命中并排显示 */
 .tac-tile.susp:not(.sel) { border-color: #c92a2a; }
 .tac-tile.inj:not(.sel) { border-color: #c2410c; }
+/* 停赛+伤停同时命中（磁贴 class 是 both）：边框按停赛的红色，两个角标并排 */
+.tac-tile.both:not(.sel) { border-color: #c92a2a; }
 .tac-tile.sel.susp,
-.tac-tile.sel.inj { box-shadow: inset 0 0 0 2px rgba(209, 26, 26, 0.65); }
+.tac-tile.sel.inj,
+.tac-tile.sel.both { box-shadow: inset 0 0 0 2px rgba(209, 26, 26, 0.65); }
 .tac-marks {
   position: absolute;
   top: 3px;
@@ -1685,6 +1688,10 @@ button.add-stage {
   align-items: center;
   gap: 3px;
 }
+/* 有角标时顶部让出位置：磁贴只有 50px 宽，两个角标并排会压到位置简称 */
+.tac-tile.susp,
+.tac-tile.inj,
+.tac-tile.both { padding-top: 9px; }
 .tac-mk-card {
   width: 7px;
   height: 10px;
