@@ -558,6 +558,7 @@ button.btn-ghost:hover:not(:disabled) {
 .susp-warn { color: #c92a2a; font-size: 13px; font-weight: 600; }
 .yellow-warn { color: #b45309; font-size: 13px; }
 .injury-warn { color: #c2410c; font-size: 13px; font-weight: 600; }
+.inj-link-hint { font-size: 12px; margin: 0 0 6px; }
 
 /* 伤停登记面板（挂在伤病事件行下，跨赛事勾选缺阵场次） */
 .injury-reg {
@@ -576,6 +577,26 @@ button.btn-ghost:hover:not(:disabled) {
 }
 .injury-reg-matches .ir-status { color: var(--muted); font-size: 12px; }
 .injury-reg-progress { font-size: 12px; color: #c2410c; font-weight: 600; }
+
+/* 伤停管理（集中页）：筛选条 + 待登记清单 */
+.inj-filter {
+  display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.inj-filter label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: var(--muted);
+}
+.inj-filter select.input, .inj-filter input.input { min-width: 10em; }
+.inj-filter-check {
+  flex-direction: row; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--ink, inherit); padding-bottom: 6px;
+}
+.inj-tours { margin-left: 6px; font-size: 12px; color: #c2410c; }
+.inj-pending { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.inj-pending > li {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+}
 .susp-badge {
   margin-left: 6px;
   font-size: 11px;

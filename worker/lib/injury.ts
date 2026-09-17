@@ -3,6 +3,7 @@
 // 「伤愈进度」= 已完赛的缺阵场 / 总勾选场（勾了 0 场视为已伤愈，仅存档）。
 // 删事件、改勾选、补录后下次计算自动生效，无反冲逻辑。
 import type {
+  InjuryEventCandidateDTO,
   InjuryMissCandidateDTO,
   InjuryMissDTO,
   InjurySeverity,
@@ -77,6 +78,94 @@ export async function listTeamInjuries(
 // 每条登记若勾选了该场即入列，附带伤情（名称/档位/伤愈进度）。
 // 公开端 DTO（PublicAbsenceDTO / InjuryWatchDTO / InjuryWatchGroupDTO）定义在 shared/types.ts，
 // 前端与管理端共用一份形状；这里转出，老的 `from "../lib/injury"` 导入不受影响
+// 管理端集中页：不限队伍的全部登记（带队名，赛事/球队筛在前端做——数据量小）
+export async function listAllInjuries(db: D1Database): Promise<InjuryStatusDTO[]> {
+  const [injuries, misses] = await Promise.all([
+    db
+      .prepare(
+        `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
+                me.type AS event_type, me.minute AS event_minute,
+                p.name AS player_name, tm.name AS team_name,
+                fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
+                fm.round AS from_round, fs.kind AS from_stage_kind
+         FROM injury i
+         JOIN match_event me ON me.id = i.event_id
+         JOIN player p ON p.id = i.player_id
+         JOIN team tm ON tm.id = i.team_id
+         JOIN match fm ON fm.id = me.match_id
+         JOIN stage fs ON fs.id = fm.stage_id
+         JOIN tournament ft ON ft.id = fs.tournament_id
+         ORDER BY i.created_at DESC, i.id DESC`
+      )
+      .all<InjuryRow & { team_name: string }>(),
+    missesAll(db),
+  ]);
+  return assemble(injuries.results ?? [], misses.results ?? [], () => "", (r) => r.team_name ?? "");
+}
+
+// 管理端集中页：已记伤病事件、但还没建伤停登记的事件（「待登记」清单）
+export async function listRegistrableInjuryEvents(
+  db: D1Database
+): Promise<InjuryEventCandidateDTO[]> {
+  const r = await db
+    .prepare(
+      `SELECT me.id AS event_id, me.match_id, me.type AS event_type, me.minute,
+              t2.id AS tournament_id, t2.name AS tournament_name,
+              s.kind AS stage_kind, m.round, m.status AS match_status, m.finished_at,
+              t.id AS team_id, t.name AS team_name,
+              p.id AS player_id, p.name AS player_name,
+              CASE WHEN e1.team_id = t.id THEN ea.name ELSE eh.name END AS opponent_name
+       FROM match_event me
+       JOIN match m ON m.id = me.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t2 ON t2.id = s.tournament_id
+       JOIN entry e1 ON e1.id = m.home_entry_id
+       JOIN team eh ON eh.id = e1.team_id
+       LEFT JOIN entry e2 ON e2.id = m.away_entry_id
+       LEFT JOIN team ea ON ea.id = e2.team_id
+       JOIN entry e ON e.id = me.entry_id
+       JOIN team t ON t.id = e.team_id
+       LEFT JOIN player p ON p.id = me.player_id
+       LEFT JOIN injury i ON i.event_id = me.id
+       WHERE me.type IN ('injury_minor', 'injury_major') AND i.id IS NULL
+       ORDER BY m.finished_at DESC, me.id DESC`,
+    )
+    .all<{
+      event_id: number;
+      match_id: number;
+      event_type: "injury_minor" | "injury_major";
+      minute: number | null;
+      tournament_id: number;
+      tournament_name: string;
+      stage_kind: "elim" | "round_robin" | "group";
+      round: number;
+      match_status: "pending" | "live" | "finished";
+      finished_at: string | null;
+      team_id: number;
+      team_name: string;
+      player_id: number | null;
+      player_name: string | null;
+      opponent_name: string | null;
+    }>();
+  return (r.results ?? []).map((x) => ({
+    eventId: x.event_id,
+    matchId: x.match_id,
+    tournamentId: x.tournament_id,
+    tournamentName: x.tournament_name,
+    round: x.round,
+    stageKind: x.stage_kind,
+    matchStatus: x.match_status,
+    teamId: x.team_id,
+    teamName: x.team_name,
+    playerId: x.player_id,
+    playerName: x.player_name,
+    severity: severityOfEventType(x.event_type),
+    minute: x.minute,
+    opponentName: x.opponent_name,
+    finishedAt: x.finished_at,
+  }));
+}
+
 export type {
   InjuryWatchDTO,
   InjuryWatchGroupDTO,
@@ -465,11 +554,13 @@ interface AssembledInjury {
 }
 
 function assemble(
-  rows: InjuryRow[],
+  rows: (InjuryRow & { team_name?: string })[],
   misses: MissRow[],
-  fromLabelOf: (r: InjuryRow) => string
+  fromLabelOf: (r: InjuryRow) => string,
+  teamNameOf?: (r: InjuryRow & { team_name?: string }) => string,
 ): InjuryStatusDTO[] {
-  return [...assembleRaw(rows, misses).values()].map((inj) => ({
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return [...assembleRaw(rows, misses, teamNameOf).values()].map((inj) => ({
     id: inj.id,
     teamId: inj.teamId,
     teamName: inj.teamName,
@@ -481,7 +572,7 @@ function assemble(
     note: inj.note,
     createdAt: inj.createdAt,
     fromMatchId: inj.fromMatchId,
-    fromLabel: inj.fromLabel || fromLabelOf(rows.find((r) => r.id === inj.id)!),
+    fromLabel: inj.fromLabel || fromLabelOf(byId.get(inj.id)!),
     misses: inj.misses,
     recoverPercent: inj.recoverPercent,
   }));

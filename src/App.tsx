@@ -23,6 +23,9 @@ const AdminCodes = lazy(() =>
 const TeamDetailPage = lazy(() =>
   import("./pages/TeamDetail").then((m) => ({ default: m.TeamDetailPage })),
 );
+const AdminInjuries = lazy(() =>
+  import("./pages/AdminInjuries").then((m) => ({ default: m.AdminInjuries })),
+);
 const TournamentManage = lazy(() =>
   import("./pages/TournamentManage").then((m) => ({ default: m.TournamentManage })),
 );
@@ -114,6 +117,14 @@ function AppShell() {
             element={
               <RequireRole roles={["admin", "superadmin"]}>
                 <AdminCodes />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/injuries"
+            element={
+              <RequireRole roles={["admin", "superadmin"]}>
+                <AdminInjuries />
               </RequireRole>
             }
           />

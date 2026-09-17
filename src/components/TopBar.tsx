@@ -35,6 +35,7 @@ export function TopBar() {
           <>
             <Link to="/admin">赛事管理</Link>
             <Link to="/admin/teams">球队库</Link>
+            <Link to="/admin/injuries">伤停管理</Link>
             <Link to="/admin/codes">注册码</Link>
             {user.role === "superadmin" ? <Link to="/admin/accounts">账号管理</Link> : null}
           </>

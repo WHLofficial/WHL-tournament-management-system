@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
+import { Link } from "react-router";
 import { MatchScore, computeAgg } from "../components/MatchScore";
 import { TeamLogo } from "../components/TeamLogo";
 import { EventDot } from "../components/Cards";
 import { LineupGrid } from "../components/LineupView";
-import { InjuryRegPanel } from "../components/InjuryRegPanel";
 import type {
   AuditEntryDTO,
   EntryDTO,
@@ -74,11 +74,10 @@ export default function MatchesTab({
   // 停赛状态（纯派生，事件增删后随 tick 重拉）
   const [susp, setSusp] = useState<Map<number, SuspensionStatusDTO>>(new Map());
   const [suspCfg, setSuspCfg] = useState<SuspensionConfig | null>(null);
-  // 伤停数据（按队缓存）：面板打开才拉；登记/撤销后 bump injuryTick 重拉
+  // 伤停数据（按队缓存）：只用于事件表单的软提示，面板打开才拉
   const [injuriesByTeam, setInjuriesByTeam] = useState<Map<number, InjuryStatusDTO[]>>(
     new Map(),
   );
-  const [injuryTick, setInjuryTick] = useState(0);
   // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 第一个轮）
   const [selRoundRaw, setSelRoundRaw] = useState<string | null>(null);
 
@@ -153,7 +152,7 @@ export default function MatchesTab({
     };
   }, [matches, playersCache, entryById]);
 
-  // 伤停登记（按队拉）：与停赛同节奏——面板打开才拉，登记/撤销后随 injuryTick 重拉
+  // 伤停登记（按队拉）：给事件表单做「选了伤停球员」的软提示。登记本身在伤停管理页
   useEffect(() => {
     if (!panelActive || !matches) return;
     const ids = new Set<number>();
@@ -179,7 +178,7 @@ export default function MatchesTab({
     return () => {
       alive = false;
     };
-  }, [panelActive, matches, entryById, injuryTick]);
+  }, [panelActive, matches, entryById]);
 
   const playersOf = (entryId: number | null): PlayerDTO[] =>
     entryId == null
@@ -296,7 +295,6 @@ export default function MatchesTab({
       act={act}
       tick={tick}
       injuriesOf={injuriesOf}
-      onInjured={() => setInjuryTick((t) => t + 1)}
       panelOpen={openPanel === m.id}
       togglePanel={() => setOpenPanel(openPanel === m.id ? null : m.id)}
     />
@@ -374,7 +372,6 @@ function MatchRow({
   act,
   tick,
   injuriesOf,
-  onInjured,
   panelOpen,
   togglePanel,
 }: {
@@ -391,7 +388,6 @@ function MatchRow({
   act: Act;
   tick: number;
   injuriesOf: (entryId: number | null) => InjuryStatusDTO[];
-  onInjured: () => void;
   panelOpen: boolean;
   togglePanel: () => void;
 }) {
@@ -454,7 +450,6 @@ function MatchRow({
           act={act}
           tick={tick}
           injuriesOf={injuriesOf}
-          onInjured={onInjured}
           togglePanel={togglePanel}
         />
       )}
@@ -541,7 +536,6 @@ function MatchPanel({
   act,
   tick,
   injuriesOf,
-  onInjured,
   togglePanel,
 }: {
   match: MatchDTO;
@@ -556,7 +550,6 @@ function MatchPanel({
   act: Act;
   tick: number;
   injuriesOf: (entryId: number | null) => InjuryStatusDTO[];
-  onInjured: () => void;
   togglePanel: () => void;
 }) {
   const homeName = m.homeTeamName ?? "主队";
@@ -609,6 +602,10 @@ function MatchPanel({
       )}
       {(m.status === "live" || m.status === "finished") && (
         <>
+          <p className="muted inj-link-hint">
+            这里只记伤病事件；<Link to="/admin/injuries">伤停管理</Link>
+            里统一建登记、勾缺阵场次。
+          </p>
           <EventForm
             match={m}
             homePlayers={homePlayers}
@@ -630,8 +627,6 @@ function MatchPanel({
             tick={tick}
             editingId={editing?.id ?? null}
             onEdit={setEditing}
-            injuriesOf={injuriesOf}
-            onInjured={onInjured}
           />
         </>
       )}
@@ -1285,8 +1280,6 @@ function EventList({
   tick,
   editingId,
   onEdit,
-  injuriesOf,
-  onInjured,
 }: {
   matchId: number;
   entryById: Map<number, EntryDTO>;
@@ -1296,13 +1289,9 @@ function EventList({
   tick: number;
   editingId: number | null;
   onEdit: (ev: MatchEventDTO | null) => void;
-  injuriesOf: (entryId: number | null) => InjuryStatusDTO[];
-  onInjured: () => void;
 }) {
   const [events, setEvents] = useState<MatchEventDTO[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // 展开着登记面板的事件（一次一个）
-  const [regOpen, setRegOpen] = useState<number | null>(null);
 
   useEffect(() => {
     api<{ events: MatchEventDTO[] }>(`/api/admin/matches/${matchId}/events`)
@@ -1326,10 +1315,6 @@ function EventList({
             ? playerById.get(ev.assistPlayerId)
             : undefined;
         const isInjury = ev.type === "injury_minor" || ev.type === "injury_major";
-        const teamId = entryById.get(ev.entryId)?.teamId;
-        const reg = isInjury
-          ? injuriesOf(ev.entryId ?? null).find((i) => i.eventId === ev.id)
-          : undefined;
         return (
           <li key={ev.id}>
             <div className="ev-line">
@@ -1340,19 +1325,7 @@ function EventList({
             {assist && <span className="ev-assist">（助攻 {assist}）</span>}
             <span className="ev-team">{name}</span>
             {isInjury && ev.playerId == null && (
-              <span className="warn-line yellow-warn">未记球员，补上球员后才能登记伤停</span>
-            )}
-            {isInjury && (
-              <button
-                className="btn btn-sm"
-                type="button"
-                disabled={busy || ev.playerId == null || teamId == null}
-                onClick={() => setRegOpen(regOpen === ev.id ? null : ev.id)}
-              >
-                {reg
-                  ? `伤停登记（缺阵 ${reg.misses.length} 场）`
-                  : "登记伤停"}
-              </button>
+              <span className="warn-line yellow-warn">未记球员，登记伤停前先补上球员</span>
             )}
             {ev.type !== "red_2y" && (
               <button
@@ -1373,7 +1346,6 @@ function EventList({
                   });
                   // 删的就是正在编辑的事件时，退出编辑态避免表单挂着已不存在的事件
                   if (ev.id === editingId) onEdit(null);
-                  if (ev.id === regOpen) setRegOpen(null);
                   return null;
                 }, {
                   light: true,
@@ -1384,18 +1356,6 @@ function EventList({
               删除
             </button>
             </div>
-            {isInjury && regOpen === ev.id && teamId != null && (
-              <InjuryRegPanel
-                eventId={ev.id}
-                teamId={teamId}
-                severity={ev.type === "injury_major" ? "major" : "minor"}
-                playerName={who ?? playerById.get(ev.playerId ?? -1) ?? "该球员"}
-                existing={reg}
-                busy={busy}
-                act={act}
-                onSaved={onInjured}
-              />
-            )}
           </li>
         );
       })}

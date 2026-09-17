@@ -193,6 +193,29 @@ export interface InjuryCandidatesResp {
   candidates: InjuryMissCandidateDTO[];
 }
 
+// 集中登记页的「待登记」清单：已记 injury_minor/major、但还没建伤停登记的事件
+export interface InjuryEventCandidateDTO {
+  eventId: number;
+  matchId: number;
+  tournamentId: number;
+  tournamentName: string;
+  round: number;
+  stageKind: "elim" | "round_robin" | "group";
+  matchStatus: "pending" | "live" | "finished";
+  teamId: number;
+  teamName: string;
+  playerId: number | null; // 事件没记球员时为 null（这种事件要先去赛程里补上球员才能登记）
+  playerName: string | null;
+  severity: InjurySeverity;
+  minute: number | null;
+  opponentName: string | null;
+  finishedAt: string | null;
+}
+
+export interface InjuryEventCandidatesResp {
+  events: InjuryEventCandidateDTO[];
+}
+
 // 公开端「因伤缺阵」名单：某场比赛中被登记为缺阵的球员（按队分组）
 export interface PublicAbsenceDTO {
   playerId: number;

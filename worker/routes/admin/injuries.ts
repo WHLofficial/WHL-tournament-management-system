@@ -4,19 +4,34 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { auditStmt } from "../../lib/audit";
-import { listTeamInjuries, listTeamMissCandidates } from "../../lib/injury";
+import { listAllInjuries, listRegistrableInjuryEvents, listTeamInjuries, listTeamMissCandidates } from "../../lib/injury";
 import { findInjuryCatalog, severityOfEventType } from "../../../shared/injuries";
-import type { InjuryCandidatesResp, InjuryStatusDTO } from "../../../shared/types";
+import type {
+  InjuryCandidatesResp,
+  InjuryEventCandidatesResp,
+  InjuryStatusDTO,
+} from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
 
-// GET /injuries?teamId=：某队全部登记（管理端球队页）
+// GET /injuries?teamId=：登记列表。带 teamId → 该队（球队页）；不带 → 全部（集中管理页）
 app.get("/", async (c) => {
-  const teamId = Number(c.req.query("teamId"));
-  if (!Number.isInteger(teamId) || teamId <= 0)
-    return c.json({ message: "缺少 teamId" }, 400);
-  const injuries = await listTeamInjuries(c.env.DB, teamId);
+  const q = c.req.query("teamId");
+  if (q != null && q !== "") {
+    const teamId = Number(q);
+    if (!Number.isInteger(teamId) || teamId <= 0)
+      return c.json({ message: "teamId 不合法" }, 400);
+    const injuries = await listTeamInjuries(c.env.DB, teamId);
+    return c.json({ injuries } satisfies { injuries: InjuryStatusDTO[] });
+  }
+  const injuries = await listAllInjuries(c.env.DB);
   return c.json({ injuries } satisfies { injuries: InjuryStatusDTO[] });
+});
+
+// GET /injuries/events：已记伤病事件但还没有登记的事件（集中页的「待登记」清单）
+app.get("/events", async (c) => {
+  const events = await listRegistrableInjuryEvents(c.env.DB);
+  return c.json({ events } satisfies InjuryEventCandidatesResp);
 });
 
 // GET /injuries/candidates?teamId=：该队可勾选为缺阵的比赛（跨赛事、含已完赛）
