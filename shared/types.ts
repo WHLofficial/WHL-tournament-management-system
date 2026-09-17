@@ -652,6 +652,32 @@ export interface CoachPendingMatchDTO {
   submitted: boolean;
 }
 
+// ---------- 教练端：本队伤停/停赛概览（战术板用，只读派生） ----------
+// 停赛按赛事算（红黄牌在赛事内独立累计）→ 板上要选赛事；伤停跨赛事 → 不随赛事切换。
+
+// 概览里的赛事项：本队已报名、且赛事已发布（非草稿）
+export interface CoachStatusTournamentDTO {
+  tournamentId: number;
+  name: string;
+  default: boolean; // 本队最近一场待开比赛所在赛事；没有待开比赛时取最新赛事
+}
+
+// 本队球员在所选赛事里的停赛/黄牌状态（只含有红黄牌记录的人）
+export interface CoachStatusPlayerDTO {
+  playerId: number;
+  playerName: string;
+  remaining: number; // 剩余停赛场数，> 0 即停赛中
+  yellows: number; // 当前累积黄牌数
+}
+
+export interface CoachStatusResp {
+  tournaments: CoachStatusTournamentDTO[];
+  tournamentId: number | null; // 生效赛事（传入的赛事不属于本队时静默回落默认）；无赛事时为 null
+  yellowThreshold: number; // 0 = 不启用黄牌累积停赛
+  players: CoachStatusPlayerDTO[];
+  injuries: InjuryWatchDTO[]; // 伤停中（跨赛事口径，不随 tournamentId 变化）
+}
+
 export interface RoundMetaDTO {
   round: number;
   count: number;

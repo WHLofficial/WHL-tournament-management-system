@@ -4,8 +4,10 @@ import { rateLimit } from "../lib/ratelimit";
 import { fetchMatchLineup, LineupError, validateLineupSlots } from "../lib/lineup";
 import { AuthApiError, authBindTeam, boundTeamId, teamMembers } from "../lib/authClient";
 import { requirePermission, requirePwChanged } from "../middleware/auth";
+import { computeSuspensions, getSuspensionConfig } from "../lib/suspension";
+import { listActiveInjuries } from "../lib/injury";
 import { BUILDUPS, FORMS, decodeFut25, decodeFut26 } from "../../shared/tactics";
-import type { LineupSubmitBody, TacticArchiveDTO } from "../../shared/types";
+import type { CoachStatusResp, LineupSubmitBody, TacticArchiveDTO } from "../../shared/types";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
 // 增量 7：绑定真源在 auth 库（team_binding），本仓只读派生（AUTH_DB）。
@@ -171,6 +173,80 @@ app.get("/me/matches", async (c) => {
       };
     }),
   });
+});
+
+// 本队伤停/停赛概览：战术板上的状态提示（只读；全部只提示不拦截）。
+// 停赛按赛事算（红黄牌在赛事内独立累计，故板上要能切赛事）；伤停跨赛事，不随赛事变。
+app.get("/me/status", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env, user.id);
+  const empty: CoachStatusResp = {
+    tournaments: [],
+    tournamentId: null,
+    yellowThreshold: 0,
+    players: [],
+    injuries: [],
+  };
+  if (!teamId) return c.json(empty);
+
+  // 本队可看的赛事：已报名、且赛事已发布（草稿赛事不暴露）
+  const rows = await c.env.DB.prepare(
+    `SELECT t.id AS tournament_id, t.name
+     FROM entry e JOIN tournament t ON t.id = e.tournament_id
+     WHERE e.team_id = ? AND t.status != 'draft'
+     ORDER BY t.created_at DESC, t.id DESC`,
+  )
+    .bind(teamId)
+    .all<{ tournament_id: number; name: string }>();
+  const tournaments = (rows.results ?? []).map((r) => ({
+    tournamentId: r.tournament_id,
+    name: r.name,
+  }));
+
+  // 默认赛事：本队最近一场待开比赛所在赛事（口径同 /me/matches）；没有待开比赛就取最新赛事
+  const next = await c.env.DB.prepare(
+    `SELECT t.id AS tournament_id
+     FROM match m
+     JOIN stage s ON s.id = m.stage_id
+     JOIN tournament t ON t.id = s.tournament_id
+     LEFT JOIN entry he ON he.id = m.home_entry_id
+     LEFT JOIN entry ae ON ae.id = m.away_entry_id
+     WHERE m.status = 'pending' AND t.status != 'draft'
+       AND (m.note IS NULL OR m.note != '轮空')
+       AND (he.team_id = ? OR ae.team_id = ?)
+     ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`,
+  )
+    .bind(teamId, teamId)
+    .first<{ tournament_id: number }>();
+  const defTid = next?.tournament_id ?? tournaments[0]?.tournamentId ?? null;
+  const list = tournaments.map((t) => ({ ...t, default: t.tournamentId === defTid }));
+
+  // 传入的赛事不属于本队就静默回落默认（教练手改 URL 也不该看到别队赛事）
+  const want = Number(c.req.query("tournamentId"));
+  const tid = list.some((t) => t.tournamentId === want) ? want : defTid;
+  const injuries = await listActiveInjuries(c.env.DB, teamId);
+  if (tid == null) return c.json({ ...empty, tournaments: list, injuries });
+
+  const cfg = await getSuspensionConfig(c.env.DB, tid);
+  const all = await computeSuspensions(c.env.DB, tid, cfg);
+  const players = all
+    .filter((p) => p.teamId === teamId && (p.remaining > 0 || p.yellows > 0))
+    .map((p) => ({
+      playerId: p.playerId,
+      playerName: p.playerName,
+      remaining: p.remaining,
+      yellows: p.yellows,
+    }))
+    .sort((a, b) => b.remaining - a.remaining || b.yellows - a.yellows || a.playerId - b.playerId);
+
+  const resp: CoachStatusResp = {
+    tournaments: list,
+    tournamentId: tid,
+    yellowThreshold: cfg.yellowThreshold,
+    players,
+    injuries,
+  };
+  return c.json(resp);
 });
 
 // 我在某场比赛已提交的阵容（提交面板回显；只回自己那份，对手的赛前看不到）

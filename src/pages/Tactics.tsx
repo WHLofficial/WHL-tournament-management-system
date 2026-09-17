@@ -24,6 +24,7 @@ import {
 } from "../../shared/tactics";
 import type {
   CoachPendingMatchDTO,
+  CoachStatusResp,
   TacticArchiveDTO,
   TeamLineupDTO,
 } from "../../shared/types";
@@ -51,6 +52,8 @@ const POS_XY: Record<string, [number, number]> = {
 };
 const SPREAD: Record<number, number[]> = { 2: [-13, 13], 3: [-22, 0, 22], 4: [-24, -8, 8, 24] };
 const CENTRAL: Record<string, number | undefined> = { CB: 1, CDM: 1, CM: 1, CAM: 1, ST: 1 };
+// 同位多人的左右：阵型槽序按「右→左」枚举（数据里 RB 在 LB 前、RM 在 LM 前、RW 在 LW 前，
+// 而游戏把 RW 画在右），所以槽序在前的人画在靠右——取偏移时下标倒着走（见磁贴渲染处）。
 
 function loadLS<T>(k: string, d: T): T {
   try {
@@ -84,6 +87,14 @@ function loadState(): TacticState {
 
 type TeamPlayer = { id: number; name: string; number: string | null };
 
+// 球员异常状态：停赛/黄牌按所选赛事算，伤停跨赛事（后端 /api/coach/me/status 派生）
+type PStat = {
+  susp: number; // 剩余停赛场数，> 0 即停赛中
+  yellows: number; // 本赛事累计黄牌
+  near: boolean; // 再吃一张黄牌就停赛
+  inj: { injury: string | null; rest: number; pct: number } | null; // 伤停中：剩余缺阵场 / 恢复进度
+};
+
 export default function Tactics() {
   const { user } = useAuth();
   const [state, setState] = useState<TacticState>(loadState);
@@ -105,6 +116,8 @@ export default function Tactics() {
   const [saveNote, setSaveNote] = useState("");
   const [archBusy, setArchBusy] = useState(false);
   const [armDel, setArmDel] = useState<number | null>(null);
+  const [status, setStatus] = useState<CoachStatusResp | null>(null);
+  const [statusTid, setStatusTid] = useState<number | null>(null);
   const toastTimer = useRef<number | null>(null);
   const armTimer = useRef<number | null>(null);
   const subArmTimer = useRef<number | null>(null);
@@ -150,6 +163,27 @@ export default function Tactics() {
       dead = true;
     };
   }, [teamPlayers]);
+
+  // 伤停/停赛跟随赛事：绑队后拉本队概览（停赛按赛事算，切赛事重拉；伤停跨赛事恒定）
+  useEffect(() => {
+    if (!teamPlayers) {
+      setStatus(null);
+      setStatusTid(null);
+      return;
+    }
+    let dead = false;
+    const qs = statusTid != null ? `?tournamentId=${statusTid}` : "";
+    api<CoachStatusResp>(`/api/coach/me/status${qs}`)
+      .then((b) => {
+        if (!dead) setStatus(b);
+      })
+      .catch(() => {
+        if (!dead) setStatus(null);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [teamPlayers, statusTid]);
 
   useEffect(
     () => () => {
@@ -200,6 +234,87 @@ export default function Tactics() {
       return "------------";
     }
   }, [state.form, state.bu, state.lh, players]);
+
+  // —— 伤停/停赛：停赛按所选赛事算，伤停跨赛事（口径与录入端一致） ——
+  const suspThreshold = status?.yellowThreshold ?? 0;
+  const suspMap = useMemo(() => {
+    const m = new Map<number, { remaining: number; yellows: number }>();
+    for (const p of status?.players ?? []) {
+      m.set(p.playerId, { remaining: p.remaining, yellows: p.yellows });
+    }
+    return m;
+  }, [status]);
+  // 伤停中 = 还有没打完的缺阵场（已伤愈的登记不再提示）
+  const injMap = useMemo(() => {
+    const m = new Map<number, { injury: string | null; rest: number; pct: number }>();
+    for (const i of status?.injuries ?? []) {
+      const rest = i.misses.filter((x) => x.status !== "finished").length;
+      if (rest > 0) m.set(i.playerId, { injury: i.injuryName, rest, pct: i.recoverPercent });
+    }
+    return m;
+  }, [status]);
+
+  function statOfPid(pid: number): PStat | null {
+    const s = suspMap.get(pid);
+    const j = injMap.get(pid);
+    if (!s && !j) return null;
+    const susp = s?.remaining ?? 0;
+    const yellows = s?.yellows ?? 0;
+    return {
+      susp,
+      yellows,
+      near: susp <= 0 && suspThreshold > 0 && yellows === suspThreshold - 1,
+      inj: j ?? null,
+    };
+  }
+  function statOf(v: string | undefined): PStat | null {
+    const pid = Number(v);
+    if (!v || !Number.isInteger(pid) || pid <= 0) return null;
+    return statOfPid(pid);
+  }
+  // 下拉后缀：文案与优先级沿用录入端（停赛 > 黄牌临界 > 伤停）
+  function optionSuffix(pid: number): string {
+    const st = statOfPid(pid);
+    if (!st) return "";
+    const injSuffix = st.inj ? `（🩹伤停 剩${st.inj.rest}场）` : "";
+    if (st.susp > 0) return `（⛔停赛 剩${st.susp}场）${injSuffix}`;
+    if (st.near) return `（⚠️再${suspThreshold - st.yellows}黄停赛）${injSuffix}`;
+    return injSuffix;
+  }
+  // 磁贴悬停/无障碍文案
+  function statTip(st: PStat | null): string {
+    if (!st) return "";
+    return [
+      st.susp > 0 ? `停赛剩${st.susp}场` : "",
+      st.inj ? `伤停剩${st.inj.rest}场` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  // 球员卡里的整句提示
+  function riskLine(st: PStat | null): string {
+    if (!st) return "";
+    return [
+      st.susp > 0 ? `停赛中，还剩 ${st.susp} 场` : "",
+      st.near ? `再吃 1 张黄牌就停赛（已累计 ${st.yellows} 张）` : "",
+      st.inj
+        ? `伤停中：${st.inj.injury ?? "伤病"}，剩余缺阵 ${st.inj.rest} 场（恢复 ${st.inj.pct}%）`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("；");
+  }
+  // 提交前软提示：首发 + 替补里的状态异常者（只提示，不拦提交）
+  function lineupRisks(): string[] {
+    const keys = [...form.pos.map((p) => String(p.lid)), ...BENCH.map((i) => `b${i}`)];
+    const out: string[] = [];
+    for (const k of keys) {
+      const st = statOf(names[k]);
+      const why = statTip(st);
+      if (why) out.push(`${displayName(names[k]) || "未命名"}（${why}）`);
+    }
+    return out;
+  }
 
   function setPair(lid: number, pos: string, role: string, focus: string) {
     if (pairEa(pos, role, focus) == null) return;
@@ -458,6 +573,22 @@ export default function Tactics() {
   }, []);
 
   const sel = selected != null ? players.find((p) => p.lid === selected) ?? null : null;
+  const selRisk = sel ? riskLine(statOf(names[String(sel.lid)])) : "";
+  const risks = lineupRisks();
+  // 状态清单卡：停赛（本赛事）/ 黄牌临界 / 伤停（跨赛事）
+  const suspList = (status?.players ?? []).filter((p) => p.remaining > 0);
+  const nearList = (status?.players ?? []).filter(
+    (p) => p.remaining <= 0 && suspThreshold > 0 && p.yellows === suspThreshold - 1,
+  );
+  const injList = (status?.injuries ?? [])
+    .map((i) => ({
+      playerId: i.playerId,
+      playerName: i.playerName,
+      injuryName: i.injuryName,
+      rest: i.misses.filter((x) => x.status !== "finished").length,
+      pct: i.recoverPercent,
+    }))
+    .filter((i) => i.rest > 0);
 
   // 磁贴坐标：同位多人散开 + 三中卫回收
   const counts: Record<string, number> = {};
@@ -509,7 +640,8 @@ export default function Tactics() {
             {form.pos.map((p, i) => {
               const xy = [...POS_XY[p.position]];
               if (CENTRAL[p.position] && counts[p.position] > 1) {
-                xy[0] += SPREAD[counts[p.position]][seen[p.position] || 0];
+                const n = counts[p.position];
+                xy[0] += SPREAD[n][n - 1 - (seen[p.position] || 0)];
               }
               if (cbN >= 3) {
                 if (p.position === "RB" || p.position === "LB") xy[1] = 38;
@@ -518,15 +650,24 @@ export default function Tactics() {
               seen[p.position] = (seen[p.position] || 0) + 1;
               const pl = players[i];
               const nm = displayName(names[String(p.lid)]);
+              const st = statOf(names[String(p.lid)]);
+              const mark = st && st.susp > 0 ? (st.inj ? " both" : " susp") : st && st.inj ? " inj" : "";
+              const tip = statTip(st);
               return (
                 <button
                   key={p.lid}
-                  className={`tac-tile${selected === p.lid ? " sel" : ""}`}
+                  className={`tac-tile${selected === p.lid ? " sel" : ""}${mark}`}
                   style={{ left: `${xy[0]}%`, top: `${100 - xy[1]}%` }}
-                  title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}`}
-                  aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}`}
+                  title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}`}
+                  aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}${tip ? `，${tip}` : ""}`}
                   onClick={() => setSelected(selected === p.lid ? null : p.lid)}
                 >
+                  {st && (st.susp > 0 || st.inj) ? (
+                    <span className="tac-marks" aria-hidden="true">
+                      {st.susp > 0 ? <i className="tac-mk-card" /> : null}
+                      {st.inj ? <i className="tac-mk-cross" /> : null}
+                    </span>
+                  ) : null}
                   <b>{p.position}</b>
                   {nm ? <small>{nm}</small> : null}
                 </button>
@@ -546,6 +687,62 @@ export default function Tactics() {
               </button>
             </div>
           </section>
+
+          {/* 伤停与停赛：停赛按赛事算（可切赛事），伤停跨赛事；全部只提示不拦截 */}
+          {status && (status.tournaments.length > 0 || injList.length > 0) && (
+            <section className="card tac-status">
+              <h2>
+                伤停与停赛 <small>只提示不拦截</small>
+              </h2>
+              {status.tournaments.length > 0 && (
+                <label className="tac-status-pick">
+                  <span>停赛赛事口径（伤停跨赛事）</span>
+                  <select
+                    aria-label="停赛赛事"
+                    value={status.tournamentId ?? ""}
+                    onChange={(e) => {
+                      setStatusTid(Number(e.target.value));
+                      setSelected(null);
+                    }}
+                  >
+                    {status.tournaments.map((t) => (
+                      <option key={t.tournamentId} value={t.tournamentId}>
+                        {t.name}
+                        {t.default ? "（本队下一场）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {suspList.length === 0 && nearList.length === 0 && injList.length === 0 ? (
+                <p className="tac-hint">本队无异常。</p>
+              ) : (
+                <ul className="tac-status-list">
+                  {suspList.map((p) => (
+                    <li key={`s${p.playerId}`}>
+                      <span className="tac-status-name">{p.playerName}</span>
+                      <span className="susp-badge">停赛 剩{p.remaining}场</span>
+                    </li>
+                  ))}
+                  {nearList.map((p) => (
+                    <li key={`y${p.playerId}`}>
+                      <span className="tac-status-name">{p.playerName}</span>
+                      <span className="yc-badge">再1黄停赛（已{p.yellows}张）</span>
+                    </li>
+                  ))}
+                  {injList.map((i) => (
+                    <li key={`i${i.playerId}`}>
+                      <span className="tac-status-name">{i.playerName}</span>
+                      <span className="injury-badge">伤停</span>
+                      <span className="tac-status-note">
+                        {i.injuryName ?? "伤病"} · 剩{i.rest}场 · 恢复{i.pct}%
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
           <section className="card tac-import-panel">
             <div className="tac-import-row">
@@ -660,7 +857,7 @@ export default function Tactics() {
                       <option value="">（未选）</option>
                       {teamPlayers.map((p) => (
                         <option key={p.id} value={String(p.id)}>
-                          {p.number ? `#${p.number} ${p.name}` : p.name}
+                          {`${p.number ? `#${p.number} ${p.name}` : p.name}${optionSuffix(p.id)}`}
                         </option>
                       ))}
                     </select>
@@ -711,6 +908,7 @@ export default function Tactics() {
                       ))}
                   </select>
                 </label>
+                {selRisk && <p className="tac-warn">{selRisk}。仅作提示，不拦上场。</p>}
               </section>
             )}
           </div>
@@ -808,7 +1006,7 @@ export default function Tactics() {
                       <option value="">（未选）</option>
                       {teamPlayers.map((p) => (
                         <option key={p.id} value={String(p.id)}>
-                          {p.number ? `#${p.number} ${p.name}` : p.name}
+                          {`${p.number ? `#${p.number} ${p.name}` : p.name}${optionSuffix(p.id)}`}
                         </option>
                       ))}
                     </select>
@@ -868,6 +1066,11 @@ export default function Tactics() {
                 <p className="tac-hint">
                   该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
                   {formTitle(mine.form)}），再次提交将覆盖。
+                </p>
+              )}
+              {risks.length > 0 && (
+                <p className="tac-warn">
+                  名单里有状态异常的球员：{risks.join("、")}。仅作提示，仍可提交。
                 </p>
               )}
               {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}

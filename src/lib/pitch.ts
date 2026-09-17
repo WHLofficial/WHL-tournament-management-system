@@ -25,6 +25,8 @@ export const CENTRAL: Record<string, number | undefined> = { CB: 1, CDM: 1, CM: 
 
 // 阵型磁贴摆位：同位多人散开，三中卫时 RB/LB 回收到中圈高度、CB 上提。
 // 返回与 FormDef.pos 等长的坐标数组，供磁贴按序取用。
+// 同位多人的左右：阵型槽序是「右→左」枚举的（数据里 RB 在 LB 前、RM 在 LM 前、RW 在 LW 前，
+// 而游戏把 RW 画在右），所以槽序在前的人画在靠右，SPREAD 下标要倒着取。
 export function tilePositions(positions: string[]): [number, number][] {
   const counts: Record<string, number> = {};
   for (const p of positions) counts[p] = (counts[p] ?? 0) + 1;
@@ -33,7 +35,8 @@ export function tilePositions(positions: string[]): [number, number][] {
   return positions.map((position) => {
     const xy: [number, number] = [...POS_XY[position]];
     if (CENTRAL[position] && counts[position] > 1) {
-      xy[0] += SPREAD[counts[position]][seen[position] || 0];
+      const n = counts[position];
+      xy[0] += SPREAD[n][n - 1 - (seen[position] || 0)];
     }
     if (cbN >= 3) {
       if (position === "RB" || position === "LB") xy[1] = 38;
