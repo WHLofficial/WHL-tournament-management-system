@@ -595,14 +595,24 @@ button.btn-ghost:hover:not(:disabled) {
 .inj-tours { margin-left: 6px; font-size: 12px; color: #c2410c; }
 .inj-pending { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .inj-pending > li {
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
 }
-/* 待登记卡片整块可点：按下展开、再按下收起（登记面板本身不触发收起） */
+.inj-pending > li .injury-reg { margin-top: 10px; }
+/* 待登记卡片整块可点：按下展开、再按下收起（登记面板本身不触发收起）
+   两行排布：上行身份（伤情/球员/进度），下行比赛上下文，别挤成一行 */
 .inj-pending > li.clickable:hover { background: #f7faf7; }
 .inj-pending > li.open { background: #f7faf7; }
+.inj-pending-head { display: grid; gap: 5px; }
 .inj-pending-head.clickable { cursor: pointer; }
+.inj-pending-head .ipb-main { display: flex; align-items: center; gap: 8px; }
+.inj-pending-head .ipb-main .ir-status { margin-left: auto; }
+.inj-pending-head .ipb-sub {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  font-size: 12px; color: var(--muted);
+}
+.inj-pending-head .ipb-hint { font-size: 12px; color: #c2410c; }
 .inj-pending-caret {
-  margin-left: auto; color: var(--muted); font-size: 15px; line-height: 1;
+  color: var(--muted); font-size: 15px; line-height: 1;
   transition: transform 0.15s ease;
 }
 .inj-pending > li.open .inj-pending-caret { transform: rotate(90deg); }

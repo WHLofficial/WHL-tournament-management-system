@@ -265,7 +265,7 @@ export function AdminInjuries() {
               return (
                 <li key={e.eventId} className={`${canOpen ? "clickable" : ""}${open ? " open" : ""}`}>
                   <div
-                    className={`ev-line inj-pending-head${canOpen ? " clickable" : ""}`}
+                    className={`inj-pending-head${canOpen ? " clickable" : ""}`}
                     onClick={canOpen ? () => togglePending(e) : undefined}
                     role={canOpen ? "button" : undefined}
                     tabIndex={canOpen ? 0 : undefined}
@@ -281,26 +281,29 @@ export function AdminInjuries() {
                         : undefined
                     }
                   >
-                    <span className={`iw-sev${e.severity === "major" ? " iw-sev-major" : ""}`}>
-                      {e.severity === "major" ? "重伤" : "轻伤"}
-                    </span>
-                    <b>{e.playerName ?? "未记球员"}</b>
-                    <span className="muted">
-                      {e.teamName}
-                      {e.opponentName ? ` vs ${e.opponentName}` : ""}
-                    </span>
-                    <span className="muted">
-                      {e.tournamentName} · 第 {e.round} 轮
-                      {e.minute != null ? ` · 第 ${e.minute} 分钟` : ""}
-                    </span>
-                    <span className="ir-status">{MATCH_STATUS[e.matchStatus]}</span>
-                    {canOpen ? (
-                      <span className="inj-pending-caret" aria-hidden="true">
-                        ›
+                    <div className="ipb-main">
+                      <span className={`iw-sev${e.severity === "major" ? " iw-sev-major" : ""}`}>
+                        {e.severity === "major" ? "重伤" : "轻伤"}
                       </span>
-                    ) : (
-                      <span className="muted">该事件没记球员，先去赛程里补上球员</span>
-                    )}
+                      <b>{e.playerName ?? "未记球员"}</b>
+                      <span className="ir-status">{MATCH_STATUS[e.matchStatus]}</span>
+                      {canOpen && (
+                        <span className="inj-pending-caret" aria-hidden="true">
+                          ›
+                        </span>
+                      )}
+                    </div>
+                    <div className="ipb-sub">
+                      <span>
+                        {e.teamName}
+                        {e.opponentName ? ` vs ${e.opponentName}` : ""}
+                      </span>
+                      <span>
+                        {e.tournamentName} · 第 {e.round} 轮
+                        {e.minute != null ? ` · 第 ${e.minute} 分钟` : ""}
+                      </span>
+                    </div>
+                    {!canOpen && <div className="ipb-hint">该事件没记球员，先去赛程里补上球员</div>}
                   </div>
                   {open && (
                     <InjuryRegPanel
