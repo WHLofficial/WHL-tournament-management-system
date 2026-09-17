@@ -344,3 +344,51 @@ describe("伤停集中页接口", () => {
     expect(ev).toMatchObject({ playerId: null, playerName: null, severity: "major" });
   });
 });
+
+// 候选缺阵比赛：字段名必须是驼峰——D1 按 SQL 别名原样返列名，漏转会给出 undefined 的
+// matchId（前端所有复选框共用一个 undefined 状态，点一场就全选）与待定的队名。
+describe("缺阵候选比赛接口", () => {
+  it("跨赛事返回该队全部场次，字段是驼峰且带队名", async () => {
+    const { env } = freshEnv();
+    const body = (await (await get(env, "/api/admin/injuries/candidates?teamId=10")).json()) as {
+      candidates: {
+        matchId: number;
+        tournamentId: number;
+        tournamentName: string;
+        round: number;
+        stageKind: string;
+        status: string;
+        homeTeamName: string | null;
+        awayTeamName: string | null;
+      }[];
+    };
+    // 红队参赛：联赛第 1/2 轮（800/801）+ 冠军杯第 1 轮（810，对手未编排）
+    expect(body.candidates.map((x) => x.matchId)).toEqual([800, 801, 810]);
+    // 每行都必须有可用的 matchId 与队名，否则前端会退化成「待定 vs 待定」/ 全选
+    expect(body.candidates.every((x) => Number.isInteger(x.matchId) && x.matchId > 0)).toBe(true);
+    expect(body.candidates.every((x) => typeof x.tournamentName === "string" && x.tournamentName !== "")).toBe(true);
+    expect(body.candidates.every((x) => typeof x.homeTeamName === "string" && x.homeTeamName !== "")).toBe(true);
+    expect(body.candidates.find((x) => x.matchId === 800)).toMatchObject({
+      tournamentId: 7,
+      tournamentName: "联赛",
+      round: 1,
+      stageKind: "round_robin",
+      status: "finished",
+      homeTeamName: "红队",
+      awayTeamName: "蓝队",
+    });
+    // 未编排对手的场次（away_entry_id 为 NULL）也要能勾，不参与时的对手名允许为空
+    expect(body.candidates.find((x) => x.matchId === 810)).toMatchObject({
+      tournamentId: 9,
+      tournamentName: "冠军杯",
+      status: "pending",
+      homeTeamName: "红队",
+      awayTeamName: null,
+    });
+    // 客队身份参赛的场次（801 蓝队主场红队客场）也在列表里，且队名取自主客两侧各自的 entry
+    expect(body.candidates.find((x) => x.matchId === 801)).toMatchObject({
+      homeTeamName: "蓝队",
+      awayTeamName: "红队",
+    });
+  });
+});

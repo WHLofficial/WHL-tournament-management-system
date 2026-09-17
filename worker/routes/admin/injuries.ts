@@ -39,8 +39,8 @@ app.get("/candidates", async (c) => {
   const teamId = Number(c.req.query("teamId"));
   if (!Number.isInteger(teamId) || teamId <= 0)
     return c.json({ message: "缺少 teamId" }, 400);
-  const r = await listTeamMissCandidates(c.env.DB, teamId);
-  return c.json({ candidates: r.results ?? [] } satisfies InjuryCandidatesResp);
+  const candidates = await listTeamMissCandidates(c.env.DB, teamId);
+  return c.json({ candidates } satisfies InjuryCandidatesResp);
 });
 
 // POST /injuries：新建登记

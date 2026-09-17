@@ -48,7 +48,9 @@ export function InjuryRegPanel({
     let dead = false;
     api<InjuryCandidatesResp>(`/api/admin/injuries/candidates?teamId=${teamId}`)
       .then((b) => {
-        if (!dead) setCand(b.candidates);
+        // 只留下 id 合法的行：候选来自网络，缺 matchId 的坏行会让所有复选框共用一个
+        // undefined 状态——点一场就全被勾上，保存时还会把 undefined 发出去。
+        if (!dead) setCand((b.candidates ?? []).filter((x) => Number.isInteger(x.matchId)));
       })
       .catch((e: unknown) => {
         if (!dead) setLoadErr(e instanceof Error ? e.message : "加载候选比赛失败");

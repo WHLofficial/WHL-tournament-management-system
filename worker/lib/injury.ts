@@ -435,11 +435,13 @@ export function injuriesInWindow(
 
 // 某队可勾选为缺阵的比赛：跨赛事全量（含已完赛，支持补录），登记面板用。
 // away 可为 NULL 的未编排场用 LEFT JOIN 兜住（否则主队是它的场次会被漏掉）。
-export function listTeamMissCandidates(
+// 注意：D1 按 SQL 别名原样返列名，必须显式转到驼峰 DTO——漏转会让前端拿到 undefined
+// 的 matchId（所有复选框共用一个 undefined 状态，点一场就全选）。
+export async function listTeamMissCandidates(
   db: D1Database,
   teamId: number,
-): Promise<D1Result<InjuryMissCandidateDTO>> {
-  return db
+): Promise<InjuryMissCandidateDTO[]> {
+  const r = await db
     .prepare(
       `SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name,
               m.round, s.kind AS stage_kind, m.status,
@@ -455,7 +457,26 @@ export function listTeamMissCandidates(
        ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id`,
     )
     .bind(teamId, teamId)
-    .all<InjuryMissCandidateDTO>();
+    .all<{
+      match_id: number;
+      tournament_id: number;
+      tournament_name: string;
+      round: number;
+      stage_kind: "elim" | "round_robin" | "group";
+      status: "pending" | "live" | "finished";
+      home_team_name: string;
+      away_team_name: string | null;
+    }>();
+  return (r.results ?? []).map((x) => ({
+    matchId: x.match_id,
+    tournamentId: x.tournament_id,
+    tournamentName: x.tournament_name,
+    round: x.round,
+    stageKind: x.stage_kind,
+    status: x.status,
+    homeTeamName: x.home_team_name,
+    awayTeamName: x.away_team_name,
+  }));
 }
 
 // ---------- 组装（纯函数，可单测） ----------
