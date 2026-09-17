@@ -2626,6 +2626,7 @@ button.add-stage {
 }
 .pmt-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 .pmt-tab {
@@ -2648,6 +2649,20 @@ button.add-stage {
   flex-direction: column;
   gap: 10px;
   padding-top: 12px;
+}
+/* 「已提交阵容」Tab：标题行 + 说明，球场/磁贴复用 h2h-pitch 那套 */
+.pmt-mine-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+.pmt-mine-head span {
+  font-size: 12px;
+}
+.pmt-mine-meta {
+  margin: 0;
+  font-size: 12px;
 }
 .pmt-loading,
 .pmt-empty {

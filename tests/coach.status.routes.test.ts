@@ -1,10 +1,12 @@
 // 教练端伤停/停赛概览路由测试：兼容模式会话驱动真实 app（AUTH_DB 手建绑定关系）。
 // 钉死：停赛按赛事口径（切赛事重算）、伤停跨赛事不随赛事变、只回本队球员、
 // 草稿赛事不进列表也不当默认、未绑队回空结构、字段形状（防 D1 蛇形列名静默 undefined）。
+// 另含赛前回显契约（详情页「已提交阵容」Tab 靠它）：未开赛也能取到本队那份，对手那份拿不到。
 import { beforeAll, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
 import { hashPassword } from "../worker/lib/crypto";
+import { FORMS } from "../shared/tactics";
 import { applyMigrations, createTestD1, createTestKV } from "./d1";
 
 let userHash = "";
@@ -36,10 +38,19 @@ function freshEnv(opts: { bind?: number | null; noAuthDb?: boolean } = {}) {
     .run(1, "教练甲", "", userHash, "coach", 0, 0);
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (10, 1, '红队', '2026-01-01T00:00:00Z')").run();
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (11, 1, '蓝队', '2026-01-01T00:00:00Z')").run();
+  // 红队要凑满 11 人才能提交一份合法首发（104-111 只为阵容回显用例存在）
   for (const [pid, tid, name] of [
     [100, 10, "张三"],
     [101, 10, "李四"],
     [103, 10, "赵六"],
+    [104, 10, "队员104"],
+    [105, 10, "队员105"],
+    [106, 10, "队员106"],
+    [107, 10, "队员107"],
+    [108, 10, "队员108"],
+    [109, 10, "队员109"],
+    [110, 10, "队员110"],
+    [111, 10, "队员111"],
     [102, 11, "王五"],
   ] as const) {
     sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (?, ?, ?)").run(pid, tid, name);
@@ -98,6 +109,48 @@ function freshEnv(opts: { bind?: number | null; noAuthDb?: boolean } = {}) {
 
 const getStatus = (env: Record<string, unknown>, qs = "") =>
   app.request(`/api/coach/me/status${qs}`, { headers: { Cookie: "whl_session=tok-coach" } }, env);
+
+const getLineup = (env: Record<string, unknown>, mid: number) =>
+  app.request(`/api/coach/matches/${mid}/lineup`, { headers: { Cookie: "whl_session=tok-coach" } }, env);
+
+const submitLineup = (env: Record<string, unknown>, mid: number, body: unknown) =>
+  app.request(
+    `/api/coach/matches/${mid}/lineup`,
+    {
+      method: "PUT",
+      headers: { Cookie: "whl_session=tok-coach", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    env,
+  );
+
+const FORM = "433";
+// 合法首发：11 个位置按阵型位序配 11 名红队球员（validateLineupSlots 要 lid 与阵型对得上、人不重复）
+function lineupSlots() {
+  const def = FORMS.find((f) => f.value === FORM);
+  if (!def) throw new Error(`阵型 ${FORM} 不存在，测试数据要跟着改`);
+  const pids = [100, 101, 103, 104, 105, 106, 107, 108, 109, 110, 111];
+  return def.pos.map((p, i) => ({ lid: p.lid, position: p.position, player_id: pids[i] }));
+}
+
+type LineupBody = {
+  lineup: {
+    teamId: number;
+    teamName: string;
+    form: string;
+    submittedAt: string;
+    submittedBy: string | null;
+    starters: {
+      kind: "starter";
+      lid: number;
+      position: string;
+      playerId: number;
+      name: string | null;
+      number: string | null;
+    }[];
+    bench: { kind: "bench"; playerId: number; name: string | null; number: string | null }[];
+  } | null;
+};
 
 type StatusBody = {
   tournaments: { tournamentId: number; name: string; default: boolean }[];
@@ -196,5 +249,46 @@ describe("教练端伤停/停赛概览", () => {
     ]);
     // 伤停登记属于红队，蓝队看不到
     expect(b.injuries).toEqual([]);
+  });
+});
+
+// 详情页「已提交阵容」Tab 依赖的契约：赛前（pending）也要能取到本队那份，且拿不到对手那份。
+describe("教练端赛前回显本队阵容", () => {
+  it("未开赛的比赛：提交后能取到本队那份（阵型、11 首发、提交人）", async () => {
+    const { env } = freshEnv();
+    const mid = 802; // 联赛第 3 轮 红队 vs 蓝队，pending
+    expect(((await (await getLineup(env, mid)).json()) as LineupBody).lineup).toBeNull();
+
+    const res = await submitLineup(env, mid, { form: FORM, slots: lineupSlots() });
+    expect(res.status).toBe(200);
+
+    const l = ((await (await getLineup(env, mid)).json()) as LineupBody).lineup!;
+    expect(l.teamId).toBe(10);
+    expect(l.teamName).toBe("红队");
+    expect(l.form).toBe(FORM);
+    expect(l.submittedBy).toBe("教练甲");
+    expect(typeof l.submittedAt).toBe("string");
+    expect(l.starters.length).toBe(11);
+    expect(l.bench).toEqual([]);
+    // 字段形状：D1 蛇形列名漏转驼峰会静默 undefined，前端拿着 undefined 会渲染空磁贴
+    for (const s of l.starters) {
+      expect(Number.isInteger(s.playerId)).toBe(true);
+      expect(Number.isInteger(s.lid)).toBe(true);
+      expect(typeof s.position).toBe("string");
+      expect(typeof s.name).toBe("string");
+    }
+    // 阵型位序与 lid 一一对上（MiniPitch 按 lid 找位、按 position 摆磁贴）
+    const def = FORMS.find((f) => f.value === FORM)!;
+    expect(l.starters.map((s) => s.lid)).toEqual([...def.pos.map((p) => p.lid)].sort((a, b) => a - b));
+  });
+
+  it("只回自己那份：对手已提交、非本场球队、没绑队，一律 null", async () => {
+    await submitLineup(freshEnv().env, 802, { form: FORM, slots: lineupSlots() }); // 红队交了
+    // 蓝队看同一场：红队那份不能漏给它（自己没交 → null）
+    expect(((await (await getLineup(freshEnv({ bind: 11 }).env, 802)).json()) as LineupBody).lineup).toBeNull();
+    // 没绑队
+    expect(((await (await getLineup(freshEnv({ bind: null }).env, 802)).json()) as LineupBody).lineup).toBeNull();
+    // 本队不参赛的场次（冠军杯第 2 轮只有红队一侧）
+    expect(((await (await getLineup(freshEnv({ bind: 11 }).env, 811)).json()) as LineupBody).lineup).toBeNull();
   });
 });

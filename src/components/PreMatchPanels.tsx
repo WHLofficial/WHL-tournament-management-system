@@ -2,6 +2,7 @@
 // 数据全部是历史统计——「赛前不亮牌」产品决策不动，本场提交的阵容开赛才亮。
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { TeamLogo } from "./TeamLogo";
 import { CardIcon } from "./Cards";
 import { FORMS, POS_ZH, formTitle } from "../../shared/tactics";
@@ -14,8 +15,8 @@ import type {
   MatchAbsencesResp,
   MatchDTO,
   PublicAbsenceDTO,
+  TeamLineupDTO,
   TeamTacticsDTO,
-  TacticXIPlayerDTO,
 } from "../../shared/types";
 
 interface TopRow {
@@ -45,13 +46,16 @@ interface ToplistsData {
   cardsPlayers: CardsPlayerRow[];
 }
 
-type TabKey = "h2h" | "players" | "lineup";
+type TabKey = "h2h" | "players" | "lineup" | "mine";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "h2h", label: "交锋" },
   { key: "players", label: "球员" },
   { key: "lineup", label: "阵容" },
 ];
+
+// 本队教练已提交本场阵容时，它排在最前并默认选中（只有本队账号看得到）
+const MINE_TAB: { key: TabKey; label: string } = { key: "mine", label: "已提交阵容" };
 
 // 挂载即拉一次、不进 30 秒轮询；失败静默（非关键内容不挡页面）
 function useFetch<T>(url: string | null): { data: T | null; fail: boolean } {
@@ -83,25 +87,35 @@ export function PreMatchTabs({
   match: MatchDTO;
   absences?: MatchAbsencesResp | null;
 }) {
-  const [tab, setTab] = useState<TabKey>("h2h");
+  // 本队教练赛前回显自己那份：只有绑了队的账号才去问教练端点（公开端点不读登录态，教练端点无缓存且只回本队）
+  const { user } = useAuth();
+  const { data: mine } = useFetch<{ lineup: TeamLineupDTO | null }>(
+    user?.teamId != null ? `/api/coach/matches/${match.id}/lineup` : null,
+  );
+  const myLineup = mine?.lineup ?? null;
+  // 已提交时它排第一个并默认选中；用户点过其它 Tab 之后就不再自动切
+  const [tab, setTab] = useState<TabKey | null>(null);
+  const cur = tab ?? (myLineup ? "mine" : "h2h");
+  const tabs = myLineup ? [MINE_TAB, ...TABS] : TABS;
   return (
     <div className="pmt-wrap">
       <div className="pmt-tabs" role="tablist">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
-            className={`pmt-tab${tab === t.key ? " on" : ""}`}
+            className={`pmt-tab${cur === t.key ? " on" : ""}`}
             onClick={() => setTab(t.key)}
             role="tab"
-            aria-selected={tab === t.key}
+            aria-selected={cur === t.key}
           >
             {t.label}
           </button>
         ))}
       </div>
-      {tab === "h2h" && <H2HPanel tid={tid} match={match} />}
-      {tab === "players" && <PlayersPanel tid={tid} match={match} absences={absences} />}
-      {tab === "lineup" && <LineupPanel tid={tid} match={match} />}
+      {cur === "mine" && myLineup && <MyLineupPanel l={myLineup} />}
+      {cur === "h2h" && <H2HPanel tid={tid} match={match} />}
+      {cur === "players" && <PlayersPanel tid={tid} match={match} absences={absences} />}
+      {cur === "lineup" && <LineupPanel tid={tid} match={match} />}
     </div>
   );
 }
@@ -362,6 +376,34 @@ function PlayerCol({
   );
 }
 
+// 本场已提交的阵容（教练视角）：赛前只回本队那份，对手阵容既不显示也不提示
+function MyLineupPanel({ l }: { l: TeamLineupDTO }) {
+  const slots: Map<number, MiniSlot> = new Map(
+    l.starters.map((s) => [s.lid, { name: s.name, number: s.number }]),
+  );
+  return (
+    <div className="pmt-sec">
+      <p className="pmt-mine-head">
+        <b>
+          {l.teamName} · {formTitle(l.form)}
+        </b>
+        <span className="muted">这是你提交的本场阵容，赛前只有本队账号能看到，开赛后公开</span>
+      </p>
+      <MiniPitch form={l.form} slots={slots} />
+      {l.bench.length > 0 && (
+        <p className="lu-bench">
+          替补：
+          {l.bench.map((b) => `${b.number ? `#${b.number} ` : ""}${b.name ?? "已离队"}`).join("、")}
+        </p>
+      )}
+      <p className="muted pmt-mine-meta">
+        提交于 {l.submittedAt.slice(0, 16).replace("T", " ")}
+        {l.submittedBy ? ` · ${l.submittedBy}` : ""}
+      </p>
+    </div>
+  );
+}
+
 // ---------- 阵容 ----------
 
 function LineupPanel({ tid, match }: { tid: number; match: MatchDTO }) {
@@ -407,7 +449,10 @@ function TacticsCol({ t }: { t: TeamTacticsDTO }) {
   );
 }
 
-function MiniPitch({ form, slots }: { form: string; slots: Map<number, TacticXIPlayerDTO> }) {
+// starts 只有历史统计（cross-match 常用阵型）才有，本场提交的阵容不传
+type MiniSlot = { name: string | null; number: string | null; starts?: number };
+
+function MiniPitch({ form, slots }: { form: string; slots: Map<number, MiniSlot> }) {
   const def = FORMS.find((f) => f.value === form);
   if (!def) return null;
   const xys = tilePositions(def.pos.map((p) => p.position));
@@ -423,7 +468,11 @@ function MiniPitch({ form, slots }: { form: string; slots: Map<number, TacticXIP
             key={p.lid}
             className="h2h-tile"
             style={{ left: `${x}%`, top: `${100 - y}%` }}
-            title={pl ? `${pl.name ?? "已离队"} 首发×${pl.starts}` : `${posZh}（窗口内无人首发）`}
+            title={
+              pl
+                ? `${pl.name ?? "已离队"}${pl.starts != null ? ` 首发×${pl.starts}` : ""}`
+                : `${posZh}（窗口内无人首发）`
+            }
           >
             <b>{p.position}</b>
             {pl ? (
@@ -432,7 +481,7 @@ function MiniPitch({ form, slots }: { form: string; slots: Map<number, TacticXIP
                   {pl.number ? `#${pl.number} ` : ""}
                   {pl.name ?? "已离队"}
                 </small>
-                <i className="h2h-tile-n">×{pl.starts}</i>
+                {pl.starts != null && <i className="h2h-tile-n">×{pl.starts}</i>}
               </>
             ) : (
               <small className="h2h-tile-none">{posZh}</small>
