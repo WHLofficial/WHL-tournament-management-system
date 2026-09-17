@@ -272,12 +272,13 @@ export default function Tactics() {
     if (!v || !Number.isInteger(pid) || pid <= 0) return null;
     return statOfPid(pid);
   }
-  // 下拉后缀：文案与优先级沿用录入端（停赛 > 黄牌临界 > 伤停）
+  // 下拉后缀：文案与优先级沿用录入端（停赛 > 黄牌临界 > 伤停），
+  // 图标换成与磁贴角标同义的 🟥红牌 / ❌红十字（全站红牌一律 🟥）
   function optionSuffix(pid: number): string {
     const st = statOfPid(pid);
     if (!st) return "";
-    const injSuffix = st.inj ? `（🩹伤停 剩${st.inj.rest}场）` : "";
-    if (st.susp > 0) return `（⛔停赛 剩${st.susp}场）${injSuffix}`;
+    const injSuffix = st.inj ? `（❌伤停 剩${st.inj.rest}场）` : "";
+    if (st.susp > 0) return `（🟥停赛 剩${st.susp}场）${injSuffix}`;
     if (st.near) return `（⚠️再${suspThreshold - st.yellows}黄停赛）${injSuffix}`;
     return injSuffix;
   }
