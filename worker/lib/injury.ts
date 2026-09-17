@@ -3,12 +3,13 @@
 // 「伤愈进度」= 已完赛的缺阵场 / 总勾选场（勾了 0 场视为已伤愈，仅存档）。
 // 删事件、改勾选、补录后下次计算自动生效，无反冲逻辑。
 import type {
+  InjuryMissCandidateDTO,
   InjuryMissDTO,
   InjurySeverity,
   InjuryStatusDTO,
   MatchEventType,
 } from "../../shared/types";
-import { findInjuryCatalog, severityOfEventType } from "../../shared/injuries";
+import { severityOfEventType } from "../../shared/injuries";
 
 interface InjuryRow {
   id: number;
@@ -260,6 +261,31 @@ export async function injuriesInWindow(
   }));
 }
 
+// 某队可勾选为缺阵的比赛：跨赛事全量（含已完赛，支持补录），登记面板用。
+// away 可为 NULL 的未编排场用 LEFT JOIN 兜住（否则主队是它的场次会被漏掉）。
+export function listTeamMissCandidates(
+  db: D1Database,
+  teamId: number,
+): Promise<D1Result<InjuryMissCandidateDTO>> {
+  return db
+    .prepare(
+      `SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name,
+              m.round, s.kind AS stage_kind, m.status,
+              eh.name AS home_team_name, ea.name AS away_team_name
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t2 ON t2.id = s.tournament_id
+       JOIN entry e1 ON e1.id = m.home_entry_id
+       JOIN team eh ON eh.id = e1.team_id
+       LEFT JOIN entry e2 ON e2.id = m.away_entry_id
+       LEFT JOIN team ea ON ea.id = e2.team_id
+       WHERE e1.team_id = ? OR e2.team_id = ?
+       ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id`,
+    )
+    .bind(teamId, teamId)
+    .all<InjuryMissCandidateDTO>();
+}
+
 // ---------- 组装（纯函数，可单测） ----------
 
 function missesForTeams(db: D1Database, teamIds: number[]): Promise<D1Result<MissRow>> {
@@ -390,13 +416,5 @@ function toPublic(inj: AssembledInjury): PublicAbsenceDTO {
   };
 }
 
-// 预勾选建议：登记弹窗按伤病名库 suggestMiss 预选接下来 N 场 pending 比赛
-export function suggestMissIds(
-  upcomingPendingMatchIds: number[],
-  catalogName: string | null
-): number[] {
-  if (!catalogName) return [];
-  const item = findInjuryCatalog(catalogName);
-  if (!item) return [];
-  return upcomingPendingMatchIds.slice(0, item.suggestMiss);
-}
+// 预勾选建议实现放在 shared（管理端 UI 也要用），此处转出口保持既有引用不变
+export { suggestMissIds } from "../../shared/injuries";

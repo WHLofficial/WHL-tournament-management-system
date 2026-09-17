@@ -1,6 +1,9 @@
 // 前后端共享的类型与常量。
 import type { InjurySeverity } from "./injuries";
 
+// 伤病档位定义在 shared/injuries.ts（与伤病名库同文件，便于一处维护），这里转出
+export type { InjurySeverity };
+
 export type Role = "coach" | "admin" | "superadmin";
 export type TournamentStatus = "draft" | "registering" | "running" | "archived";
 export type TournamentFormat = "single_elim" | "round_robin" | "group_knockout" | "custom";
@@ -178,6 +181,16 @@ export interface InjuryStatusDTO {
 
 export interface InjuryListResp {
   injuries: InjuryStatusDTO[];
+}
+
+// 可勾选为「缺阵」的比赛：该队跨赛事全量（含已完赛，支持补录）
+export interface InjuryMissCandidateDTO extends InjuryMissDTO {
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+}
+
+export interface InjuryCandidatesResp {
+  candidates: InjuryMissCandidateDTO[];
 }
 
 // ---------- 配置（存 config_json 的形状） ----------

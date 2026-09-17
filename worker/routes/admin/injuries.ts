@@ -4,9 +4,9 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { auditStmt } from "../../lib/audit";
-import { listTeamInjuries } from "../../lib/injury";
+import { listTeamInjuries, listTeamMissCandidates } from "../../lib/injury";
 import { findInjuryCatalog, severityOfEventType } from "../../../shared/injuries";
-import type { InjuryStatusDTO } from "../../../shared/types";
+import type { InjuryCandidatesResp, InjuryStatusDTO } from "../../../shared/types";
 
 const app = new Hono<AppEnv>();
 
@@ -17,6 +17,15 @@ app.get("/", async (c) => {
     return c.json({ message: "缺少 teamId" }, 400);
   const injuries = await listTeamInjuries(c.env.DB, teamId);
   return c.json({ injuries } satisfies { injuries: InjuryStatusDTO[] });
+});
+
+// GET /injuries/candidates?teamId=：该队可勾选为缺阵的比赛（跨赛事、含已完赛）
+app.get("/candidates", async (c) => {
+  const teamId = Number(c.req.query("teamId"));
+  if (!Number.isInteger(teamId) || teamId <= 0)
+    return c.json({ message: "缺少 teamId" }, 400);
+  const r = await listTeamMissCandidates(c.env.DB, teamId);
+  return c.json({ candidates: r.results ?? [] } satisfies InjuryCandidatesResp);
 });
 
 // POST /injuries：新建登记

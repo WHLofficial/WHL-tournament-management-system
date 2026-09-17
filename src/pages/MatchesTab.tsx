@@ -4,9 +4,12 @@ import { MatchScore, computeAgg } from "../components/MatchScore";
 import { TeamLogo } from "../components/TeamLogo";
 import { EventDot } from "../components/Cards";
 import { LineupGrid } from "../components/LineupView";
+import { InjuryRegPanel } from "../components/InjuryRegPanel";
 import type {
   AuditEntryDTO,
   EntryDTO,
+  InjuryListResp,
+  InjuryStatusDTO,
   MatchDTO,
   MatchEventDTO,
   MatchEventType,
@@ -71,6 +74,11 @@ export default function MatchesTab({
   // 停赛状态（纯派生，事件增删后随 tick 重拉）
   const [susp, setSusp] = useState<Map<number, SuspensionStatusDTO>>(new Map());
   const [suspCfg, setSuspCfg] = useState<SuspensionConfig | null>(null);
+  // 伤停数据（按队缓存）：面板打开才拉；登记/撤销后 bump injuryTick 重拉
+  const [injuriesByTeam, setInjuriesByTeam] = useState<Map<number, InjuryStatusDTO[]>>(
+    new Map(),
+  );
+  const [injuryTick, setInjuryTick] = useState(0);
   // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 第一个轮）
   const [selRoundRaw, setSelRoundRaw] = useState<string | null>(null);
 
@@ -145,6 +153,34 @@ export default function MatchesTab({
     };
   }, [matches, playersCache, entryById]);
 
+  // 伤停登记（按队拉）：与停赛同节奏——面板打开才拉，登记/撤销后随 injuryTick 重拉
+  useEffect(() => {
+    if (!panelActive || !matches) return;
+    const ids = new Set<number>();
+    for (const m of matches) {
+      for (const eid of [m.homeEntryId, m.awayEntryId]) {
+        const tid = eid != null ? entryById.get(eid)?.teamId : undefined;
+        if (tid != null) ids.add(tid);
+      }
+    }
+    if (ids.size === 0) return;
+    let alive = true;
+    Promise.all(
+      [...ids].map((tid) =>
+        api<InjuryListResp>(`/api/admin/injuries?teamId=${tid}`).then(
+          (b) => [tid, b.injuries] as const,
+        ),
+      ),
+    )
+      .then((pairs) => {
+        if (alive) setInjuriesByTeam(new Map(pairs));
+      })
+      .catch(() => {}); // 拉不到就不做伤停标记，录入流程不受影响
+    return () => {
+      alive = false;
+    };
+  }, [panelActive, matches, entryById, injuryTick]);
+
   const playersOf = (entryId: number | null): PlayerDTO[] =>
     entryId == null
       ? []
@@ -155,6 +191,12 @@ export default function MatchesTab({
       for (const p of list) m.set(p.id, p.name);
     return m;
   }, [playersCache]);
+
+  // 某 entry 所属队的伤停登记（登记面板判存在、球员下拉加伤停标记共用）
+  const injuriesOf = (entryId: number | null): InjuryStatusDTO[] => {
+    const tid = entryId == null ? undefined : entryById.get(entryId)?.teamId;
+    return tid == null ? [] : (injuriesByTeam.get(tid) ?? []);
+  };
 
   const act = async (
     fn: () => Promise<string | null>,
@@ -253,6 +295,8 @@ export default function MatchesTab({
       busy={busy}
       act={act}
       tick={tick}
+      injuriesOf={injuriesOf}
+      onInjured={() => setInjuryTick((t) => t + 1)}
       panelOpen={openPanel === m.id}
       togglePanel={() => setOpenPanel(openPanel === m.id ? null : m.id)}
     />
@@ -329,6 +373,8 @@ function MatchRow({
   busy,
   act,
   tick,
+  injuriesOf,
+  onInjured,
   panelOpen,
   togglePanel,
 }: {
@@ -344,6 +390,8 @@ function MatchRow({
   busy: boolean;
   act: Act;
   tick: number;
+  injuriesOf: (entryId: number | null) => InjuryStatusDTO[];
+  onInjured: () => void;
   panelOpen: boolean;
   togglePanel: () => void;
 }) {
@@ -405,6 +453,8 @@ function MatchRow({
           busy={busy}
           act={act}
           tick={tick}
+          injuriesOf={injuriesOf}
+          onInjured={onInjured}
           togglePanel={togglePanel}
         />
       )}
@@ -490,6 +540,8 @@ function MatchPanel({
   busy,
   act,
   tick,
+  injuriesOf,
+  onInjured,
   togglePanel,
 }: {
   match: MatchDTO;
@@ -503,6 +555,8 @@ function MatchPanel({
   busy: boolean;
   act: Act;
   tick: number;
+  injuriesOf: (entryId: number | null) => InjuryStatusDTO[];
+  onInjured: () => void;
   togglePanel: () => void;
 }) {
   const homeName = m.homeTeamName ?? "主队";
@@ -565,6 +619,7 @@ function MatchPanel({
             act={act}
             editEv={editing}
             onCancelEdit={() => setEditing(null)}
+            injuriesOf={injuriesOf}
           />
           <EventList
             matchId={m.id}
@@ -575,6 +630,8 @@ function MatchPanel({
             tick={tick}
             editingId={editing?.id ?? null}
             onEdit={setEditing}
+            injuriesOf={injuriesOf}
+            onInjured={onInjured}
           />
         </>
       )}
@@ -994,6 +1051,7 @@ function EventForm({
   act,
   editEv,
   onCancelEdit,
+  injuriesOf,
 }: {
   match: MatchDTO;
   homePlayers: PlayerDTO[];
@@ -1004,6 +1062,7 @@ function EventForm({
   act: Act;
   editEv: MatchEventDTO | null;
   onCancelEdit: () => void;
+  injuriesOf: (entryId: number | null) => InjuryStatusDTO[];
 }) {
   const [type, setType] = useState<Exclude<MatchEventDTO["type"], "red_2y">>("goal");
   const [side, setSide] = useState<"home" | "away">("home");
@@ -1047,14 +1106,30 @@ function EventForm({
   const yellowWarn =
     sel && !suspWarn && suspThreshold > 0 && sel.yellows === suspThreshold - 1;
 
+  // 伤停中 = 勾了缺阵场且还有没打完的（已伤愈的登记不再提示）
+  const sideInjuries = injuriesOf(side === "home" ? m.homeEntryId : m.awayEntryId).filter(
+    (i) => i.misses.some((x) => x.status !== "finished"),
+  );
+  const selInj =
+    playerId === ""
+      ? undefined
+      : sideInjuries.find((i) => i.playerId === Number(playerId));
+  const injRest = selInj
+    ? selInj.misses.filter((x) => x.status !== "finished").length
+    : 0;
+
   // 下拉选项文本：停赛球员与临界黄牌球员加后缀（option 是纯文本，用符号标记）
   const optionSuffix = (pid: number): string => {
     const s = susp.get(pid);
-    if (!s) return "";
-    if (s.remaining > 0) return `（⛔停赛 剩${s.remaining}场）`;
+    const inj = sideInjuries.find((i) => i.playerId === pid);
+    const injSuffix = inj
+      ? `（🩹伤停 剩${inj.misses.filter((x) => x.status !== "finished").length}场）`
+      : "";
+    if (!s) return injSuffix;
+    if (s.remaining > 0) return `（⛔停赛 剩${s.remaining}场）${injSuffix}`;
     if (suspThreshold > 0 && s.yellows === suspThreshold - 1)
-      return `（⚠️再${suspThreshold - s.yellows}黄停赛）`;
-    return "";
+      return `（⚠️再${suspThreshold - s.yellows}黄停赛）${injSuffix}`;
+    return injSuffix;
   };
 
   return (
@@ -1190,6 +1265,12 @@ function EventForm({
             ⚠ {sel.playerName} 已累积 {sel.yellows} 张黄牌，再吃 1 张将自动停赛 1 场
           </span>
         )}
+        {selInj && (
+          <span className="warn-line injury-warn">
+            ⚠ {selInj.playerName} 伤停中（{selInj.injuryName ?? "伤情未登记"}，还有 {injRest}{" "}
+            场缺阵未走完，伤愈进度 {selInj.recoverPercent}%）——软约束不拦截，请确认该球员是否合规出场
+          </span>
+        )}
       </form>
     </>
   );
@@ -1204,6 +1285,8 @@ function EventList({
   tick,
   editingId,
   onEdit,
+  injuriesOf,
+  onInjured,
 }: {
   matchId: number;
   entryById: Map<number, EntryDTO>;
@@ -1213,9 +1296,13 @@ function EventList({
   tick: number;
   editingId: number | null;
   onEdit: (ev: MatchEventDTO | null) => void;
+  injuriesOf: (entryId: number | null) => InjuryStatusDTO[];
+  onInjured: () => void;
 }) {
   const [events, setEvents] = useState<MatchEventDTO[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // 展开着登记面板的事件（一次一个）
+  const [regOpen, setRegOpen] = useState<number | null>(null);
 
   useEffect(() => {
     api<{ events: MatchEventDTO[] }>(`/api/admin/matches/${matchId}/events`)
@@ -1238,14 +1325,35 @@ function EventList({
           ev.assistPlayerId != null
             ? playerById.get(ev.assistPlayerId)
             : undefined;
+        const isInjury = ev.type === "injury_minor" || ev.type === "injury_major";
+        const teamId = entryById.get(ev.entryId)?.teamId;
+        const reg = isInjury
+          ? injuriesOf(ev.entryId ?? null).find((i) => i.eventId === ev.id)
+          : undefined;
         return (
           <li key={ev.id}>
+            <div className="ev-line">
             <EventDot type={ev.type} />
             {ev.minute !== null && <span className="ev-minute">{ev.minute}′</span>}
             <span>{EVENT_NAME[ev.type]}</span>
             {who && <span className="ev-player">{who}</span>}
             {assist && <span className="ev-assist">（助攻 {assist}）</span>}
             <span className="ev-team">{name}</span>
+            {isInjury && ev.playerId == null && (
+              <span className="warn-line yellow-warn">未记球员，补上球员后才能登记伤停</span>
+            )}
+            {isInjury && (
+              <button
+                className="btn btn-sm"
+                type="button"
+                disabled={busy || ev.playerId == null || teamId == null}
+                onClick={() => setRegOpen(regOpen === ev.id ? null : ev.id)}
+              >
+                {reg
+                  ? `伤停登记（缺阵 ${reg.misses.length} 场）`
+                  : "登记伤停"}
+              </button>
+            )}
             {ev.type !== "red_2y" && (
               <button
                 className="btn btn-sm"
@@ -1265,6 +1373,7 @@ function EventList({
                   });
                   // 删的就是正在编辑的事件时，退出编辑态避免表单挂着已不存在的事件
                   if (ev.id === editingId) onEdit(null);
+                  if (ev.id === regOpen) setRegOpen(null);
                   return null;
                 }, {
                   light: true,
@@ -1274,6 +1383,19 @@ function EventList({
             >
               删除
             </button>
+            </div>
+            {isInjury && regOpen === ev.id && teamId != null && (
+              <InjuryRegPanel
+                eventId={ev.id}
+                teamId={teamId}
+                severity={ev.type === "injury_major" ? "major" : "minor"}
+                playerName={who ?? playerById.get(ev.playerId ?? -1) ?? "该球员"}
+                existing={reg}
+                busy={busy}
+                act={act}
+                onSaved={onInjured}
+              />
+            )}
           </li>
         );
       })}

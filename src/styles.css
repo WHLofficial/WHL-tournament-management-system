@@ -521,7 +521,9 @@ button.btn-ghost:hover:not(:disabled) {
 }
 .error-text { color: #dc2626; font-size: 13px; }
 .event-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.event-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+/* li 内可挂伤停登记面板，故用栅格：首行布局交给 .ev-line */
+.event-list li { display: grid; gap: 6px; font-size: 13px; }
+.event-list li .ev-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ev-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .ev-goal { background: var(--pitch); }
 .ev-pen_goal { background: var(--pitch); }
@@ -555,6 +557,25 @@ button.btn-ghost:hover:not(:disabled) {
 .warn-line { flex-basis: 100%; }
 .susp-warn { color: #c92a2a; font-size: 13px; font-weight: 600; }
 .yellow-warn { color: #b45309; font-size: 13px; }
+.injury-warn { color: #c2410c; font-size: 13px; font-weight: 600; }
+
+/* 伤停登记面板（挂在伤病事件行下，跨赛事勾选缺阵场次） */
+.injury-reg {
+  display: grid; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--line, #e5e7eb);
+  border-left: 3px solid #f97316; border-radius: 8px;
+  background: var(--panel, #fff);
+}
+.injury-reg-head { font-size: 12px; color: var(--muted); }
+.injury-reg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.injury-reg-group { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.injury-reg-matches { display: grid; gap: 3px; max-height: 15em; overflow: auto; }
+.injury-reg-matches label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; cursor: pointer;
+}
+.injury-reg-matches .ir-status { color: var(--muted); font-size: 12px; }
+.injury-reg-progress { font-size: 12px; color: #c2410c; font-weight: 600; }
 .susp-badge {
   margin-left: 6px;
   font-size: 11px;

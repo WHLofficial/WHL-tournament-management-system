@@ -44,3 +44,14 @@ export function findInjuryCatalog(name: string): InjuryCatalogItem | null {
 export function severityOfEventType(type: "injury_minor" | "injury_major"): InjurySeverity {
   return type === "injury_minor" ? "minor" : "major";
 }
+
+// 预勾选建议：按伤病名库的 suggestMiss 预选接下来 N 场（仅辅助，管理端可改）
+export function suggestMissIds(
+  upcomingPendingMatchIds: number[],
+  catalogName: string | null,
+): number[] {
+  if (!catalogName) return [];
+  const item = findInjuryCatalog(catalogName);
+  if (!item) return [];
+  return upcomingPendingMatchIds.slice(0, item.suggestMiss);
+}

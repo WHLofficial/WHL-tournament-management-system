@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 import { TeamLogo } from "../components/TeamLogo";
-import type { PlayerDTO } from "../../shared/types";
+import { InjuryRegPanel } from "../components/InjuryRegPanel";
+import type { InjuryListResp, InjuryStatusDTO, PlayerDTO } from "../../shared/types";
 
 interface TeamDetail {
   team: { id: number; name: string; logoUrl: string | null };
@@ -54,6 +55,11 @@ export function TeamDetailPage() {
   const [codes, setCodes] = useState<AuthCodeRow[]>([]);
   const [newCode, setNewCode] = useState<string | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
+  // 伤停登记（该队全量，含已伤愈的存档记录）
+  const [injuries, setInjuries] = useState<InjuryStatusDTO[]>([]);
+  const [injOpen, setInjOpen] = useState<number | null>(null);
+  const [injBusy, setInjBusy] = useState(false);
+  const [injMsg, setInjMsg] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [playerName, setPlayerName] = useState("");
   const [playerNumber, setPlayerNumber] = useState("");
@@ -69,19 +75,34 @@ export function TeamDetailPage() {
       const d = await api<TeamDetail>(`/api/admin/teams/${teamId}`);
       setData(d);
       setName(d.team.name);
-      const [cs, ms] = await Promise.all([
+      const [cs, ms, inj] = await Promise.all([
         api<{ codes: AuthCodeRow[] }>(`/api/admin/teams/${teamId}/auth-codes`),
         api<{ members: MemberRow[] }>(`/api/admin/teams/${teamId}/members`),
+        api<InjuryListResp>(`/api/admin/injuries?teamId=${teamId}`),
       ]);
       setCodes(cs.codes);
       setMembers(ms.members);
+      setInjuries(inj.injuries);
     } catch {
       setMissing(true);
     }
   }
 
-  async function genCode() {
+  // 伤停登记操作用：与比赛页同款 busy/提示语义
+  async function injAct(fn: () => Promise<string | null>) {
+    setInjBusy(true);
+    setInjMsg(null);
     try {
+      const note = await fn();
+      if (note) setInjMsg(note);
+    } catch (e) {
+      setInjMsg(e instanceof Error ? e.message : "操作失败");
+    } finally {
+      setInjBusy(false);
+    }
+  }
+
+  async function genCode() {    try {
       const r = await api<{ code: string }>(`/api/admin/teams/${teamId}/auth-codes`, {
         method: "POST",
         body: { expiresInHours: 24 },
@@ -318,6 +339,80 @@ export function TeamDetailPage() {
             第 {s.line} 行：{s.reason}
           </p>
         ))}
+      </div>
+
+      <div className="card">
+        <h3>伤停登记</h3>
+        <p className="muted">
+          登记挂在比赛页的伤病事件上（一条伤病事件对应一条登记）。这里可以改伤名、备注、缺阵场次，或者撤销登记。
+        </p>
+        {injMsg && <p className="banner">{injMsg}</p>}
+        {injuries.length === 0 ? (
+          <p className="muted">还没有伤停登记。</p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>球员</th>
+                <th>伤情</th>
+                <th>受伤那一场</th>
+                <th>缺阵</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {injuries.map((inj) => {
+                const done = inj.misses.filter((x) => x.status === "finished").length;
+                const rest = inj.misses.length - done;
+                return (
+                  <Fragment key={inj.id}>
+                    <tr>
+                      <td>{inj.playerName}</td>
+                      <td>
+                        {inj.severity === "minor" ? "轻伤" : "重伤"}
+                        {inj.injuryName ? ` · ${inj.injuryName}` : ""}
+                        {inj.note ? `（${inj.note}）` : ""}
+                      </td>
+                      <td>{inj.fromLabel}</td>
+                      <td>
+                        {inj.misses.length === 0
+                          ? "未勾缺阵场次"
+                          : rest > 0
+                            ? `还缺 ${rest} 场 / 共 ${inj.misses.length} 场（伤愈 ${inj.recoverPercent}%）`
+                            : `缺阵 ${inj.misses.length} 场已走完（已伤愈）`}
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={injBusy}
+                          onClick={() => setInjOpen(injOpen === inj.id ? null : inj.id)}
+                        >
+                          {injOpen === inj.id ? "收起" : "改登记"}
+                        </button>
+                      </td>
+                    </tr>
+                    {injOpen === inj.id && (
+                      <tr>
+                        <td colSpan={5}>
+                          <InjuryRegPanel
+                            eventId={null}
+                            teamId={inj.teamId}
+                            severity={inj.severity}
+                            playerName={inj.playerName}
+                            existing={inj}
+                            busy={injBusy}
+                            act={injAct}
+                            onSaved={() => void reload()}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="card">
