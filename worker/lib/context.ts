@@ -359,12 +359,14 @@ export interface ScorerTotal {
   name: string;
   teamName: string;
   goals: number;
+  penGoals: number; // 其中点球进球（并列时少者排前，与榜单口径一致）
 }
 
 export async function fetchScorerTotals(db: D1Database, tid: number): Promise<ScorerTotal[]> {
   const res = await db
     .prepare(
-      `SELECT me.player_id, p.name, tm.name AS team_name, COUNT(*) AS goals
+      `SELECT me.player_id, p.name, tm.name AS team_name, COUNT(*) AS goals,
+              SUM(CASE WHEN me.type = 'pen_goal' THEN 1 ELSE 0 END) AS pen_goals
        FROM match_event me
        JOIN match m ON m.id = me.match_id
        JOIN stage s ON s.id = m.stage_id
@@ -372,33 +374,55 @@ export async function fetchScorerTotals(db: D1Database, tid: number): Promise<Sc
        JOIN entry e ON e.id = me.entry_id
        JOIN team tm ON tm.id = e.team_id
        WHERE s.tournament_id = ? AND me.type IN ('goal', 'pen_goal') AND me.player_id IS NOT NULL
-       GROUP BY me.player_id
-       ORDER BY goals DESC, p.name ASC`
+       GROUP BY me.player_id`
     )
     .bind(tid)
-    .all<{ player_id: number; name: string; team_name: string; goals: number }>();
-  return (res.results ?? []).map((r) => ({
-    playerId: r.player_id,
-    name: r.name,
-    teamName: r.team_name,
-    goals: r.goals,
-  }));
+    .all<{
+      player_id: number;
+      name: string;
+      team_name: string;
+      goals: number;
+      pen_goals: number;
+    }>();
+  // 次序交给 compareScorers：库里没有中文排序规则，SQL 端排姓名会和赛前榜的 JS 排序不一致
+  return (res.results ?? [])
+    .map((r) => ({
+      playerId: r.player_id,
+      name: r.name,
+      teamName: r.team_name,
+      goals: r.goals,
+      penGoals: r.pen_goals,
+    }))
+    .sort(compareScorers);
+}
+
+// 射手榜并列口径：进球多的在前；同球数点球少的在前；仍并列按姓名。榜单、战报、快讯共用。
+export function compareScorers(
+  a: { goals: number; penGoals: number; name: string },
+  b: { goals: number; penGoals: number; name: string }
+): number {
+  return b.goals - a.goals || a.penGoals - b.penGoals || a.name.localeCompare(b.name, "zh");
 }
 
 // 赛前射手榜：把某场贡献的进球从总数里减掉（total 减到 0 的球员移出榜单）
 export function scorersBefore(
   totals: ScorerTotal[],
-  matchGoals: { playerId: number }[]
+  matchGoals: { playerId: number; pen: boolean }[]
 ): ScorerTotal[] {
-  const minus = new Map<number, number>();
-  for (const g of matchGoals) minus.set(g.playerId, (minus.get(g.playerId) ?? 0) + 1);
+  const minus = new Map<number, { goals: number; penGoals: number }>();
+  for (const g of matchGoals) {
+    const cur = minus.get(g.playerId) ?? { goals: 0, penGoals: 0 };
+    cur.goals += 1;
+    if (g.pen) cur.penGoals += 1;
+    minus.set(g.playerId, cur);
+  }
   return totals
     .map((t) => {
-      const d = minus.get(t.playerId) ?? 0;
-      return d > 0 ? { ...t, goals: t.goals - d } : t;
+      const d = minus.get(t.playerId);
+      return d ? { ...t, goals: t.goals - d.goals, penGoals: t.penGoals - d.penGoals } : t;
     })
     .filter((t) => t.goals > 0)
-    .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, "zh"));
+    .sort(compareScorers);
 }
 
 export function rankOf(list: ScorerTotal[], playerId: number): number {

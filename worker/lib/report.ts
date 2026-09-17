@@ -681,9 +681,13 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
     }
 
     // 5) 射手榜影响（只提本场进球球员，最多 2 句）
+    //    并列次序与榜单一致：同球数点球少的排前，故本场进球要带上是否点球
     const matchGoals = goalFacts
       .filter((g) => g.type !== "own_goal")
-      .map((g) => ({ playerId: Number(g.playerKey.startsWith("p:") ? g.playerKey.slice(2) : 0) }))
+      .map((g) => ({
+        playerId: Number(g.playerKey.startsWith("p:") ? g.playerKey.slice(2) : 0),
+        pen: g.type === "pen_goal",
+      }))
       .filter((g) => g.playerId > 0);
     if (matchGoals.length > 0) {
       const beforeScorers = scorersBefore(scorerTotals, matchGoals);

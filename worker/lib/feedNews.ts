@@ -8,6 +8,7 @@ import type { RawEvent, FinishedMatch } from "./context";
 import { chance, pickText } from "../../shared/textpick";
 import {
   cnum,
+  compareScorers,
   currentStreaks,
   fetchEventRows,
   fetchFinishedWindow,
@@ -253,26 +254,26 @@ function roundAgg(list: FinishedMatch[]) {
 }
 
 // 射手王（goal/pen_goal，同人聚合，乌龙不计）：周报与综述共用
+// 并列口径与射手榜一致（同球数点球少的在前）
 function topScorerOf(
   eventsByMatch: Map<number, RawEvent[]>,
   list: FinishedMatch[],
 ): { name: string; teamName: string; goals: number } | null {
-  const scorerGoals = new Map<string, { name: string; teamName: string; goals: number }>();
+  const scorerGoals = new Map<string, { name: string; teamName: string; goals: number; penGoals: number }>();
   for (const m of list) {
     for (const e of eventsByMatch.get(m.id) ?? []) {
       if ((e.type !== "goal" && e.type !== "pen_goal") || !e.playerName) continue;
-      const cur = scorerGoals.get(e.playerName) ?? { name: e.playerName, teamName: "", goals: 0 };
+      const cur =
+        scorerGoals.get(e.playerName) ?? { name: e.playerName, teamName: "", goals: 0, penGoals: 0 };
       cur.goals += 1;
+      if (e.type === "pen_goal") cur.penGoals += 1;
       if (!cur.teamName) {
         cur.teamName = e.entryId === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
       }
       scorerGoals.set(e.playerName, cur);
     }
   }
-  return (
-    [...scorerGoals.values()].sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, "zh"))[0] ??
-    null
-  );
+  return [...scorerGoals.values()].sort(compareScorers)[0] ?? null;
 }
 
 // ---------- 叙事事实：按「该场完赛时刻」重放 ----------
@@ -284,6 +285,7 @@ interface ScorerRow {
   name: string;
   teamName: string;
   goals: number;
+  penGoals: number;
 }
 
 interface NarrativeFacts {
@@ -303,18 +305,19 @@ async function buildNarrativeFacts(
     db,
     finAsc.map((m) => m.id),
   );
-  const ledger = new Map<number, { name: string; teamName: string; goals: number }>();
+  const ledger = new Map<number, { name: string; teamName: string; goals: number; penGoals: number }>();
   const sortedLedger = (): ScorerRow[] =>
-    [...ledger.entries()]
-      .map(([playerId, v]) => ({ playerId, ...v }))
-      .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name, "zh"));
+    [...ledger.entries()].map(([playerId, v]) => ({ playerId, ...v })).sort(compareScorers);
   for (const m of finAsc) {
     const cap = wantedMatchIds.has(m.id) ? { before: sortedLedger(), after: [] as ScorerRow[] } : null;
     if (cap) scorersAt.set(m.id, cap);
     for (const e of evAll.get(m.id) ?? []) {
       if ((e.type !== "goal" && e.type !== "pen_goal") || e.playerId == null) continue;
-      const cur = ledger.get(e.playerId) ?? { name: e.playerName ?? "未知球员", teamName: "", goals: 0 };
+      const cur =
+        ledger.get(e.playerId) ??
+        { name: e.playerName ?? "未知球员", teamName: "", goals: 0, penGoals: 0 };
       cur.goals += 1;
+      if (e.type === "pen_goal") cur.penGoals += 1;
       if (!cur.teamName) {
         cur.teamName = e.entryId === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
       }
