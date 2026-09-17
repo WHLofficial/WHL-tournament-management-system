@@ -40,9 +40,12 @@ app.post("/", async (c) => {
   } | null;
   if (!body || !Number.isInteger(body.eventId) || body.eventId! <= 0)
     return c.json({ message: "缺少伤病事件 eventId" }, 400);
-  const note = (body.note ?? "").trim() || null;
+  // 字段类型先兜住：非字符串/非数组（客户端乱传）当空处理，别让 .trim()/filter 抛 500
+  const note = typeof body.note === "string" ? body.note.trim() || null : null;
   if (note && note.length > 200) return c.json({ message: "备注最多 200 字" }, 400);
-  const missIds = (body.missMatchIds ?? []).filter((x) => Number.isInteger(x) && x > 0);
+  const missIds = Array.isArray(body.missMatchIds)
+    ? body.missMatchIds.filter((x) => Number.isInteger(x) && x > 0)
+    : [];
   if (new Set(missIds).size !== missIds.length)
     return c.json({ message: "缺阵比赛不能重复勾选" }, 400);
 
@@ -75,7 +78,7 @@ app.post("/", async (c) => {
   const playerId = ev.player_id ?? body.playerId ?? null;
   if (!playerId) return c.json({ message: "伤病事件未记录球员，请先在事件里补上球员" }, 400);
 
-  const name = (body.injuryName ?? "").trim() || null;
+  const name = typeof body.injuryName === "string" ? body.injuryName.trim() || null : null;
   if (name) {
     const item = findInjuryCatalog(name);
     if (!item) return c.json({ message: "伤病名不在名库中，请从列表选择" }, 400);
@@ -128,7 +131,14 @@ app.post("/", async (c) => {
       ).bind(ev.id, mid)
     );
   }
-  await c.env.DB.batch(batch);
+  try {
+    await c.env.DB.batch(batch);
+  } catch (e) {
+    // 上面的 dup 预检挡不住并发双提交，event_id 唯一索引（0022）兜底：撞上就当重复登记处理
+    if (String(e).includes("UNIQUE constraint failed"))
+      return c.json({ message: "该伤病事件已建过登记，请直接编辑" }, 409);
+    throw e;
+  }
   return c.json({ ok: true });
 });
 
@@ -141,9 +151,11 @@ app.put("/:id", async (c) => {
     missMatchIds?: number[];
   } | null;
   if (!body) return c.json({ message: "请求体无效" }, 400);
-  const note = (body.note ?? "").trim() || null;
+  const note = typeof body.note === "string" ? body.note.trim() || null : null;
   if (note && note.length > 200) return c.json({ message: "备注最多 200 字" }, 400);
-  const missIds = (body.missMatchIds ?? []).filter((x) => Number.isInteger(x) && x > 0);
+  const missIds = Array.isArray(body.missMatchIds)
+    ? body.missMatchIds.filter((x) => Number.isInteger(x) && x > 0)
+    : [];
   if (new Set(missIds).size !== missIds.length)
     return c.json({ message: "缺阵比赛不能重复勾选" }, 400);
 
@@ -165,7 +177,7 @@ app.put("/:id", async (c) => {
   if (!row) return c.json({ message: "登记不存在" }, 404);
 
   const severity = severityOfEventType(row.event_type as "injury_minor" | "injury_major");
-  const name = (body.injuryName ?? "").trim() || null;
+  const name = typeof body.injuryName === "string" ? body.injuryName.trim() || null : null;
   if (name) {
     const item = findInjuryCatalog(name);
     if (!item) return c.json({ message: "伤病名不在名库中，请从列表选择" }, 400);

@@ -7,8 +7,10 @@ import type {
   InjuryMissDTO,
   InjurySeverity,
   InjuryStatusDTO,
+  InjuryWatchDTO,
   InjuryWatchGroupDTO,
   MatchEventType,
+  PublicAbsenceDTO,
 } from "../../shared/types";
 import { severityOfEventType } from "../../shared/injuries";
 import { mediaUrl } from "./media";
@@ -86,8 +88,8 @@ export type {
 export async function listMatchAbsences(
   db: D1Database,
   matchId: number,
-  homeTeamId: number,
-  awayTeamId: number
+  homeTeamId: number | null,
+  awayTeamId: number | null
 ): Promise<{ home: PublicAbsenceDTO[]; away: PublicAbsenceDTO[] }> {
   const teamIds = [homeTeamId, awayTeamId].filter((x) => x != null);
   if (teamIds.length === 0) return { home: [], away: [] };

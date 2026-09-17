@@ -63,11 +63,28 @@ export function InjuryRegPanel({
   // 档位来自事件类型：轻伤事件只列轻伤名，重伤事件只列重伤名（后端同样校验）
   const options = INJURY_CATALOG.filter((it) => it.severity === severity);
 
+  // 没手动改过勾选时跟随伤病名库的 suggestMiss 预勾（仅是辅助，随时可改）。
+  // 写成 effect 而不是选名时顺手勾，是为了盖住时序：先选名、候选比赛后到，也能预勾。
+  useEffect(() => {
+    if (!cand || !auto) return;
+    const open = cand.filter((x) => x.status !== "finished").map((x) => x.matchId);
+    setPicked(new Set(suggestMissIds(open, name)));
+  }, [cand, name, auto]);
+
+  // existing 是异步拉来的（MatchesTab 先渲染面板、登记稍后到）：晚到时把登记内容灌进本地状态，
+  // 否则保存会拿空表单走 PUT，把已有的伤名/备注/勾选清空。只在换了另一条登记时同步（按 id），
+  // 保存后父组件重拉仍是同一条，用户刚填的内容不会被冲掉。
+  const existingId = existing?.id ?? null;
+  useEffect(() => {
+    setName(existing?.injuryName ?? "");
+    setNote(existing?.note ?? "");
+    setPicked(new Set((existing?.misses ?? []).map((x) => x.matchId)));
+    setAuto(existing === undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingId]);
+
   const pickName = (n: string) => {
     setName(n);
-    if (!auto || !cand) return;
-    const open = cand.filter((x) => x.status !== "finished").map((x) => x.matchId);
-    setPicked(new Set(suggestMissIds(open, n)));
   };
   const toggle = (id: number) => {
     setAuto(false);
@@ -81,6 +98,7 @@ export function InjuryRegPanel({
 
   const save = () =>
     act(async () => {
+      if (!existing && eventId == null) return "不知道要保存哪条登记，请关闭面板重开";
       const body = {
         injuryName: name || null,
         note: note || null,
