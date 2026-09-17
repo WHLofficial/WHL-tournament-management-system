@@ -4,7 +4,7 @@ import { rateLimit } from "../lib/ratelimit";
 import { fetchMatchLineup, LineupError, validateLineupSlots } from "../lib/lineup";
 import { AuthApiError, authBindTeam, boundTeamId, teamMembers } from "../lib/authClient";
 import { requirePermission, requirePwChanged } from "../middleware/auth";
-import { computeSuspensions, getSuspensionConfig } from "../lib/suspension";
+import { computeSuspensions, parseSuspensionConfig } from "../lib/suspension";
 import { listActiveInjuries } from "../lib/injury";
 import { BUILDUPS, FORMS, decodeFut25, decodeFut26 } from "../../shared/tactics";
 import type { CoachStatusResp, LineupSubmitBody, TacticArchiveDTO } from "../../shared/types";
@@ -189,46 +189,47 @@ app.get("/me/status", async (c) => {
   };
   if (!teamId) return c.json(empty);
 
-  // 本队可看的赛事：已报名、且赛事已发布（草稿赛事不暴露）
-  const rows = await c.env.DB.prepare(
-    `SELECT t.id AS tournament_id, t.name
-     FROM entry e JOIN tournament t ON t.id = e.tournament_id
-     WHERE e.team_id = ? AND t.status != 'draft'
-     ORDER BY t.created_at DESC, t.id DESC`,
-  )
-    .bind(teamId)
-    .all<{ tournament_id: number; name: string }>();
-  const tournaments = (rows.results ?? []).map((r) => ({
-    tournamentId: r.tournament_id,
-    name: r.name,
-  }));
-
-  // 默认赛事：本队最近一场待开比赛所在赛事（口径同 /me/matches）；没有待开比赛就取最新赛事
-  const next = await c.env.DB.prepare(
-    `SELECT t.id AS tournament_id
-     FROM match m
-     JOIN stage s ON s.id = m.stage_id
-     JOIN tournament t ON t.id = s.tournament_id
-     LEFT JOIN entry he ON he.id = m.home_entry_id
-     LEFT JOIN entry ae ON ae.id = m.away_entry_id
-     WHERE m.status = 'pending' AND t.status != 'draft'
-       AND (m.note IS NULL OR m.note != '轮空')
-       AND (he.team_id = ? OR ae.team_id = ?)
-     ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`,
-  )
-    .bind(teamId, teamId)
-    .first<{ tournament_id: number }>();
+  // 本队可看的赛事（已报名、且赛事已发布，草稿不暴露）、默认赛事、本队伤停三者的 SQL 互不依赖，
+  // 一批并行取；config_json 顺带查出，省掉单独读停赛口径的那次往返。
+  const [rows, next, injuries] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT t.id AS tournament_id, t.name, t.config_json
+       FROM entry e JOIN tournament t ON t.id = e.tournament_id
+       WHERE e.team_id = ? AND t.status != 'draft'
+       ORDER BY t.created_at DESC, t.id DESC`,
+    )
+      .bind(teamId)
+      .all<{ tournament_id: number; name: string; config_json: string | null }>(),
+    // 默认赛事：本队最近一场待开比赛所在赛事（口径同 /me/matches）；没有待开比赛就取最新赛事
+    c.env.DB.prepare(
+      `SELECT t.id AS tournament_id
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id
+       LEFT JOIN entry he ON he.id = m.home_entry_id
+       LEFT JOIN entry ae ON ae.id = m.away_entry_id
+       WHERE m.status = 'pending' AND t.status != 'draft'
+         AND (m.note IS NULL OR m.note != '轮空')
+         AND (he.team_id = ? OR ae.team_id = ?)
+       ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`,
+    )
+      .bind(teamId, teamId)
+      .first<{ tournament_id: number }>(),
+    listActiveInjuries(c.env.DB, teamId),
+  ]);
+  const rowsAll = rows.results ?? [];
+  const tournaments = rowsAll.map((r) => ({ tournamentId: r.tournament_id, name: r.name }));
   const defTid = next?.tournament_id ?? tournaments[0]?.tournamentId ?? null;
   const list = tournaments.map((t) => ({ ...t, default: t.tournamentId === defTid }));
 
   // 传入的赛事不属于本队就静默回落默认（教练手改 URL 也不该看到别队赛事）
   const want = Number(c.req.query("tournamentId"));
   const tid = list.some((t) => t.tournamentId === want) ? want : defTid;
-  const injuries = await listActiveInjuries(c.env.DB, teamId);
   if (tid == null) return c.json({ ...empty, tournaments: list, injuries });
 
-  const cfg = await getSuspensionConfig(c.env.DB, tid);
-  const all = await computeSuspensions(c.env.DB, tid, cfg);
+  const cfg = parseSuspensionConfig(rowsAll.find((r) => r.tournament_id === tid)?.config_json);
+  // 只重放本队：多队赛事里别队的牌与本队口径无关
+  const all = await computeSuspensions(c.env.DB, tid, cfg, teamId);
   const players = all
     .filter((p) => p.teamId === teamId && (p.remaining > 0 || p.yellows > 0))
     .map((p) => ({

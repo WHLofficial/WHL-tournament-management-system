@@ -26,15 +26,22 @@ export async function getSuspensionConfig(
   db: D1Database,
   tid: number
 ): Promise<SuspensionConfig> {
-  const fallback = { ...DEFAULT_SUSPENSION };
   const t = await db
     .prepare("SELECT config_json FROM tournament WHERE id = ?")
     .bind(tid)
     .first<{ config_json: string | null }>();
-  if (!t) return fallback;
+  return parseSuspensionConfig(t?.config_json);
+}
+
+// config_json → 停赛配置（缺省/坏值一律回退默认）。
+// 调用方若已为别的用途读出 config_json（如教练端列赛事时），从这里复用解析即可，不必再查一次。
+export function parseSuspensionConfig(
+  configJson: string | null | undefined
+): SuspensionConfig {
+  const fallback = { ...DEFAULT_SUSPENSION };
   let cfg: { suspension?: Partial<SuspensionConfig> } = {};
   try {
-    cfg = (JSON.parse(t.config_json || "{}") ?? {}) as { suspension?: Partial<SuspensionConfig> };
+    cfg = (JSON.parse(configJson || "{}") ?? {}) as { suspension?: Partial<SuspensionConfig> };
   } catch {
     return fallback;
   }
@@ -154,11 +161,23 @@ function replay(
 // 计算单赛事内所有有红黄牌记录球员的停赛状态。
 // 有清零锚点时拆两遍：锚点前事件完整重放（清零前已生效的停赛定格后继续执行），
 // 锚点后事件黄牌从零重计；补录旧比赛的事件按 created_at 归段，不污染新累积。
+// teamId 给定时只重放这一队（按 player.team_id 认人，不靠事件挂在哪个 entry 上）：
+// 球员结果只取决于「他自己那支队的比赛序 + 他自己的事件」，收窄读入量与全量算出的该队结果一致
+// ——教练端不必把整个赛事的红黄牌读出来。
 export async function computeSuspensions(
   db: D1Database,
   tid: number,
-  cfg: SuspensionConfig
+  cfg: SuspensionConfig,
+  teamId?: number
 ): Promise<SuspensionStatusDTO[]> {
+  const scoped = teamId != null;
+  const matchFilter = scoped
+    ? ` AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+             OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))`
+    : "";
+  const eventFilter = scoped ? " AND p.team_id = ?" : "";
+  const mParams: number[] = teamId != null ? [tid, teamId, teamId] : [tid];
+  const eParams: number[] = teamId != null ? [tid, teamId] : [tid];
   const [matches, events] = await Promise.all([
     db
       .prepare(
@@ -166,10 +185,10 @@ export async function computeSuspensions(
                 s.sort_order AS stage_order, m.round, m.slot, m.leg
          FROM match m
          JOIN stage s ON s.id = m.stage_id
-         WHERE s.tournament_id = ?
+         WHERE s.tournament_id = ?${matchFilter}
          ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id`
       )
-      .bind(tid)
+      .bind(...mParams)
       .all<MatchSeqRow>(),
     db
       .prepare(
@@ -182,10 +201,10 @@ export async function computeSuspensions(
          JOIN team t ON t.id = e.team_id
          JOIN player p ON p.id = me.player_id
          WHERE s.tournament_id = ? AND me.player_id IS NOT NULL
-           AND me.type IN ('yellow', 'red', 'red_2y')
+           AND me.type IN ('yellow', 'red', 'red_2y')${eventFilter}
          ORDER BY me.id`
       )
-      .bind(tid)
+      .bind(...eParams)
       .all<DisciplineRow>(),
   ]);
 

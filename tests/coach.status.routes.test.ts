@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
 import { hashPassword } from "../worker/lib/crypto";
+import { computeSuspensions, getSuspensionConfig } from "../worker/lib/suspension";
 import { FORMS } from "../shared/tactics";
 import { applyMigrations, createTestD1, createTestKV } from "./d1";
 
@@ -249,6 +250,33 @@ describe("教练端伤停/停赛概览", () => {
     ]);
     // 伤停登记属于红队，蓝队看不到
     expect(b.injuries).toEqual([]);
+  });
+
+  it("显式传 tournamentId 时仍回完整赛事列表与黄牌阈值（前端切赛事要拿它显示标题口径）", async () => {
+    const { env } = freshEnv();
+    const b = (await (await getStatus(env, "?tournamentId=7")).json()) as StatusBody;
+    expect(b.tournaments).toEqual([
+      { tournamentId: 9, name: "冠军杯", default: true },
+      { tournamentId: 7, name: "联赛", default: false },
+    ]);
+    expect(b.yellowThreshold).toBe(3);
+  });
+});
+
+// 教练端把重放范围收窄到本队 entry 的比赛 + 本队事件（省读入量）；结果必须与全量重放一致。
+// 等价性依据：球员事件挂在自家 entry 上，保留该队 entry 的比赛就保住了他所有可能出场的事件。
+describe("computeSuspensions 按队收窄", () => {
+  it("传 teamId 与全量重放的本队子集逐字段一致（两个赛事各验一次）", async () => {
+    const { sqlite } = freshEnv();
+    const db = createTestD1(sqlite);
+    for (const tid of [7, 9]) {
+      const cfg = await getSuspensionConfig(db, tid);
+      const full = await computeSuspensions(db, tid, cfg);
+      const scoped = await computeSuspensions(db, tid, cfg, 10);
+      expect(scoped).toEqual(full.filter((p) => p.teamId === 10));
+      // 本队确实有内容可验（联赛：张三停赛场数 + 李四临界黄牌）
+      expect(scoped.length).toBeGreaterThan(0);
+    }
   });
 });
 

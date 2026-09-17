@@ -24,6 +24,7 @@ import {
 } from "../../shared/tactics";
 import type {
   CoachPendingMatchDTO,
+  CoachStatusPlayerDTO,
   CoachStatusResp,
   TacticArchiveDTO,
   TeamLineupDTO,
@@ -34,6 +35,8 @@ const STAGE_ZH: Record<string, string> = { elim: "淘汰赛", round_robin: "循�
 const LS_STATE = "ftc26-state-v1";
 const LS_NAMES = "ftc26-names-v1";
 const BENCH = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+// 切回刚看过的赛事/比赛先用缓存值立刻画，超过这个时长再后台校正
+const CACHE_TTL = 60_000;
 
 // 磁贴坐标（%）：原战术板照搬；同位多人在 central 组散开，三中卫时 RB/LB 回收到中圈高度
 const POS_XY: Record<string, [number, number]> = {
@@ -87,6 +90,9 @@ function loadState(): TacticState {
 
 type TeamPlayer = { id: number; name: string; number: string | null };
 
+// 停赛口径的按赛事缓存（players + 黄牌阈值；伤停跨赛事，跟着整包状态走）
+type StatusSlice = { players: CoachStatusPlayerDTO[]; yellowThreshold: number };
+
 // 球员异常状态：停赛/黄牌按所选赛事算，伤停跨赛事（后端 /api/coach/me/status 派生）
 type PStat = {
   susp: number; // 剩余停赛场数，> 0 即停赛中
@@ -117,6 +123,13 @@ export default function Tactics() {
   const [archBusy, setArchBusy] = useState(false);
   const [armDel, setArmDel] = useState<number | null>(null);
   const [status, setStatus] = useState<CoachStatusResp | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  // 取数缓存与「已解析口径」：同一赛事/同一场比赛来回切时不再重发请求
+  const statusCache = useRef(new Map<number, StatusSlice>());
+  const statusTidRef = useRef<number | null>(null);
+  const statusReq = useRef<number | null | undefined>(undefined); // 上次请求带的 tournamentId；undefined = 还没请求过
+  const mineCache = useRef(new Map<number, { v: TeamLineupDTO | null; at: number }>());
+  const matchesAt = useRef(0);
   const toastTimer = useRef<number | null>(null);
   const armTimer = useRef<number | null>(null);
   const subArmTimer = useRef<number | null>(null);
@@ -125,7 +138,8 @@ export default function Tactics() {
   useEffect(() => saveLS(LS_STATE, state), [state]);
   useEffect(() => saveLS(LS_NAMES, names), [names]);
 
-  // 登录用户尝试拉本队名单：教练可选本队球员，其余（游客/未绑队）手输名字
+  // 登录用户尝试拉本队名单：教练可选本队球员，其余（游客/未绑队）手输名字。
+  // 下面几个取数 effect 一律以 user 为门（谁都不等谁），所以名单 / 比赛 / 伤停 / 存档是并行到达的。
   useEffect(() => {
     if (!user) {
       setTeamPlayers(null);
@@ -144,9 +158,9 @@ export default function Tactics() {
     };
   }, [user]);
 
-  // 存档跟随绑队状态：绑队后拉列表，未绑队不可用
+  // 存档登录后即可拉（未绑队端点返回空列表）：不再等本队名单那一跳
   useEffect(() => {
-    if (!teamPlayers) {
+    if (!user) {
       setArchives(null);
       return;
     }
@@ -161,11 +175,11 @@ export default function Tactics() {
     return () => {
       dead = true;
     };
-  }, [teamPlayers]);
+  }, [user]);
 
-  // 待选比赛：绑队后拉一次，默认选中未开赛的第一场（端点只返 pending 场）
+  // 待选比赛：登录后即拉，默认选中未开赛的第一场（端点只返 pending 场）
   useEffect(() => {
-    if (!teamPlayers) {
+    if (!user) {
       setSubMatches(null);
       setSubMatchId(null);
       return;
@@ -175,6 +189,7 @@ export default function Tactics() {
       .then((b) => {
         if (dead) return;
         const list = b.matches ?? [];
+        matchesAt.current = Date.now();
         setSubMatches(list);
         setSubMatchId((cur) => (cur != null && list.some((m) => m.id === cur) ? cur : list[0]?.id ?? null));
       })
@@ -184,50 +199,89 @@ export default function Tactics() {
     return () => {
       dead = true;
     };
-  }, [teamPlayers]);
+  }, [user]);
 
-  // 所选比赛的我方已提交阵容：自动选中与手动切换共用
+  // 所选比赛的我方已提交阵容：自动选中与手动切换共用。
+  // 命中缓存先画出来，避免切轮次时「已提交」提示与按钮文案闪回。
   useEffect(() => {
     if (subMatchId == null) {
       setMine(null);
       return;
     }
+    const hit = mineCache.current.get(subMatchId);
+    setMine(hit ? hit.v : null);
+    if (hit && Date.now() - hit.at < CACHE_TTL) return;
     let dead = false;
     api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${subMatchId}/lineup`)
       .then((b) => {
-        if (!dead) setMine(b.lineup);
+        if (dead) return;
+        mineCache.current.set(subMatchId, { v: b.lineup, at: Date.now() });
+        setMine(b.lineup);
       })
       .catch(() => {
-        if (!dead) setMine(null);
+        if (!dead && !hit) setMine(null);
       });
     return () => {
       dead = true;
     };
-  }, [subMatchId]);
+  }, [subMatchId, user]);
 
   // 停赛口径跟随所选比赛所在赛事
   const pickedMatch = (subMatches ?? []).find((m) => m.id === subMatchId) ?? null;
-  const statusTid = pickedMatch?.tournamentId ?? null;
+  const pickedTid = pickedMatch?.tournamentId ?? null;
 
-  // 伤停/停赛：绑队后拉本队概览，换比赛重拉
+  // 伤停/停赛：登录后即拉（未绑队返空结构），首拉不带 tournamentId、由服务端定默认赛事；
+  // 口径对齐后不再重发——同一赛事内换比赛 0 请求，换赛事才多一次且先用缓存值立刻显示。
   useEffect(() => {
-    if (!teamPlayers) {
+    if (!user) {
       setStatus(null);
+      setStatusBusy(false);
+      statusTidRef.current = null;
+      statusReq.current = undefined;
       return;
     }
+    const want = pickedTid;
+    const cur = statusTidRef.current;
+    if (statusReq.current !== undefined && (want === null || want === statusReq.current || want === cur)) {
+      return;
+    }
+    const hit = want != null ? statusCache.current.get(want) : undefined;
+    if (hit) {
+      statusTidRef.current = want;
+      setStatus((prev) =>
+        prev
+          ? { ...prev, tournamentId: want, players: hit.players, yellowThreshold: hit.yellowThreshold }
+          : prev,
+      );
+    } else if (want != null) {
+      // 没缓存：先清掉上一赛事的停赛清单，别顶着新赛事名显示旧数据
+      setStatus((prev) => (prev ? { ...prev, tournamentId: want, players: [] } : prev));
+    }
+    statusReq.current = want;
     let dead = false;
-    const qs = statusTid != null ? `?tournamentId=${statusTid}` : "";
-    api<CoachStatusResp>(`/api/coach/me/status${qs}`)
+    setStatusBusy(true);
+    api<CoachStatusResp>(`/api/coach/me/status${want != null ? `?tournamentId=${want}` : ""}`)
       .then((b) => {
-        if (!dead) setStatus(b);
+        if (dead) return;
+        statusTidRef.current = b.tournamentId;
+        if (b.tournamentId != null) {
+          statusCache.current.set(b.tournamentId, {
+            players: b.players,
+            yellowThreshold: b.yellowThreshold,
+          });
+        }
+        setStatus(b);
       })
       .catch(() => {
         if (!dead) setStatus(null);
+      })
+      .finally(() => {
+        if (!dead) setStatusBusy(false);
       });
     return () => {
       dead = true;
     };
-  }, [teamPlayers, statusTid]);
+  }, [user, pickedTid]);
 
   useEffect(
     () => () => {
@@ -517,7 +571,10 @@ export default function Tactics() {
   // ---------- 阵容提交（登录绑队后可见；两击确认沿用重置的 arm 模式） ----------
   function refetchSubMatches() {
     api<{ matches: CoachPendingMatchDTO[] }>("/api/coach/me/matches")
-      .then((b) => setSubMatches(b.matches))
+      .then((b) => {
+        matchesAt.current = Date.now();
+        setSubMatches(b.matches);
+      })
       .catch(() => setSubMatches([]));
   }
 
@@ -531,14 +588,14 @@ export default function Tactics() {
     setSubOpen(next);
     if (next) {
       setSubMsg(null);
-      refetchSubMatches();
+      // 列表已在内存里就不重拉；空列表或离上次拉过太久（可能已排新场次）才刷新
+      if (subMatches == null || Date.now() - matchesAt.current > 120_000) refetchSubMatches();
     }
   }
 
   function pickSubMatch(v: string) {
     const id = v ? Number(v) : null;
     setSubMatchId(id);
-    setMine(null);
     setSubMsg(null);
     disarmSubmit();
     setSelected(null);
@@ -595,7 +652,10 @@ export default function Tactics() {
         showToast("阵容已提交");
         refetchSubMatches();
         api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${mid}/lineup`)
-          .then((b) => setMine(b.lineup))
+          .then((b) => {
+            mineCache.current.set(mid, { v: b.lineup, at: Date.now() });
+            setMine(b.lineup);
+          })
           .catch(() => {});
       })
       .catch((e: unknown) =>
@@ -616,9 +676,12 @@ export default function Tactics() {
   const sel = selected != null ? players.find((p) => p.lid === selected) ?? null : null;
   const selRisk = sel ? riskLine(statOf(names[String(sel.lid)])) : "";
   const risks = lineupRisks();
-  // 状态清单卡：停赛（按所选比赛的赛事）/ 黄牌临界 / 伤停
+  // 状态清单卡：停赛（按所选比赛的赛事）/ 黄牌临界 / 伤停。
+  // 标题跟着所选比赛走（切赛事立刻变名），清单先给缓存值，新值到达前标「更新中」。
   const statusTName =
-    (status?.tournaments ?? []).find((t) => t.tournamentId === status?.tournamentId)?.name ?? "";
+    (status?.tournaments ?? []).find(
+      (t) => t.tournamentId === (pickedTid ?? status?.tournamentId),
+    )?.name ?? "";
   const suspList = (status?.players ?? []).filter((p) => p.remaining > 0);
   const nearList = (status?.players ?? []).filter(
     (p) => p.remaining <= 0 && suspThreshold > 0 && p.yellows === suspThreshold - 1,
@@ -713,9 +776,10 @@ export default function Tactics() {
                   <div className="tac-status tac-submit-status">
                     <h2>
                       伤停与停赛 {statusTName ? <small>{statusTName}</small> : null}
+                      {statusBusy ? <small className="tac-status-busy">更新中…</small> : null}
                     </h2>
                     {suspList.length === 0 && nearList.length === 0 && injList.length === 0 ? (
-                      <p className="tac-hint">本队无异常。</p>
+                      <p className="tac-hint">{statusBusy ? "读取中…" : "本队无异常。"}</p>
                     ) : (
                       <ul className="tac-status-list">
                         {suspList.map((p) => (

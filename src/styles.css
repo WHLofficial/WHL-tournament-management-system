@@ -1736,6 +1736,11 @@ button.add-stage {
   letter-spacing: 0;
   font-weight: 400;
 }
+/* 切赛事时先用缓存值画出来，后台校正中 */
+.tac-status h2 small.tac-status-busy {
+  margin-left: 6px;
+  color: #b45309;
+}
 .tac-status-list {
   list-style: none;
   margin: 0;
