@@ -4,7 +4,7 @@ import {
   INJURY_CATALOG,
   findInjuryCatalog,
   injuryNamesOf,
-  pickInjuryName,
+  randomInjuryName,
   severityOfEventType,
 } from "../shared/injuries";
 
@@ -115,22 +115,27 @@ describe("伤病名库", () => {
     }
   });
 
-  it("pickInjuryName：同档位内抽、同 seed 固定、常见伤抽中明显多于少见伤", () => {
+  it("randomInjuryName：同档位内按权重真随机，连抽不重复同一名字", () => {
     const count = new Map<string, number>();
     for (let i = 0; i < 4000; i++) {
-      const n = pickInjuryName("minor", `i${i}`);
+      const n = randomInjuryName("minor");
       expect(findInjuryCatalog(n)!.severity).toBe("minor");
       count.set(n, (count.get(n) ?? 0) + 1);
     }
-    expect(pickInjuryName("major", "seed-x")).toBe(pickInjuryName("major", "seed-x"));
     // 踝关节扭伤 weight 4，牙齿折断 weight 1：期望 4:1，弱断言留足余量
     const common = count.get("踝关节扭伤") ?? 0;
     const rare = count.get("牙齿折断") ?? 0;
     expect(common).toBeGreaterThan(rare * 2);
     // 档位内的伤名应该大多能被抽到，而不是集中在一两条
     expect(count.size).toBeGreaterThanOrEqual(12);
+    // 每次都要真的动起来：按 id/计数做种子的旧实现会抽出一串固定名字
+    expect(new Set(Array.from({ length: 200 }, () => randomInjuryName("minor"))).size).toBeGreaterThanOrEqual(10);
+    // avoid：刚抽到的名字不会连着再出现（连点「随机伤名」的手感）
+    for (let i = 0; i < 300; i++) {
+      expect(randomInjuryName("minor", "踝关节扭伤")).not.toBe("踝关节扭伤");
+    }
     // 重档抽查：只出重档名，且含常见的跖骨骨折
-    const majors = new Set(Array.from({ length: 200 }, (_, i) => pickInjuryName("major", `m${i}`)));
+    const majors = new Set(Array.from({ length: 200 }, () => randomInjuryName("major")));
     expect([...majors].every((n) => findInjuryCatalog(n)!.severity === "major")).toBe(true);
     expect(majors.has("跖骨骨折")).toBe(true);
   });

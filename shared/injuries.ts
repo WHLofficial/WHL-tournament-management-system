@@ -1,8 +1,8 @@
-// 伤病名库：静态编目，照 copybanks 句库纪律（确定性、无随机源，抽选走 shared/textpick）。
+// 伤病名库：静态编目，照 copybanks 句库纪律（无隐藏状态、抽选走 shared/textpick）。
 // 口径是足球场上的运动伤病（踝、腿筋、内收肌、头面部、膝、跖骨这些高频部位），
 // 不写篮球／格斗式的伤名。分档只是编写参考——轻伤取两周内能痊愈的，重伤取两周以上；
 // 系统不据此推算缺阵，缺阵场次一律由管理员手动勾选。
-import { pickWeighted } from "./textpick";
+import { pickWeightedAt } from "./textpick";
 
 export type InjurySeverity = "minor" | "major";
 
@@ -74,9 +74,16 @@ export function injuryNamesOf(severity: InjurySeverity): InjuryCatalogItem[] {
   );
 }
 
-// 随机伤名：只在同档位内抽，常见伤权重高、少见伤权重低（同一 seed 结果固定）
-export function pickInjuryName(severity: InjurySeverity, seed: string): string {
-  return pickWeighted(seed, injuryNamesOf(severity), (it) => it.weight).name;
+// 随机伤名：只在同档位内抽，常见伤权重高、少见伤权重低。
+// 走 Math.random（每次点击都要不一样）——别换成按 id/计数做种子，那样同一个球员每次
+// 打开都从同一格开始，连点出来的是一串固定的名字。avoid 是刚抽到的名字，直接从
+// 抽选池里摘掉，避免连点两次出同一个名字。
+export function randomInjuryName(severity: InjurySeverity, avoid?: string | null): string {
+  const pool = injuryNamesOf(severity);
+  if (pool.length === 0) throw new Error("randomInjuryName: 名库为空");
+  const rest = avoid ? pool.filter((it) => it.name !== avoid) : pool;
+  const pick = rest.length > 0 ? rest : pool;
+  return pickWeightedAt(Math.random(), pick, (it) => it.weight).name;
 }
 
 // 对外文案用自然阶段，不写裸百分比（「伤愈 75%」读起来很怪）；

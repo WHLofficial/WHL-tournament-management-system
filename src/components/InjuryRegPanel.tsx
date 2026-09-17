@@ -3,7 +3,7 @@
 // 比赛页（挂在事件行下）建登记 / 改登记，球队页（挂在已有登记下）改登记 / 撤销。
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { injuryNamesOf, pickInjuryName } from "../../shared/injuries";
+import { injuryNamesOf, randomInjuryName } from "../../shared/injuries";
 import type {
   InjuryCandidatesResp,
   InjuryMissCandidateDTO,
@@ -63,8 +63,6 @@ export function InjuryRegPanel({
   // 档位来自事件类型：轻伤事件只列轻伤名，重伤事件只列重伤名（后端同样校验）；
   // 顺序按常见度从高到低——常见伤排前面，省得每次翻少见伤。
   const options = injuryNamesOf(severity);
-  // 随机伤名的 seed 只用本地计数器：同一事件连点两次要出不同结果，且不用 Math.random
-  const [roll, setRoll] = useState(0);
 
   // existing 是异步拉来的（列表页先渲染面板、登记稍后到）：晚到时把登记内容灌进本地状态，
   // 否则保存会拿空表单走 PUT，把已有的伤名/备注/勾选清空。只在换了另一条登记时同步（按 id），
@@ -81,8 +79,8 @@ export function InjuryRegPanel({
     setName(n);
   };
   const rollName = () => {
-    setRoll((r) => r + 1);
-    setName(pickInjuryName(severity, `${existingId ?? eventId ?? 0}:${roll + 1}`));
+    // 真随机（Math.random）：把当前名字排除掉，连点两次不会抽出同一个
+    setName(randomInjuryName(severity, name));
   };
   const toggle = (id: number) => {
     setPicked((prev) => {
