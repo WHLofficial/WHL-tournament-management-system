@@ -74,12 +74,12 @@ describe("伤情快讯与周报", () => {
     expect(inj!.at).toBeTruthy();
   });
 
-  it("无人继续缺阵时尾巴改口径（不替登记下伤愈结论）", async () => {
+  it("无人仍在伤停时尾巴改口径（不替登记下伤愈结论）", async () => {
     const { db } = freshDb({ miss: "finished" });
     const items = await buildFeed(db);
     const inj = items.find((i) => i.kind === "injury");
     expect(inj!.body).toContain("张三（红队 · 轻伤 · 轻微扭伤）");
-    expect(inj!.body).toContain("无人继续缺阵");
+    expect(inj!.body).toContain("无人仍在伤停");
   });
 
   it("同一轮同一人两次受伤只算一个人：标题人数、正文简列都不重复", async () => {
@@ -90,7 +90,7 @@ describe("伤情快讯与周报", () => {
     expect(inj!.title).not.toContain("2 人");
     expect(inj!.title).toContain("1 人");
     // 留的是后一条事件（901 重伤），所以标题带重伤口径
-    expect(inj!.title).toMatch(/重伤|伤得不轻|伤势较重|短期难回/);
+    expect(inj!.title).toMatch(/重伤|伤势较重/);
     // 正文里张三只出现一次，且按后一条事件的轻重写
     expect(inj!.body.split("张三").length - 1).toBe(1);
     expect(inj!.body).toContain("张三（红队 · 重伤）");

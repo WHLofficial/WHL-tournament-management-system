@@ -495,10 +495,10 @@ function injuryNames(facts: InjuryFact[]): string {
     .join("、");
 }
 
-// 缺阵尾巴：有多少人还挂着未打完的缺阵场次就说多少人；一个都没有就说没人继续缺阵（不替登记表下「伤愈」的结论）
+// 缺阵尾巴：有多少人还挂着未打完的缺阵场次就说多少人；一个都没有就说无人仍在伤停（不替登记表下「伤愈」的结论）
 function injuryOutTail(facts: InjuryFact[]): string {
   const out = facts.filter((f) => f.outMatches > 0).length;
-  return out > 0 ? `，另有 ${out} 人仍在伤停` : "，无人继续缺阵";
+  return out > 0 ? `，另有 ${out} 人仍在伤停` : "，无人仍在伤停";
 }
 
 export async function buildFeed(
@@ -1021,7 +1021,7 @@ export async function buildFeed(
             `本周 ${weekly.played} 战收获 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑射手榜` : ""}`,
           ]) +
           (wkInjuries.length > 0
-            ? `；${wkInjuries.length} 人受伤${wkOut > 0 ? `，其中 ${wkOut} 人仍在伤停` : "，无人继续缺阵"}`
+            ? `；${wkInjuries.length} 人受伤${wkOut > 0 ? `，其中 ${wkOut} 人仍在伤停` : "，无人仍在伤停"}`
             : ""),
       });
     }
