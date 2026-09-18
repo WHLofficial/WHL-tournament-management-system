@@ -2100,23 +2100,9 @@ button.add-stage {
     flex: 1 1 auto;
     min-height: 380px;
   }
-  .tac-code-panel {
-    order: 2;
-    padding: 10px;
-  }
-  .tac-import-panel {
-    order: 3;
-    padding: 10px 12px;
-  }
+  /* 卡片顺序统一由 .tac-side > * 的 order 管（display:contents 下仍然匹配），这里不再重复 */
   .tac-duo {
-    order: 4;
     flex: 0 0 auto;
-  }
-  .tac-archives {
-    order: 1;
-  }
-  .tac-bench {
-    order: 5;
   }
   .tac-pitch {
     aspect-ratio: auto;
@@ -2336,6 +2322,53 @@ button.add-stage {
 .tac-submit-status {
   border-left: 1px solid var(--border);
   padding-left: 16px;
+}
+
+/* 代打：身份切换器（本队 ↔ 被授权的目标队）与代打模式下的目标比赛静态行 */
+.tac-identity {
+  border-bottom: 1px dashed var(--border);
+  padding-bottom: 10px;
+}
+.tac-identity .field {
+  margin: 0;
+}
+.tac-target {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f7faf7;
+  font-size: 14px;
+}
+/* 「代打」标记：阵容里的提交人旁边，说明这份不是本队教练自己交的 */
+.proxy-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fde8d0;
+  color: #9a4b06;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ok-msg {
+  color: #0c663c;
+  font-size: 14px;
+  margin: 8px 0;
+}
+/* 阵容代打授权表单：赛事/比赛/球队/账号四个下拉 + 授权按钮 */
+.proxy-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0;
+}
+.proxy-form .field {
+  margin: 0;
+}
+.proxy-form select {
+  width: 100%;
 }
 
 .md-lineups {
@@ -2976,4 +3009,307 @@ button.add-stage {
 }
 .h2h-tile .h2h-tile-none {
   color: rgba(244, 246, 243, 0.55);
+}
+
+/* ---------- 战术板分区：球场常驻，其余按层切换 ---------- */
+/* .card 自带 display，隐掉当前层之外的卡必须 !important；flex 列里被隐的卡不占位与间距 */
+.card[hidden] {
+  display: none !important;
+}
+.tac-zones {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 12px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tac-zone {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font: 600 14px/1.2 inherit;
+  cursor: pointer;
+}
+.tac-zone:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+.tac-zone.on {
+  background: var(--pitch-deep);
+  border-color: var(--pitch-deep);
+  color: #fff;
+}
+
+/* 右栏卡片顺序（桌面＝右栏列内顺序；手机 display:contents 后同一条链决定整页顺序）。
+   ① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8-9；1 是常驻核心（选中位置编辑器）。 */
+.tac-side > .tac-duo {
+  order: 1;
+}
+.tac-side > .tac-submit {
+  order: 2;
+  margin-bottom: 0;
+}
+.tac-side > .tac-bench {
+  order: 3;
+}
+.tac-side > .tac-assign {
+  order: 4;
+}
+.tac-side > .tac-submit-bar {
+  order: 5;
+}
+.tac-side > .tac-code-panel {
+  order: 7;
+}
+.tac-side > .tac-import-panel {
+  order: 8;
+}
+.tac-side > .tac-archives {
+  order: 9;
+}
+
+/* ---------- 球员指派（① 本场备案） ---------- */
+.tac-assign-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tac-assign-head h2 {
+  margin: 0;
+  flex: 1 1 auto;
+}
+.tac-assign-ok,
+.tac-assign-bad {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.tac-assign-ok {
+  background: #eef4ef;
+  color: var(--muted);
+}
+.tac-assign-bad {
+  background: #fdecea;
+  color: #c92a2a;
+  font-weight: 700;
+}
+.tac-assign-sum {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: #f7faf7;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.tac-assign-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px 16px;
+  margin-top: 12px;
+  align-items: start;
+}
+.tac-assign-group {
+  min-width: 0;
+}
+.tac-assign-group h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tac-assign-group h3 small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+.tac-assign-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  margin-bottom: 8px;
+}
+.tac-assign-field > span {
+  font-size: 12px;
+  color: var(--ink);
+}
+.tac-assign-field select {
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+/* 互斥命中：整项红框，方便一眼找到要改哪一个 */
+.tac-assign-field.bad select {
+  border-color: #c92a2a;
+  background: #fff6f5;
+}
+.tac-assign-field.bad > span {
+  color: #c92a2a;
+  font-weight: 700;
+}
+
+/* 提交卡：拆成独立一张，落在 ① 面板最底 */
+.tac-submit-bar {
+  display: grid;
+  gap: 10px;
+}
+.tac-submit-bar h2 {
+  margin: 0;
+}
+.tac-submit-bar .btn {
+  justify-self: start;
+}
+.tac-submit-bar .tac-hint {
+  margin: 0;
+}
+
+/* 球员卡里的「本场指派」小标签 */
+.tac-editor-assign {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tac-chip {
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tac-chip.bad {
+  border-color: #c92a2a;
+  color: #c92a2a;
+}
+
+/* ---------- 球场磁贴：队长 C / 位置重复黄标 ---------- */
+.tac-cap {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--live);
+  color: #fff;
+  font: 700 10px/1 var(--mono);
+}
+.tac-mk-dup {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  font-size: 10px;
+  line-height: 1;
+  color: #b45309;
+}
+.tac-tile.dup {
+  border-color: #d99a00;
+  background: rgba(120, 80, 0, 0.82);
+  box-shadow: inset 0 0 0 2px rgba(232, 184, 0, 0.55);
+}
+
+/* 阵容展示里的球员指派（教练端/管理端/公开端共用，见 LineupView 的 AssignList） */
+.lu-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 5px;
+  border-radius: 4px;
+  background: var(--live);
+  color: #fff;
+  font: 700 10px/1 var(--mono);
+  vertical-align: middle;
+}
+.lu-assign {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--border);
+}
+.lu-assign li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.lu-assign li i {
+  flex: 0 0 auto;
+  min-width: 96px;
+  font-style: normal;
+  color: var(--muted);
+}
+.lu-assign li.off {
+  color: var(--muted);
+}
+.lu-assign-off {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fdecea;
+  color: #c92a2a;
+  font-size: 11px;
+}
+.lu-chip {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #eef4ef;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (max-width: 979px) {
+  /* 手机上层条吸顶：滚到面板深处也能立刻换层（球场在上、面板在下，层条压在最前） */
+  .tac-zones {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 6px 0;
+    margin-bottom: 6px;
+    background: var(--chalk);
+  }
+  /* 指派 5 组在手机上单列铺开，组内项目保持一行一项 */
+  .tac-assign-grid {
+    grid-template-columns: 1fr;
+  }
+  .tac-zone {
+    min-height: 32px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+}
+@media (max-width: 560px) {
+  .tac-assign-field select {
+    min-height: 36px;
+  }
+  .lu-assign li i {
+    min-width: 0;
+    width: 100%;
+  }
 }

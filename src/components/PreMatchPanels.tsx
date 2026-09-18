@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { TeamLogo } from "./TeamLogo";
+import { AssignList } from "./LineupView";
 import { CardIcon } from "./Cards";
 import { FORMS, POS_ZH, formTitle } from "../../shared/tactics";
 import { recoverStageLabel } from "../../shared/injuries";
@@ -396,9 +397,11 @@ function MyLineupPanel({ l }: { l: TeamLineupDTO }) {
           {l.bench.map((b) => `${b.number ? `#${b.number} ` : ""}${b.name ?? "已离队"}`).join("、")}
         </p>
       )}
+      <AssignList assign={l.assign ?? []} />
       <p className="muted pmt-mine-meta">
         提交于 {l.submittedAt.slice(0, 16).replace("T", " ")}
         {l.submittedBy ? ` · ${l.submittedBy}` : ""}
+        {l.viaProxy && <span className="proxy-badge">代打</span>}
       </p>
     </div>
   );

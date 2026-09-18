@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import {
+  ASSIGN_GROUPS,
+  ASSIGN_KEYS,
+  ASSIGN_LABEL,
   BU,
   BU_ZH,
   BUILDUPS,
@@ -9,16 +13,20 @@ import {
   PTE26,
   POS_ZH,
   TacticError,
+  assignConflicts,
+  conflictText,
   decodeFut25,
   decodeFut26,
   defaultPair,
   encodeFut26,
   errText,
   formTitle,
+  isAssignKey,
   lhBucket,
   lhName,
   pairEa,
   roleFull,
+  type AssignKey,
   type Buildup,
   type TacticState,
 } from "../../shared/tactics";
@@ -26,17 +34,46 @@ import type {
   CoachPendingMatchDTO,
   CoachStatusPlayerDTO,
   CoachStatusResp,
+  ProxyBoardResp,
+  ProxySessionDTO,
   TacticArchiveDTO,
   TeamLineupDTO,
 } from "../../shared/types";
 
 const STAGE_ZH: Record<string, string> = { elim: "淘汰赛", round_robin: "循环赛", group: "小组赛" };
 
-const LS_STATE = "ftc26-state-v1";
-const LS_NAMES = "ftc26-names-v1";
+// 草稿按身份分开放：本队一份（ftc26-*），每个代打场次各一份（ftc26-proxy-<mid>-*）——
+// 否则替别人排完阵容切回本队，会看到对方的名单，指派也叠在自己那份上。
+const DRAFT_KEYS = (scope: string) => ({
+  state: `${scope}-state-v1`,
+  names: `${scope}-names-v1`,
+  assign: `${scope}-assign-v1`,
+});
+const LS_ASSIGN_OPEN = "ftc26-assign-open";
 const BENCH = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 // 切回刚看过的赛事/比赛先用缓存值立刻画，超过这个时长再后台校正
 const CACHE_TTL = 60_000;
+
+// 分层：球场与「选中位置编辑器」常驻，其余卡片按层显示（层记在 URL ?zone=，刷新/分享/后退都对）。
+// 无球队绑定的身份看不到本场备案层（与提交卡同源），默认落战术设计。
+type Zone = "lineup" | "design" | "tools";
+const ZONES: { key: Zone; label: string; note: string }[] = [
+  { key: "lineup", label: "本场备案", note: "选比赛 · 排名单 · 指派 · 提交" },
+  { key: "design", label: "战术设计", note: "阵型 · 组织风格 · 防线 · 战术码" },
+  { key: "tools", label: "工具与档案", note: "导入战术码 · 存档" },
+];
+function isZone(v: string | null): v is Zone {
+  return v === "lineup" || v === "design" || v === "tools";
+}
+// 指派白名单过滤：只留认识的项 + 正整数值（与后端 parseAssignJson 同口径，坏数据当没填）
+function sanitizeAssign(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (isAssignKey(k) && Number.isInteger(v) && (v as number) > 0) out[k] = v as number;
+  }
+  return out;
+}
 
 // 磁贴坐标（%）：原战术板照搬；同位多人在 central 组散开，三中卫时 RB/LB 回收到中圈高度
 const POS_XY: Record<string, [number, number]> = {
@@ -75,8 +112,8 @@ function saveLS(k: string, v: unknown) {
 }
 
 const DEFAULT_STATE: TacticState = { form: "3142", bu: "balanced", lh: 50, roles: {} };
-function loadState(): TacticState {
-  const saved = loadLS<TacticState | null>(LS_STATE, null);
+function loadScopeState(scope: string): TacticState {
+  const saved = loadLS<TacticState | null>(DRAFT_KEYS(scope).state, null);
   if (!saved || !FORMS.some((f) => f.value === saved.form) || BU[saved.bu as Buildup] === undefined) {
     return { ...DEFAULT_STATE };
   }
@@ -103,18 +140,27 @@ type PStat = {
 
 export default function Tactics() {
   const { user } = useAuth();
-  const [state, setState] = useState<TacticState>(loadState);
-  const [names, setNames] = useState<Record<string, string>>(() => loadLS(LS_NAMES, {}));
+  const [sp, setSp] = useSearchParams();
+  const [state, setState] = useState<TacticState>(() => loadScopeState("ftc26"));
+  const [names, setNames] = useState<Record<string, string>>(() =>
+    loadLS(DRAFT_KEYS("ftc26").names, {}),
+  );
+  // 球员指派：角色码 → 球员 id（只存已填项）。换阵型换人不影响它——键是角色不是位置。
+  const [assign, setAssign] = useState<Record<string, number>>(() =>
+    sanitizeAssign(loadLS(DRAFT_KEYS("ftc26").assign, null)),
+  );
+  const [assignOpen, setAssignOpen] = useState<boolean>(() => loadLS(LS_ASSIGN_OPEN, false));
   const [selected, setSelected] = useState<number | null>(null);
   const [codeInput, setCodeInput] = useState("");
   const [msg, setMsg] = useState<{ t: "ok" | "err"; text: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [armReset, setArmReset] = useState(false);
-  const [teamPlayers, setTeamPlayers] = useState<TeamPlayer[] | null>(null);
+  const [selfPlayers, setSelfPlayers] = useState<TeamPlayer[] | null>(null);
+  const [selfTeamName, setSelfTeamName] = useState<string | null>(null);
   const [subOpen, setSubOpen] = useState(true);
   const [subMatches, setSubMatches] = useState<CoachPendingMatchDTO[] | null>(null);
   const [subMatchId, setSubMatchId] = useState<number | null>(null);
-  const [mine, setMine] = useState<TeamLineupDTO | null>(null);
+  const [selfMine, setSelfMine] = useState<TeamLineupDTO | null>(null);
   const [subBusy, setSubBusy] = useState(false);
   const [subMsg, setSubMsg] = useState<{ t: "ok" | "err"; text: string } | null>(null);
   const [armSubmit, setArmSubmit] = useState(false);
@@ -122,8 +168,15 @@ export default function Tactics() {
   const [saveNote, setSaveNote] = useState("");
   const [archBusy, setArchBusy] = useState(false);
   const [armDel, setArmDel] = useState<number | null>(null);
-  const [status, setStatus] = useState<CoachStatusResp | null>(null);
-  const [statusBusy, setStatusBusy] = useState(false);
+  const [selfStatus, setSelfStatus] = useState<CoachStatusResp | null>(null);
+  const [selfStatusBusy, setSelfStatusBusy] = useState(false);
+  // 代打（管理员把某队某场的提交权授给了我）：身份切换器 + 目标队整包取数
+  const [proxySessions, setProxySessions] = useState<ProxySessionDTO[] | null>(null);
+  const [proxyOn, setProxyOn] = useState(false);
+  const [proxyMid, setProxyMid] = useState<number | null>(null);
+  const [board, setBoard] = useState<ProxyBoardResp | null>(null);
+  const [boardNonce, setBoardNonce] = useState(0);
+  const [boardBusy, setBoardBusy] = useState(false);
   // 取数缓存与「已解析口径」：同一赛事/同一场比赛来回切时不再重发请求
   const statusCache = useRef(new Map<number, StatusSlice>());
   const statusTidRef = useRef<number | null>(null);
@@ -135,23 +188,50 @@ export default function Tactics() {
   const subArmTimer = useRef<number | null>(null);
   const armDelTimer = useRef<number | null>(null);
 
-  useEffect(() => saveLS(LS_STATE, state), [state]);
-  useEffect(() => saveLS(LS_NAMES, names), [names]);
-
+  // 草稿作用域：本队一份（ftc26-*），代打每个场次各一份（ftc26-proxy-<mid>-*）。
+  // 切作用域时整包换草稿（不合并）；下面写回带一道「已载入的作用域 === 当前作用域」的闸，
+  // 免得切的这一帧把上一个身份的名单写进新身份。
+  const wantScope = proxyOn && proxyMid != null ? `ftc26-proxy-${proxyMid}` : "ftc26";
+  const [scope, setScope] = useState("ftc26");
+  const dk = DRAFT_KEYS(scope);
+  useEffect(() => {
+    if (scope === wantScope) return;
+    setScope(wantScope);
+    setState(loadScopeState(wantScope));
+    setNames(loadLS(DRAFT_KEYS(wantScope).names, {}));
+    setAssign(sanitizeAssign(loadLS(DRAFT_KEYS(wantScope).assign, null)));
+    setSelected(null);
+    setMsg(null);
+  }, [scope, wantScope]);
+  useEffect(() => {
+    if (scope === wantScope) saveLS(dk.state, state);
+  }, [dk.state, scope, wantScope, state]);
+  useEffect(() => {
+    if (scope === wantScope) saveLS(dk.names, names);
+  }, [dk.names, scope, wantScope, names]);
+  useEffect(() => {
+    if (scope === wantScope) saveLS(dk.assign, assign);
+  }, [dk.assign, scope, wantScope, assign]);
   // 登录用户尝试拉本队名单：教练可选本队球员，其余（游客/未绑队）手输名字。
   // 下面几个取数 effect 一律以 user 为门（谁都不等谁），所以名单 / 比赛 / 伤停 / 存档是并行到达的。
   useEffect(() => {
     if (!user) {
-      setTeamPlayers(null);
+      setSelfPlayers(null);
       return;
     }
     let dead = false;
-    api<{ team: { players: TeamPlayer[] } | null }>("/api/coach/me/team")
+    api<{ team: { name: string; players: TeamPlayer[] } | null }>("/api/coach/me/team")
       .then((b) => {
-        if (!dead) setTeamPlayers(b.team?.players ?? null);
+        if (!dead) {
+          setSelfPlayers(b.team?.players ?? null);
+          setSelfTeamName(b.team?.name ?? null);
+        }
       })
       .catch(() => {
-        if (!dead) setTeamPlayers(null);
+        if (!dead) {
+          setSelfPlayers(null);
+          setSelfTeamName(null);
+        }
       });
     return () => {
       dead = true;
@@ -205,21 +285,21 @@ export default function Tactics() {
   // 命中缓存先画出来，避免切轮次时「已提交」提示与按钮文案闪回。
   useEffect(() => {
     if (subMatchId == null) {
-      setMine(null);
+      setSelfMine(null);
       return;
     }
     const hit = mineCache.current.get(subMatchId);
-    setMine(hit ? hit.v : null);
+    setSelfMine(hit ? hit.v : null);
     if (hit && Date.now() - hit.at < CACHE_TTL) return;
     let dead = false;
     api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${subMatchId}/lineup`)
       .then((b) => {
         if (dead) return;
         mineCache.current.set(subMatchId, { v: b.lineup, at: Date.now() });
-        setMine(b.lineup);
+        setSelfMine(b.lineup);
       })
       .catch(() => {
-        if (!dead && !hit) setMine(null);
+        if (!dead && !hit) setSelfMine(null);
       });
     return () => {
       dead = true;
@@ -234,12 +314,14 @@ export default function Tactics() {
   // 口径对齐后不再重发——同一赛事内换比赛 0 请求，换赛事才多一次且先用缓存值立刻显示。
   useEffect(() => {
     if (!user) {
-      setStatus(null);
-      setStatusBusy(false);
+      setSelfStatus(null);
+      setSelfStatusBusy(false);
       statusTidRef.current = null;
       statusReq.current = undefined;
       return;
     }
+    // 代打模式下停赛口径来自代打板（目标队所在赛事），这条本队口径的请求让位
+    if (proxyOn) return;
     const want = pickedTid;
     const cur = statusTidRef.current;
     if (statusReq.current !== undefined && (want === null || want === statusReq.current || want === cur)) {
@@ -248,18 +330,18 @@ export default function Tactics() {
     const hit = want != null ? statusCache.current.get(want) : undefined;
     if (hit) {
       statusTidRef.current = want;
-      setStatus((prev) =>
+      setSelfStatus((prev) =>
         prev
           ? { ...prev, tournamentId: want, players: hit.players, yellowThreshold: hit.yellowThreshold }
           : prev,
       );
     } else if (want != null) {
       // 没缓存：先清掉上一赛事的停赛清单，别顶着新赛事名显示旧数据
-      setStatus((prev) => (prev ? { ...prev, tournamentId: want, players: [] } : prev));
+      setSelfStatus((prev) => (prev ? { ...prev, tournamentId: want, players: [] } : prev));
     }
     statusReq.current = want;
     let dead = false;
-    setStatusBusy(true);
+    setSelfStatusBusy(true);
     api<CoachStatusResp>(`/api/coach/me/status${want != null ? `?tournamentId=${want}` : ""}`)
       .then((b) => {
         if (dead) return;
@@ -270,18 +352,101 @@ export default function Tactics() {
             yellowThreshold: b.yellowThreshold,
           });
         }
-        setStatus(b);
+        setSelfStatus(b);
       })
       .catch(() => {
-        if (!dead) setStatus(null);
+        if (!dead) setSelfStatus(null);
       })
       .finally(() => {
-        if (!dead) setStatusBusy(false);
+        if (!dead) setSelfStatusBusy(false);
       });
     return () => {
       dead = true;
     };
-  }, [user, pickedTid]);
+  }, [user, pickedTid, proxyOn]);
+
+  // 代打授权清单：登录后即拉（没授权返空数组）；有授权才出现身份切换器
+  useEffect(() => {
+    if (!user) {
+      setProxySessions(null);
+      setProxyOn(false);
+      setProxyMid(null);
+      return;
+    }
+    let dead = false;
+    api<{ sessions: ProxySessionDTO[] }>("/api/coach/proxy/sessions")
+      .then((b) => {
+        if (dead) return;
+        const list = b.sessions ?? [];
+        setProxySessions(list);
+        setProxyMid((cur) => (cur != null && list.some((s) => s.matchId === cur) ? cur : list[0]?.matchId ?? null));
+        // 授权被撤销/比赛开打后清单会空掉，这时自动切回本队身份
+        if (list.length === 0) setProxyOn(false);
+      })
+      .catch(() => {
+        if (!dead) setProxySessions([]);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [user]);
+
+  // 代打板：目标队名单 + 伤停停赛 + 该场已交阵容，一次整包取回（口径全由服务端定）
+  useEffect(() => {
+    if (!proxyOn || proxyMid == null) {
+      setBoard(null);
+      setBoardBusy(false);
+      return;
+    }
+    let dead = false;
+    setBoardBusy(true);
+    api<ProxyBoardResp>(`/api/coach/proxy/${proxyMid}/board`)
+      .then((b) => {
+        if (!dead) setBoard(b);
+      })
+      .catch((e: unknown) => {
+        if (dead) return;
+        setBoard(null);
+        setSubMsg({ t: "err", text: e instanceof Error ? e.message : "代打数据读取失败" });
+      })
+      .finally(() => {
+        if (!dead) setBoardBusy(false);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [proxyOn, proxyMid, boardNonce]);
+
+  // 代打模式：名单、伤停停赛、已交阵容全部换成目标队的；
+  // 本队那份留在自有 state 里，切回本队身份即恢复，不用重新取数。
+  const proxySession = proxyOn
+    ? (proxySessions ?? []).find((s) => s.matchId === proxyMid) ?? board?.session ?? null
+    : null;
+  const teamPlayers = proxyOn ? board?.players ?? null : selfPlayers;
+  const status = proxyOn ? board?.status ?? null : selfStatus;
+  const statusBusy = proxyOn ? boardBusy : selfStatusBusy;
+  const mine = proxyOn ? board?.lineup ?? null : selfMine;
+  // 当前动作指向哪一场：本队模式用所选比赛，代打模式用被授权的那一场
+  const curMid = proxyOn ? proxyMid : subMatchId;
+  // 停赛口径所属赛事：代打模式跟着代打板，本队模式跟着所选比赛
+  const statusTid = proxyOn ? status?.tournamentId ?? null : pickedTid ?? status?.tournamentId ?? null;
+  // 本场已授权他人代打：本队教练让位（后端也会 403，这里先把按钮按住）
+  const blockedByProxy = !proxyOn && (pickedMatch?.proxyGranted ?? false);
+  // 分层：① 本场备案只对绑了球队（或有代打授权）的身份存在，其余身份默认落 ② 战术设计。
+  // 当前层记在 URL（?zone=），刷新/分享/前进后退都对；默认层不写进 URL。
+  const canLineup = user?.teamId != null || (proxySessions?.length ?? 0) > 0;
+  const zoneParam = sp.get("zone");
+  const zone: Zone = isZone(zoneParam) && (zoneParam !== "lineup" || canLineup)
+    ? zoneParam
+    : canLineup
+      ? "lineup"
+      : "design";
+  function selectZone(z: Zone) {
+    const next = new URLSearchParams(sp);
+    if (z === (canLineup ? "lineup" : "design")) next.delete("zone");
+    else next.set("zone", z);
+    setSp(next, { replace: true });
+  }
 
   useEffect(
     () => () => {
@@ -300,6 +465,65 @@ export default function Tactics() {
   }
 
   const form = FORMS.find((f) => f.value === state.form) ?? FORMS[0];
+
+  // 指派候选池＝本场场上 11 名首发（FC26 口径：指派只能从场上球员里选），按人去重；
+  // 一人占两个位置时位置串起来显示（#7 LB/LCB 张三）。没摆满 11 个位置就留空并提示。
+  const assignPool = useMemo(() => {
+    const out: { id: number; pos: string }[] = [];
+    const at = new Map<number, number>();
+    for (const p of form.pos) {
+      const v = Number(names[String(p.lid)]);
+      if (!Number.isInteger(v) || v <= 0) continue;
+      const hit = at.get(v);
+      if (hit != null) out[hit] = { ...out[hit], pos: `${out[hit].pos}/${p.position}` };
+      else {
+        at.set(v, out.length);
+        out.push({ id: v, pos: p.position });
+      }
+    }
+    return out;
+  }, [form, names]);
+  // 已填项按 ASSIGN_KEYS 顺序（队长在最前）；互斥冲突按声明表算，前端预检与后端同源
+  const assignFilled = ASSIGN_KEYS.filter((k) => assign[k] != null);
+  const assignConflictList = useMemo(() => assignConflicts(assign), [assign]);
+  const conflictKeys = useMemo(
+    () => new Set(assignConflictList.flatMap((c) => [c.a, c.b])),
+    [assignConflictList],
+  );
+  // 折叠态也要能一眼扫到填了什么（按组列，空组不出现）
+  const assignSummary = useMemo(() => {
+    if (assignFilled.length === 0) {
+      return "都可留空：不填也能提交；填了随阵容落库，管理端赛前备案与开赛后公开端都会列出来。";
+    }
+    return ASSIGN_GROUPS.map((g) => {
+      const items = g.items.filter((it) => assign[it.key] != null);
+      if (items.length === 0) return "";
+      return `${g.title}：${items
+        .map((it) => `${it.label} ${playerTag(assign[it.key]!)}`)
+        .join("、")}`;
+    })
+      .filter(Boolean)
+      .join(" · ");
+  }, [assign, assignFilled.length, teamPlayers]);
+
+  // 同一名球员占多个位置、或又首发又替补：磁贴置黄（判重口径与 lineupProblem 一致）。
+  // 这也是指派候选池的前提——池子按人去重，前提是这 11 个位置本来就是 11 个人。
+  const dupPids = useMemo(() => {
+    const seen = new Set<number>();
+    const dup = new Set<number>();
+    for (const p of form.pos) {
+      const v = Number(names[String(p.lid)]);
+      if (!Number.isInteger(v) || v <= 0) continue;
+      if (seen.has(v)) dup.add(v);
+      seen.add(v);
+    }
+    for (const i of BENCH) {
+      const v = Number(names[`b${i}`]);
+      if (Number.isInteger(v) && v > 0 && seen.has(v)) dup.add(v);
+    }
+    return dup;
+  }, [form, names]);
+  const capPid = assign.captain ?? null;
 
   // 11 个首发：LS 里存的 pair 合法就用，否则回默认角色（换阵型后残留自动兜底）
   const players = useMemo(
@@ -426,6 +650,56 @@ export default function Tactics() {
     return p ? p.name : v;
   }
 
+  // —— 球员指派（FC26 球队管理 · 指派 18 项）——
+  // 指派下拉/摘要里的球员标签：#号 姓名（没绑定球队或球员已离队时退化成 id）
+  function playerTag(pid: number): string {
+    const p = teamPlayers?.find((x) => x.id === pid);
+    if (!p) return `球员 ${pid}`;
+    return `${p.number ? `#${p.number} ` : ""}${p.name}`;
+  }
+  // 候选文案：#号 → 位置 → 姓名 → 状态后缀，与球员卡/替补席下拉同一套后缀
+  function poolLabel(c: { id: number; pos: string }): string {
+    const p = teamPlayers?.find((x) => x.id === c.id);
+    const num = p?.number ? `#${p.number} ` : "";
+    return `${num}${c.pos} ${p?.name ?? "已不在名单"}${optionSuffix(c.id)}`;
+  }
+  function setAssignKey(key: AssignKey, pid: number | null) {
+    setAssign((a) => {
+      const next = { ...a };
+      if (pid == null) delete next[key];
+      else next[key] = pid;
+      return next;
+    });
+  }
+  function clearAssignConflicts() {
+    const bad = new Set(assignConflictList.flatMap((c) => [c.a, c.b]));
+    setAssign((a) => {
+      const next = { ...a };
+      for (const k of bad) delete next[k];
+      return next;
+    });
+    showToast("已清除冲突项");
+  }
+  function toggleAssignOpen() {
+    const next = !assignOpen;
+    setAssignOpen(next);
+    saveLS(LS_ASSIGN_OPEN, next);
+  }
+  // 把该场已提交的那份搬回编辑器：阵型 + 位置↔球员 + 替补顺序 + 指派一次到位（覆盖当前草稿）
+  function applySubmitted(l: TeamLineupDTO) {
+    const next: Record<string, string> = {};
+    for (const s of l.starters) next[String(s.lid)] = String(s.playerId);
+    l.bench.slice(0, BENCH.length).forEach((b, i) => {
+      next[`b${i}`] = String(b.playerId);
+    });
+    setNames(next);
+    setState((s) => ({ ...s, form: l.form }));
+    setAssign(Object.fromEntries((l.assign ?? []).map((a) => [a.key, a.playerId])));
+    setSelected(null);
+    setMsg(null);
+    showToast("已载入该场已提交的阵容");
+  }
+
   function importCode(raw?: string) {
     const fromArchive = raw != null;
     const src = (raw ?? codeInput).trim().replace(/\s+/g, "");
@@ -473,6 +747,7 @@ export default function Tactics() {
           buildup: state.bu,
           lineHeight: state.lh,
           roster: names,
+          assign,
         },
       });
       setSaveNote("");
@@ -495,6 +770,8 @@ export default function Tactics() {
       next[k] = v;
     }
     setNames(next);
+    // 指派随存档一起回来（跨场复用：下场面还是这几个人罚）；坏数据当没填
+    setAssign(sanitizeAssign(a.assign));
     importCode(a.code);
   }
 
@@ -553,8 +830,9 @@ export default function Tactics() {
       return;
     }
     try {
-      localStorage.removeItem(LS_STATE);
-      localStorage.removeItem(LS_NAMES);
+      localStorage.removeItem(dk.state);
+      localStorage.removeItem(dk.names);
+      localStorage.removeItem(dk.assign);
     } catch {
       /* 忽略 */
     }
@@ -562,6 +840,7 @@ export default function Tactics() {
     setArmReset(false);
     setState({ ...DEFAULT_STATE, roles: {} });
     setNames({});
+    setAssign({});
     setSelected(null);
     setCodeInput("");
     setMsg(null);
@@ -601,7 +880,7 @@ export default function Tactics() {
     setSelected(null);
   }
 
-  // 提交前的前端预检：首发 11 人齐、无重复（后端还会再校验一遍）
+  // 提交前的前端预检：首发 11 人齐、无重复、指派无互斥冲突（后端还会再校验一遍）
   function lineupProblem(): string | null {
     const ids = form.pos.map((p) => Number(names[String(p.lid)]));
     if (ids.some((v) => !Number.isInteger(v) || v <= 0)) {
@@ -614,11 +893,29 @@ export default function Tactics() {
     if (new Set([...ids, ...benchIds]).size !== ids.length + benchIds.length) {
       return "首发和替补有重复球员";
     }
+    const bad = assignConflicts(assign);
+    if (bad.length > 0) return `球员指派有冲突：${conflictText(bad[0])}`;
     return null;
   }
 
+  // 提交后把清单与代打板都刷新一遍：提交人/已提交标记都变了
+  function refetchProxy() {
+    api<{ sessions: ProxySessionDTO[] }>("/api/coach/proxy/sessions")
+      .then((b) => setProxySessions(b.sessions ?? []))
+      .catch(() => {});
+  }
+
+  function pickIdentity(v: string) {
+    const id = v ? Number(v) : null;
+    setProxyOn(id != null);
+    if (id != null) setProxyMid(id);
+    setSubMsg(null);
+    disarmSubmit();
+    setSelected(null);
+  }
+
   function submitLineup() {
-    if (subMatchId == null || subBusy) return;
+    if (curMid == null || subBusy) return;
     const problem = lineupProblem();
     if (problem) {
       setSubMsg({ t: "err", text: problem });
@@ -642,19 +939,35 @@ export default function Tactics() {
         (s) => Number.isInteger(s.player_id) && s.player_id > 0,
       ),
     ];
-    const mid = subMatchId;
-    api(`/api/coach/matches/${mid}/lineup`, {
+    const mid = curMid;
+    // 代打走代打端点（服务端校验授权的是我、且没被撤销/没开打），落的是目标队那份
+    const proxy = proxyOn;
+    api(proxy ? `/api/coach/proxy/${mid}/lineup` : `/api/coach/matches/${mid}/lineup`, {
       method: "PUT",
-      body: { form: state.form, slots, code: code === "------------" ? "" : code },
+      body: {
+        form: state.form,
+        slots,
+        code: code === "------------" ? "" : code,
+        assign,
+      },
     })
       .then(() => {
-        setSubMsg({ t: "ok", text: "已提交，开赛前随时可回来覆盖" });
-        showToast("阵容已提交");
+        const who = board?.session.teamName ?? "目标队";
+        setSubMsg({
+          t: "ok",
+          text: proxy ? `已代 ${who} 提交，开赛前可覆盖` : "已提交，开赛前随时可回来覆盖",
+        });
+        showToast(proxy ? `已代 ${who} 提交` : "阵容已提交");
+        if (proxy) {
+          refetchProxy();
+          setBoardNonce((n) => n + 1);
+          return;
+        }
         refetchSubMatches();
         api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${mid}/lineup`)
           .then((b) => {
             mineCache.current.set(mid, { v: b.lineup, at: Date.now() });
-            setMine(b.lineup);
+            setSelfMine(b.lineup);
           })
           .catch(() => {});
       })
@@ -675,13 +988,14 @@ export default function Tactics() {
 
   const sel = selected != null ? players.find((p) => p.lid === selected) ?? null : null;
   const selRisk = sel ? riskLine(statOf(names[String(sel.lid)])) : "";
+  const selPid = sel ? Number(names[String(sel.lid)]) : NaN;
+  // 球员卡里列出这名球员在本场担任的全部指派（点一下即清除该项）
+  const selAssigns = ASSIGN_KEYS.filter((k) => Number.isInteger(selPid) && assign[k] === selPid);
   const risks = lineupRisks();
-  // 状态清单卡：停赛（按所选比赛的赛事）/ 黄牌临界 / 伤停。
+  // 状态清单卡：停赛（按所选比赛的赛事；代打模式按目标队所在赛事）/ 黄牌临界 / 伤停。
   // 标题跟着所选比赛走（切赛事立刻变名），清单先给缓存值，新值到达前标「更新中」。
   const statusTName =
-    (status?.tournaments ?? []).find(
-      (t) => t.tournamentId === (pickedTid ?? status?.tournamentId),
-    )?.name ?? "";
+    (status?.tournaments ?? []).find((t) => t.tournamentId === statusTid)?.name ?? "";
   const suspList = (status?.players ?? []).filter((p) => p.remaining > 0);
   const nearList = (status?.players ?? []).filter(
     (p) => p.remaining <= 0 && suspThreshold > 0 && p.yellows === suspThreshold - 1,
@@ -693,7 +1007,7 @@ export default function Tactics() {
       injuryName: i.injuryName,
       rest: i.misses.filter((x) => x.status !== "finished").length,
       pct: i.recoverPercent,
-      out: subMatchId != null && i.misses.some((x) => x.matchId === subMatchId),
+      out: curMid != null && i.misses.some((x) => x.matchId === curMid),
     }))
     .filter((i) => i.rest > 0);
 
@@ -719,100 +1033,20 @@ export default function Tactics() {
         </button>
       </header>
 
-      {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛口径跟着它走 */}
-      {teamPlayers && (
-        <section className="card tac-submit">
-          <div className="tac-submit-head">
-            <h2>
-              选择目标比赛 <small>赛前备案 · 开赛后公开</small>
-            </h2>
-            <button className="btn" onClick={toggleSubmit}>
-              {subOpen ? "收起" : "展开"}
-            </button>
-          </div>
-          {subOpen && (
-            <div className="tac-submit-body">
-              <div className="tac-submit-cols">
-                <div className="tac-submit-main">
-                  <select
-                    aria-label="选择目标比赛"
-                    value={subMatchId ?? ""}
-                    onChange={(e) => pickSubMatch(e.target.value)}
-                  >
-                    <option value="">选择目标比赛…</option>
-                    {(subMatches ?? []).map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
-                        {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
-                        {m.opponentName ?? "待定"}
-                        {m.submitted ? "（已提交）" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {subMatches != null && subMatches.length === 0 && (
-                    <p className="tac-hint">你的球队当前没有待开的比赛。</p>
-                  )}
-                  {mine && (
-                    <p className="tac-hint">
-                      该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
-                      {formTitle(mine.form)}），再次提交将覆盖。
-                    </p>
-                  )}
-                  {risks.length > 0 && (
-                    <p className="tac-warn">名单里有状态异常的球员：{risks.join("、")}</p>
-                  )}
-                  {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
-                  <button
-                    className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
-                    disabled={subMatchId == null || subBusy}
-                    onClick={submitLineup}
-                  >
-                    {armSubmit ? "确认提交?" : mine ? "覆盖提交" : "提交阵容"}
-                  </button>
-                </div>
-
-                {/* 伤停与停赛：停赛按所选比赛的赛事算 */}
-                {status && (status.tournaments.length > 0 || injList.length > 0) && (
-                  <div className="tac-status tac-submit-status">
-                    <h2>
-                      伤停与停赛 {statusTName ? <small>{statusTName}</small> : null}
-                      {statusBusy ? <small className="tac-status-busy">更新中…</small> : null}
-                    </h2>
-                    {suspList.length === 0 && nearList.length === 0 && injList.length === 0 ? (
-                      <p className="tac-hint">{statusBusy ? "读取中…" : "本队无异常。"}</p>
-                    ) : (
-                      <ul className="tac-status-list">
-                        {suspList.map((p) => (
-                          <li key={`s${p.playerId}`}>
-                            <span className="tac-status-name">{p.playerName}</span>
-                            <span className="susp-badge">停赛 剩{p.remaining}场</span>
-                          </li>
-                        ))}
-                        {nearList.map((p) => (
-                          <li key={`y${p.playerId}`}>
-                            <span className="tac-status-name">{p.playerName}</span>
-                            <span className="yc-badge">再1黄停赛（已{p.yellows}张）</span>
-                          </li>
-                        ))}
-                        {injList.map((i) => (
-                          <li key={`i${i.playerId}`}>
-                            <span className="tac-status-name">{i.playerName}</span>
-                            <span className="injury-badge">伤停</span>
-                            {i.out ? <span className="tac-out-badge">缺本场</span> : null}
-                            <span className="tac-status-note">
-                              {i.injuryName ?? "伤病"} · 剩{i.rest}场 · 恢复{i.pct}%
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
+      {/* 分区切换：球场与选中位置编辑器常驻在下面，其余按这一层切。当前层记在 URL query 上。 */}
+      <nav className="tac-zones" aria-label="战术板分区">
+        {ZONES.filter((z) => z.key !== "lineup" || canLineup).map((z) => (
+          <button
+            key={z.key}
+            className={`tac-zone${zone === z.key ? " on" : ""}`}
+            aria-pressed={zone === z.key}
+            title={z.note}
+            onClick={() => selectZone(z.key)}
+          >
+            {z.label}
+          </button>
+        ))}
+      </nav>
 
       <div className="tac-layout">
         <section className="card tac-pitch-panel">
@@ -852,22 +1086,35 @@ export default function Tactics() {
               seen[p.position] = (seen[p.position] || 0) + 1;
               const pl = players[i];
               const nm = displayName(names[String(p.lid)]);
+              const pid = Number(names[String(p.lid)]);
               const st = statOf(names[String(p.lid)]);
+              const dup = Number.isInteger(pid) && pid > 0 && dupPids.has(pid);
+              const isCap = capPid != null && Number.isInteger(pid) && pid === capPid;
               const mark = st && st.susp > 0 ? (st.inj ? " both" : " susp") : st && st.inj ? " inj" : "";
               const tip = statTip(st);
               return (
                 <button
                   key={p.lid}
-                  className={`tac-tile${selected === p.lid ? " sel" : ""}${mark}`}
+                  className={`tac-tile${selected === p.lid ? " sel" : ""}${mark}${dup ? " dup" : ""}`}
                   style={{ left: `${xy[0]}%`, top: `${100 - xy[1]}%` }}
-                  title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}`}
-                  aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}${tip ? `，${tip}` : ""}`}
+                  title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}${dup ? " · 这名球员在本场占了多个位置" : ""}`}
+                  aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}${tip ? `，${tip}` : ""}${dup ? "，位置重复" : ""}`}
                   onClick={() => setSelected(selected === p.lid ? null : p.lid)}
                 >
                   {st && (st.susp > 0 || st.inj) ? (
                     <span className="tac-marks" aria-hidden="true">
                       {st.susp > 0 ? <i className="tac-mk-card" /> : null}
                       {st.inj ? <i className="tac-mk-cross" /> : null}
+                    </span>
+                  ) : null}
+                  {isCap ? (
+                    <span className="tac-cap" title="队长" aria-hidden="true">
+                      C
+                    </span>
+                  ) : null}
+                  {dup ? (
+                    <span className="tac-mk-dup" aria-hidden="true">
+                      ⚠
                     </span>
                   ) : null}
                   <b>{p.position}</b>
@@ -879,7 +1126,395 @@ export default function Tactics() {
         </section>
 
         <div className="tac-side">
-          <section className="card tac-code-panel">
+        {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛口径跟着它走。
+            手里有代打授权时上面多一个身份切换器，切过去后整页（名单/口径/提交）都换成目标队。 */}
+        {(selfPlayers != null || (proxySessions?.length ?? 0) > 0) && (
+          <section className="card tac-submit" hidden={zone !== "lineup"}>
+            <div className="tac-submit-head">
+              <h2>
+                选择目标比赛{" "}
+                <small>{proxyOn ? "代打模式 · 替别人递交阵容" : "赛前备案 · 开赛后公开"}</small>
+              </h2>
+              <button className="btn" onClick={toggleSubmit}>
+                {subOpen ? "收起" : "展开"}
+              </button>
+            </div>
+            {subOpen && (
+              <div className="tac-submit-body">
+                {(proxySessions?.length ?? 0) > 0 && (
+                  <div className="tac-identity">
+                    <label className="field">
+                      当前编辑
+                      <select
+                        aria-label="选择编辑身份"
+                        value={proxyOn ? String(proxyMid ?? "") : ""}
+                        onChange={(e) => pickIdentity(e.target.value)}
+                      >
+                        <option value="">{selfTeamName ?? "我执教的球队"}</option>
+                        {(proxySessions ?? []).map((s) => (
+                          <option key={s.matchId} value={s.matchId}>
+                            代打 {s.teamName} · {s.tournamentName} 第{s.round}轮 vs{" "}
+                            {s.opponentName ?? "待定"}
+                            {s.submitted ? "（已提交）" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {proxyOn && (
+                      <p className="tac-warn">
+                        你正在替「{proxySession?.teamName ?? "目标队"}」递交本场阵容
+                        {proxySession?.grantedByName ? `（${proxySession.grantedByName} 授权）` : ""}；
+                        球员下拉与伤停停赛口径已切到该队，本队教练在此期间不能提交本场阵容。
+                      </p>
+                    )}
+                  </div>
+                )}
+                {proxyOn && !board ? (
+                  <p className="tac-hint">
+                    {boardBusy || subMsg?.t !== "err" ? "正在读取代打数据…" : subMsg.text}
+                    {!boardBusy && subMsg?.t === "err" && (
+                      <button className="btn btn-sm" onClick={() => setBoardNonce((n) => n + 1)}>
+                        重试
+                      </button>
+                    )}
+                  </p>
+                ) : (
+                <div className="tac-submit-cols">
+                  <div className="tac-submit-main">
+                    {proxyOn ? (
+                      <p className="tac-target">
+                        {proxySession
+                          ? `${proxySession.tournamentName} · ${
+                              proxySession.stageName ?? STAGE_ZH[proxySession.stageKind]
+                            } 第${proxySession.round}轮${
+                              proxySession.leg ? ` · 第${proxySession.leg}回合` : ""
+                            } · ${proxySession.side === "home" ? "主" : "客"} vs ${
+                              proxySession.opponentName ?? "待定"
+                            }`
+                          : "代打目标比赛"}
+                      </p>
+                    ) : (
+                      <select
+                        aria-label="选择目标比赛"
+                        value={subMatchId ?? ""}
+                        onChange={(e) => pickSubMatch(e.target.value)}
+                      >
+                        <option value="">选择目标比赛…</option>
+                        {(subMatches ?? []).map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.tournamentName} · {m.stageName ?? STAGE_ZH[m.stageKind]} 第{m.round}轮
+                            {m.leg ? ` · 第${m.leg}回合` : ""} · {m.side === "home" ? "主" : "客"} vs{" "}
+                            {m.opponentName ?? "待定"}
+                            {m.submitted ? "（已提交）" : ""}
+                            {m.proxyGranted ? "（已授权他人代打）" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {!proxyOn && subMatches != null && subMatches.length === 0 && (
+                      <p className="tac-hint">你的球队当前没有待开的比赛。</p>
+                    )}
+                    {blockedByProxy && (
+                      <p className="tac-warn">
+                        本场阵容已授权他人代打，你暂不能提交；等管理员撤销或比赛开打后恢复。
+                      </p>
+                    )}
+                    {mine && (
+                      <p className="tac-hint">
+                        该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
+                        {formTitle(mine.form)}）
+                        {mine.submittedBy ? `，提交人 ${mine.submittedBy}` : ""}
+                        {mine.viaProxy ? "（代打）" : ""}，再次提交将覆盖。
+                        <button className="btn btn-sm" onClick={() => applySubmitted(mine)}>
+                          载入本次已提交的阵容
+                        </button>
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 伤停与停赛：停赛按所选比赛的赛事算 */}
+                  {status && (status.tournaments.length > 0 || injList.length > 0) && (
+                    <div className="tac-status tac-submit-status">
+                      <h2>
+                        伤停与停赛 {statusTName ? <small>{statusTName}</small> : null}
+                        {statusBusy ? <small className="tac-status-busy">更新中…</small> : null}
+                      </h2>
+                      {suspList.length === 0 && nearList.length === 0 && injList.length === 0 ? (
+                        <p className="tac-hint">{statusBusy ? "读取中…" : "本队无异常。"}</p>
+                      ) : (
+                        <ul className="tac-status-list">
+                          {suspList.map((p) => (
+                            <li key={`s${p.playerId}`}>
+                              <span className="tac-status-name">{p.playerName}</span>
+                              <span className="susp-badge">停赛 剩{p.remaining}场</span>
+                            </li>
+                          ))}
+                          {nearList.map((p) => (
+                            <li key={`y${p.playerId}`}>
+                              <span className="tac-status-name">{p.playerName}</span>
+                              <span className="yc-badge">再1黄停赛（已{p.yellows}张）</span>
+                            </li>
+                          ))}
+                          {injList.map((i) => (
+                            <li key={`i${i.playerId}`}>
+                              <span className="tac-status-name">{i.playerName}</span>
+                              <span className="injury-badge">伤停</span>
+                              {i.out ? <span className="tac-out-badge">缺本场</span> : null}
+                              <span className="tac-status-note">
+                                {i.injuryName ?? "伤病"} · 剩{i.rest}场 · 恢复{i.pct}%
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+          <section className="card tac-bench" hidden={zone !== "lineup"}>
+            <h2>
+              替补席 <small>9 人 · 不进战术码，仅本机保存</small>
+            </h2>
+            <div className="tac-bench-grid">
+              {BENCH.map((i) => {
+                const key = `b${i}`;
+                const v = names[key] ?? "";
+                return (
+                  <label className="tac-bench-slot" key={key}>
+                    <span className="tac-bench-no">{i + 1}</span>
+                    {teamPlayers ? (
+                      <select
+                        value={teamPlayers.some((x) => String(x.id) === v) ? v : ""}
+                        onChange={(e) => {
+                          const nv = e.target.value;
+                          setNames((n) => {
+                            const next = { ...n };
+                            if (nv) next[key] = nv;
+                            else delete next[key];
+                            return next;
+                          });
+                        }}
+                        aria-label={`替补 ${i + 1}`}
+                      >
+                        <option value="">（未选）</option>
+                        {teamPlayers.map((p) => (
+                          <option key={p.id} value={String(p.id)}>
+                            {`${p.number ? `#${p.number} ${p.name}` : p.name}${optionSuffix(p.id)}`}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        maxLength={16}
+                        placeholder="替补名字"
+                        value={v}
+                        aria-label={`替补 ${i + 1}`}
+                        onChange={(e) =>
+                          setNames((n) => ({
+                            ...n,
+                            [key]: e.target.value.trim(),
+                          }))
+                        }
+                      />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* ① 本场备案 · 球员指派：FC26「球队管理 → 指派」18 项。候选池＝本场场上 11 名首发。
+              只存已填项，键是角色不是位置，换阵型不影响；未填完不拦提交，互斥冲突拦提交。 */}
+          <section className="card tac-assign" hidden={zone !== "lineup"}>
+            <div className="tac-assign-head">
+              <h2>
+                球员指派 <small>FC26 球队管理 · 指派</small>
+              </h2>
+              {assignConflictList.length > 0 ? (
+                <span className="tac-assign-bad">冲突 {assignConflictList.length}</span>
+              ) : (
+                <span className="tac-assign-ok">
+                  已填 {assignFilled.length}/{ASSIGN_KEYS.length}
+                </span>
+              )}
+              <button className="btn" onClick={toggleAssignOpen}>
+                {assignOpen ? "收起" : "展开"}
+              </button>
+            </div>
+            <p className="tac-assign-sum">{assignSummary}</p>
+            {assignOpen && (
+              <>
+                {assignPool.length < 11 && (
+                  <p className="tac-warn">
+                    先把场上 11 个位置选满（现在 {assignPool.length}/11）——指派只能从本场首发里点人。
+                  </p>
+                )}
+                <div className="tac-assign-grid">
+                  {ASSIGN_GROUPS.map((g) => (
+                    <section className="tac-assign-group" key={g.title}>
+                      <h3>
+                        {g.title} <small>{g.note}</small>
+                      </h3>
+                      {g.items.map((it) => {
+                        const v = assign[it.key];
+                        const bad = conflictKeys.has(it.key);
+                        return (
+                          <label
+                            className={`tac-assign-field${bad ? " bad" : ""}`}
+                            key={it.key}
+                            title={it.hint}
+                          >
+                            <span>{it.label}</span>
+                            <select
+                              aria-label={`${g.title} · ${it.label}`}
+                              value={v ?? ""}
+                              onChange={(e) =>
+                                setAssignKey(
+                                  it.key,
+                                  e.target.value ? Number(e.target.value) : null,
+                                )
+                              }
+                            >
+                              <option value="">（未指派）</option>
+                              {v != null && !assignPool.some((c) => c.id === v) && (
+                                <option value={v}>{playerTag(v)}（已不在首发）</option>
+                              )}
+                              {assignPool.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {poolLabel(c)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        );
+                      })}
+                    </section>
+                  ))}
+                </div>
+                {assignConflictList.length > 0 && (
+                  <p className="tac-warn">
+                    {assignConflictList.map(conflictText).join("；")}
+                    <button className="btn btn-sm" onClick={clearAssignConflicts}>
+                      清除冲突项
+                    </button>
+                  </p>
+                )}
+                <p className="tac-hint">
+                  一人可以兼多项（队长兼点球、同一人开两侧角球都行），但开角球的人和禁区里抢点的人
+                  不能是同一个。
+                </p>
+              </>
+            )}
+          </section>
+
+          {/* ① 本场备案 · 收尾：风险提示与两击确认提交。文案分支按本队/代打两套保留 */}
+          <section className="card tac-submit-bar" hidden={zone !== "lineup"}>
+            <h2>
+              提交阵容{" "}
+              <small>
+                {proxyOn
+                  ? `代打 · ${proxySession?.teamName ?? "目标队"}`
+                  : "整份覆盖 · 阵容与指派一起交"}
+              </small>
+            </h2>
+            {risks.length > 0 && (
+              <p className="tac-warn">名单里有状态异常的球员：{risks.join("、")}</p>
+            )}
+            {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
+            <button
+              className={`btn ${armSubmit ? "btn-danger" : "tac-btn-primary"}`}
+              disabled={curMid == null || subBusy || blockedByProxy}
+              onClick={submitLineup}
+            >
+              {proxyOn
+                ? armSubmit
+                  ? "确认代打提交?"
+                  : mine
+                    ? "覆盖代打阵容"
+                    : "代打提交"
+                : armSubmit
+                  ? "确认提交?"
+                  : mine
+                    ? "覆盖提交"
+                    : "提交阵容"}
+            </button>
+            <p className="tac-hint">
+              {curMid == null
+                ? "先在上面选一场待开的比赛。"
+                : "开赛前可反复覆盖；开赛后锁定，公开端随即亮牌。"}
+            </p>
+          </section>
+
+          <section className="card tac-archives" hidden={zone !== "tools"}>
+            <h2>
+              战术存档 <small>含人员分配 · 同队共享</small>
+            </h2>
+            {teamPlayers ? (
+              <>
+                <div className="tac-arch-save">
+                  <input
+                    className="tac-code-input"
+                    value={saveNote}
+                    maxLength={24}
+                    placeholder="存档名（选填，如：客场防反）"
+                    aria-label="存档名"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) => setSaveNote(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveArchive();
+                    }}
+                  />
+                  <button
+                    className="btn tac-btn-primary"
+                    disabled={archBusy}
+                    onClick={saveArchive}
+                  >
+                    存当前
+                  </button>
+                </div>
+                {archives != null && archives.length === 0 && (
+                  <p className="tac-hint">还没有存档。调好战术后点「存当前」。</p>
+                )}
+                {archives != null && archives.length > 0 && (
+                  <div className="tac-arch-list">
+                    {archives.map((a) => (
+                      <div className="tac-arch-card" key={a.id}>
+                        <div className="tac-arch-info">
+                          <b>{a.note || "未命名存档"}</b>
+                          <small>
+                            {formTitle(a.form)} · {BU_ZH[a.buildup as Buildup] ?? a.buildup} · 防线{" "}
+                            {a.lineHeight} · {a.createdAt.slice(0, 10)}
+                          </small>
+                        </div>
+                        <div className="tac-arch-act">
+                          <button className="btn tac-btn-primary" onClick={() => loadArchive(a)}>
+                            载入
+                          </button>
+                          <button
+                            className={`btn ${armDel === a.id ? "btn-danger" : ""}`}
+                            disabled={archBusy}
+                            onClick={() => deleteArchive(a.id)}
+                          >
+                            {armDel === a.id ? "确认删?" : "删"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="tac-hint">登录并绑定球队后可存档，与同队教练共享。</p>
+            )}
+          </section>
+          <section className="card tac-code-panel" hidden={zone !== "design"}>
             <div className="tac-code-row">
               <div className="tac-codebox">
                 <code>{code}</code>
@@ -890,7 +1525,7 @@ export default function Tactics() {
             </div>
           </section>
 
-          <section className="card tac-import-panel">
+          <section className="card tac-import-panel" hidden={zone !== "tools"}>
             <div className="tac-import-row">
               <input
                 className="tac-code-input"
@@ -912,7 +1547,7 @@ export default function Tactics() {
           </section>
 
           <div className="tac-duo">
-            <section className="card tac-settings">
+            <section className="card tac-settings" hidden={zone !== "design"}>
               <h2>战术设置</h2>
               <div className="tac-ctl-row">
                 <select
@@ -1055,131 +1690,30 @@ export default function Tactics() {
                   </select>
                 </label>
                 {selRisk && <p className="tac-warn">{selRisk}。</p>}
+                {selAssigns.length > 0 && (
+                  <div className="tac-editor-assign">
+                    <span>本场指派</span>
+                    {selAssigns.map((k) => (
+                      <button
+                        key={k}
+                        className={`tac-chip${conflictKeys.has(k) ? " bad" : ""}`}
+                        title="清除这一项指派"
+                        onClick={() => setAssignKey(k, null)}
+                      >
+                        {ASSIGN_LABEL[k]} ✕
+                      </button>
+                    ))}
+                  </div>
+                )}
               </section>
             )}
           </div>
         </div>
 
-        <section className="card tac-archives">
-          <h2>
-            战术存档 <small>含人员分配 · 同队共享</small>
-          </h2>
-          {teamPlayers ? (
-            <>
-              <div className="tac-arch-save">
-                <input
-                  className="tac-code-input"
-                  value={saveNote}
-                  maxLength={24}
-                  placeholder="存档名（选填，如：客场防反）"
-                  aria-label="存档名"
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(e) => setSaveNote(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") saveArchive();
-                  }}
-                />
-                <button
-                  className="btn tac-btn-primary"
-                  disabled={archBusy}
-                  onClick={saveArchive}
-                >
-                  存当前
-                </button>
-              </div>
-              {archives != null && archives.length === 0 && (
-                <p className="tac-hint">还没有存档。调好战术后点「存当前」。</p>
-              )}
-              {archives != null && archives.length > 0 && (
-                <div className="tac-arch-list">
-                  {archives.map((a) => (
-                    <div className="tac-arch-card" key={a.id}>
-                      <div className="tac-arch-info">
-                        <b>{a.note || "未命名存档"}</b>
-                        <small>
-                          {formTitle(a.form)} · {BU_ZH[a.buildup as Buildup] ?? a.buildup} · 防线{" "}
-                          {a.lineHeight} · {a.createdAt.slice(0, 10)}
-                        </small>
-                      </div>
-                      <div className="tac-arch-act">
-                        <button className="btn tac-btn-primary" onClick={() => loadArchive(a)}>
-                          载入
-                        </button>
-                        <button
-                          className={`btn ${armDel === a.id ? "btn-danger" : ""}`}
-                          disabled={archBusy}
-                          onClick={() => deleteArchive(a.id)}
-                        >
-                          {armDel === a.id ? "确认删?" : "删"}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="tac-hint">登录并绑定球队后可存档，与同队教练共享。</p>
-          )}
-        </section>
-
-        <section className="card tac-bench">
-          <h2>
-            替补席 <small>9 人 · 不进战术码，仅本机保存</small>
-          </h2>
-          <div className="tac-bench-grid">
-            {BENCH.map((i) => {
-              const key = `b${i}`;
-              const v = names[key] ?? "";
-              return (
-                <label className="tac-bench-slot" key={key}>
-                  <span className="tac-bench-no">{i + 1}</span>
-                  {teamPlayers ? (
-                    <select
-                      value={teamPlayers.some((x) => String(x.id) === v) ? v : ""}
-                      onChange={(e) => {
-                        const nv = e.target.value;
-                        setNames((n) => {
-                          const next = { ...n };
-                          if (nv) next[key] = nv;
-                          else delete next[key];
-                          return next;
-                        });
-                      }}
-                      aria-label={`替补 ${i + 1}`}
-                    >
-                      <option value="">（未选）</option>
-                      {teamPlayers.map((p) => (
-                        <option key={p.id} value={String(p.id)}>
-                          {`${p.number ? `#${p.number} ${p.name}` : p.name}${optionSuffix(p.id)}`}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      maxLength={16}
-                      placeholder="替补名字"
-                      value={v}
-                      aria-label={`替补 ${i + 1}`}
-                      onChange={(e) =>
-                        setNames((n) => ({
-                          ...n,
-                          [key]: e.target.value.trim(),
-                        }))
-                      }
-                    />
-                  )}
-                </label>
-              );
-            })}
-          </div>
-        </section>
       </div>
 
       <footer className="tac-foot">
-        代码不包含球员名，名字只存在你的浏览器里。
+        战术码不含球员名与指派（名字只存在你的浏览器里）；阵容与指派提交后才落到服务器。
       </footer>
 
       {selected != null && <button className="tac-scrim" aria-label="关闭球员卡" onClick={() => setSelected(null)} />}
