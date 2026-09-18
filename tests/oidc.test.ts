@@ -272,6 +272,14 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     const out = (await (await app.request("/api/auth/logout", { method: "POST" }, env)).json()) as { ok: boolean; redirect?: string };
     expect(out.ok).toBe(true);
     expect(out.redirect).toBeUndefined();
+
+    // 增量 9D：注册直写 user 表已删，兼容模式一律 410（改密同理，但需登录态才到 410 判定）
+    const reg = await app.request(
+      "/api/auth/register",
+      { method: "POST", body: JSON.stringify({ name: "x", password: "TestPass123" }), headers: { "content-type": "application/json" } },
+      env,
+    );
+    expect(reg.status).toBe(410);
   });
 
   it("OIDC 模式：旧登录/注册/改密端点移交认证中心，/api/auth/me 未登录也回 200", async () => {
