@@ -445,7 +445,7 @@ export default function Tactics() {
     const next = new URLSearchParams(sp);
     if (z === (canLineup ? "lineup" : "design")) next.delete("zone");
     else next.set("zone", z);
-    setSp(next, { replace: true });
+    setSp(next);
   }
 
   useEffect(
@@ -1046,6 +1046,11 @@ export default function Tactics() {
             {z.label}
           </button>
         ))}
+        {canLineup && (
+          <span className={`tac-zone-mode${proxyOn ? " proxy" : ""}`} aria-live="polite">
+            {proxyOn && proxySession ? `代打：${proxySession.teamName}` : "本队备案"}
+          </span>
+        )}
       </nav>
 
       <div className="tac-layout">
@@ -1455,6 +1460,11 @@ export default function Tactics() {
             <h2>
               战术存档 <small>含人员分配 · 同队共享</small>
             </h2>
+            {proxyOn && (
+              <p className="tac-warn">
+                代打模式：存档按你的账号落进你自己球队，不会存进「{proxySession?.teamName ?? "目标队"}」；载入时把阵型、名单与指派带回当前身份。
+              </p>
+            )}
             {teamPlayers ? (
               <>
                 <div className="tac-arch-save">

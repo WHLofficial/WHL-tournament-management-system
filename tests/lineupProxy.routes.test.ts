@@ -383,4 +383,21 @@ describe("教练端代打", () => {
       [803, false],
     ]);
   });
+
+  it("同一场同一队有多条未撤销授权时，/me/matches 仍然只回一条（授权台允许一场授多人）", async () => {
+    const { env } = freshEnv();
+    await grantRedToB(env, 802);
+    // 授权台的账号候选只含有球队绑定的账号，所以第二条直接用 SQL 造：
+    // 红队 802 这场同时授给教练乙和管理员，本队教练看到的仍应是一行
+    await env.DB.prepare(
+      "INSERT INTO lineup_proxy_grant (match_id, team_id, grantee_user_id, granted_by) VALUES (802, 10, 3, 3)",
+    ).run();
+    const b = (await (await req(env, "a", "/api/coach/me/matches")).json()) as {
+      matches: { id: number; proxyGranted: boolean }[];
+    };
+    expect(b.matches.map((m) => [m.id, m.proxyGranted])).toEqual([
+      [802, true],
+      [803, false],
+    ]);
+  });
 });

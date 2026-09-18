@@ -1556,7 +1556,9 @@ button.add-stage {
   display: grid;
   grid-template-columns: 400px 1fr;
   gap: 16px;
-  align-items: stretch;
+  /* 球场卡按自己的 10/13 定高（400px 宽 → 约 520px 高），不跟着右栏拉伸：
+     右栏放进①本场备案的一叠卡后动辄两三千像素高，拉伸会把绿色球场拉成一根竖条 */
+  align-items: start;
 }
 .tac-pitch-panel {
   display: flex;
@@ -3043,6 +3045,24 @@ button.add-stage {
   border-color: var(--pitch-deep);
   color: #fff;
 }
+/* 层条右端的模式徽标：切到②③层后球场磁贴显示的仍是当前身份的名单，必须一眼看出在替谁做事 */
+.tac-zone-mode {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #eef4ef;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.tac-zone-mode.proxy {
+  background: #fde8d0;
+  color: #9a4b06;
+  font-weight: 600;
+}
 
 /* 右栏卡片顺序（桌面＝右栏列内顺序；手机 display:contents 后同一条链决定整页顺序）。
    ① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8-9；1 是常驻核心（选中位置编辑器）。 */
@@ -3293,6 +3313,11 @@ button.add-stage {
     padding: 6px 0;
     margin-bottom: 6px;
     background: var(--chalk);
+  }
+  /* 手机上徽标排到最前：层条要横滚，排在右端会被推出视口看不见 */
+  .tac-zone-mode {
+    order: -1;
+    margin-left: 0;
   }
   /* 指派 5 组在手机上单列铺开，组内项目保持一行一项 */
   .tac-assign-grid {

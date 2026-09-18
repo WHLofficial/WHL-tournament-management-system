@@ -153,7 +153,8 @@ app.get("/me/matches", async (c) => {
      LEFT JOIN team ht ON ht.id = he.team_id
      LEFT JOIN team at ON at.id = ae.team_id
      LEFT JOIN tactic_submission ts ON ts.match_id = m.id AND ts.team_id = ?
-     LEFT JOIN lineup_proxy_grant g ON g.match_id = m.id AND g.team_id = ? AND g.revoked_at IS NULL
+     LEFT JOIN lineup_proxy_grant g ON g.id = (SELECT MIN(g2.id) FROM lineup_proxy_grant g2
+       WHERE g2.match_id = m.id AND g2.team_id = ? AND g2.revoked_at IS NULL)
      WHERE m.status = 'pending' AND t.status != 'draft'
        AND (m.note IS NULL OR m.note != '轮空')
        AND (he.team_id = ? OR ae.team_id = ?)
