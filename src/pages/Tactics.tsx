@@ -1164,6 +1164,9 @@ export default function Tactics() {
           )}
         </nav>
 
+        {/* 页签右边这一叠卡：自己一列，跟竖排页签各自从顶头开始排 */}
+        <div className="tac-side-body">
+
         {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛跟着它走。
             手里有代打授权时上面多一个身份切换器，切过去后整页（名单/口径/提交）都换成目标队。 */}
         {(selfPlayers != null || (proxySessions?.length ?? 0) > 0) && (
@@ -1754,6 +1757,7 @@ export default function Tactics() {
               </section>
             )}
           </div>
+        </div>
         </div>
 
       </div>

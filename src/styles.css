@@ -1489,7 +1489,8 @@ button.add-stage {
 
 /* ---------- #13 战术板（公开工具页 /tactics） ---------- */
 .tac-page {
-  max-width: 1060px;
+  /* 右栏多了一列竖排页签（约 110px），页面基准宽度跟着放宽，卡片不至于被挤薄 */
+  max-width: 1160px;
   margin: 0 auto;
   padding: 18px 16px 24px;
 }
@@ -1633,7 +1634,15 @@ button.add-stage {
 .tac-tile:hover {
   filter: brightness(1.12);
 }
+/* 右栏＝左边一列竖排页签 + 右边一叠卡。两列各自从顶头往下排，互不牵动高度 */
 .tac-side {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  min-width: 0;
+}
+.tac-side-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2110,6 +2119,10 @@ button.add-stage {
   .tac-side {
     display: contents;
   }
+  /* 卡片那层也摊平，让卡片自己回到这一条 order 链上（写平了也照样匹配） */
+  .tac-side-body {
+    display: contents;
+  }
   /* 左列也摊平，让球场和战术码回到这一条 order 链上：战术码紧跟在球场后面 */
   .tac-left {
     display: contents;
@@ -2122,7 +2135,7 @@ button.add-stage {
   .tac-code-panel {
     order: 1;
   }
-  /* 卡片顺序统一由 .tac-side > * 的 order 管（display:contents 下仍然匹配），这里不再重复 */
+  /* 卡片顺序统一由 .tac-side-body > * 的 order 管（两层 display:contents 下仍然匹配），这里不再重复 */
   .tac-duo {
     flex: 0 0 auto;
   }
@@ -3039,24 +3052,25 @@ button.add-stage {
 .card[hidden] {
   display: none !important;
 }
+/* 分区页签：右栏最左边的竖列（横排时是下划线页签，竖排就是左侧竖条） */
 .tac-zones {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0 0 14px;
-  border-bottom: 2px solid var(--border);
-  overflow-x: auto;
-  scrollbar-width: thin;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin: 0;
+  border-left: 2px solid var(--border);
 }
 .tac-zone {
-  flex: 0 0 auto;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
+  border-left: 2px solid transparent;
+  /* 高亮竖条压在基线上，和横排时下划线的做法一致 */
+  margin-left: -2px;
   background: none;
   color: var(--muted);
-  font: 600 15px/1.3 inherit;
+  font: 600 14px/1.3 inherit;
+  text-align: left;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -3065,20 +3079,20 @@ button.add-stage {
 }
 .tac-zone.on {
   color: var(--pitch);
-  border-bottom-color: var(--pitch);
+  border-left-color: var(--pitch);
 }
-/* 层条右端的模式徽标：切到②③层后球场磁贴显示的仍是当前身份的名单，必须一眼看出在替谁做事 */
+/* 层条下方的模式徽标：切到②③层后球场磁贴显示的仍是当前身份的名单，必须一眼看出在替谁做事 */
 .tac-zone-mode {
-  flex: 0 0 auto;
-  align-self: center;
-  margin-left: auto;
+  align-self: flex-start;
+  margin: 8px 0 0;
   padding: 3px 10px;
   border-radius: 999px;
   background: #eef4ef;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.5;
-  white-space: nowrap;
+  /* 窄竖列里宁可换行，也不要把整条页签撑宽 */
+  white-space: normal;
 }
 .tac-zone-mode.proxy {
   background: #fde8d0;
@@ -3086,29 +3100,30 @@ button.add-stage {
   font-weight: 600;
 }
 
-/* 右栏卡片顺序（桌面＝右栏列内顺序；手机 display:contents 后同一条链决定整页顺序）。
+/* 右栏卡片顺序（桌面＝右栏那一叠卡里由上往下的顺序；手机两层 display:contents 摊平后，
+   同一条链决定整页顺序）。
    0 是分区页签、1 是常驻核心（选中位置编辑器）、① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8。
    战术码已经挪出右栏（跟在球场下面），手机端 order 在 @media 里单独给。 */
 .tac-side > .tac-zones {
   order: 0;
 }
-.tac-side > .tac-duo {
+.tac-side-body > .tac-duo {
   order: 1;
 }
-.tac-side > .tac-submit {
+.tac-side-body > .tac-submit {
   order: 2;
   margin-bottom: 0;
 }
-.tac-side > .tac-bench {
+.tac-side-body > .tac-bench {
   order: 3;
 }
-.tac-side > .tac-submit-bar {
+.tac-side-body > .tac-submit-bar {
   order: 5;
 }
-.tac-side > .tac-import-panel {
+.tac-side-body > .tac-import-panel {
   order: 8;
 }
-.tac-side > .tac-archives {
+.tac-side-body > .tac-archives {
   order: 9;
 }
 
@@ -3363,24 +3378,41 @@ button.add-stage {
 }
 
 @media (max-width: 979px) {
-  /* 手机上层条吸顶：滚到面板深处也能立刻换层（球场在上、面板在下，层条压在最前） */
+  /* 手机上层条吸顶：滚到面板深处也能立刻换层（球场在上、面板在下，层条压在最前）。
+     窄屏没有竖排的空间，回到横排下划线页签 */
   .tac-zones {
     position: sticky;
     top: 0;
     z-index: 20;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
     padding: 6px 0;
     margin-bottom: 6px;
+    border-left: none;
+    border-bottom: 2px solid var(--border);
     background: var(--chalk);
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
   /* 手机上徽标排到最前：层条要横滚，排在右端会被推出视口看不见 */
   .tac-zone-mode {
     order: -1;
-    margin-left: 0;
+    align-self: center;
+    margin: 0;
   }
   .tac-zone {
+    flex: 0 0 auto;
     min-height: 32px;
     padding: 6px 12px;
+    border-bottom: 2px solid transparent;
+    margin-left: 0;
+    margin-bottom: -2px;
     font-size: 13px;
+  }
+  .tac-zone.on {
+    border-left-color: transparent;
+    border-bottom-color: var(--pitch);
   }
 }
 @media (max-width: 560px) {
