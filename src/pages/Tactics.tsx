@@ -20,6 +20,7 @@ import {
   defaultPair,
   encodeFut26,
   errText,
+  focusAbbr,
   formTitle,
   isAssignKey,
   lhBucket,
@@ -31,6 +32,8 @@ import {
   type Buildup,
   type TacticState,
 } from "../../shared/tactics";
+import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
+import { TILE_NAME_MAX, heatSide, nameFontSize, surname, tilePositions } from "../lib/pitch";
 import type {
   CoachPendingMatchDTO,
   CoachStatusPlayerDTO,
@@ -93,25 +96,7 @@ function sanitizeAssign(raw: unknown): Record<string, number> {
   return out;
 }
 
-// 磁贴坐标（%）：原战术板照搬；同位多人在 central 组散开，三中卫时 RB/LB 回收到中圈高度
-const POS_XY: Record<string, [number, number]> = {
-  GK: [50, 6],
-  CB: [50, 20],
-  RB: [84, 28],
-  LB: [16, 28],
-  CDM: [50, 38],
-  CM: [50, 53],
-  RM: [80, 55],
-  LM: [20, 55],
-  CAM: [50, 70],
-  RW: [78, 79],
-  LW: [22, 79],
-  ST: [50, 88],
-};
-const SPREAD: Record<number, number[]> = { 2: [-13, 13], 3: [-22, 0, 22], 4: [-24, -8, 8, 24] };
-const CENTRAL: Record<string, number | undefined> = { CB: 1, CDM: 1, CM: 1, CAM: 1, ST: 1 };
-// 同位多人的左右：阵型槽序按「右→左」枚举（数据里 RB 在 LB 前、RM 在 LM 前、RW 在 LW 前，
-// 而游戏把 RW 画在右），所以槽序在前的人画在靠右——取偏移时下标倒着走（见磁贴渲染处）。
+// 磁贴摆位表在 src/lib/pitch.ts（与赛前情报的小战术板共用一套），这里只负责渲染。
 
 function loadLS<T>(k: string, d: T): T {
   try {
@@ -1029,13 +1014,14 @@ export default function Tactics() {
     }))
     .filter((i) => i.rest > 0);
 
-  // 磁贴坐标：同位多人散开 + 三中卫回收
-  const counts: Record<string, number> = {};
-  form.pos.forEach((p) => {
-    counts[p.position] = (counts[p.position] || 0) + 1;
-  });
-  const seen: Record<string, number> = {};
-  const cbN = counts.CB || 0;
+  // 磁贴坐标：同位多人散开 + 三中卫回收（算法在 src/lib/pitch.ts）
+  const tiles = tilePositions(form.pos.map((p) => p.position));
+  // 选中球员当前角色的活动热区（FC26 数据）。中轴线上的位置在数据里分了左右两套，
+  // 按这名球员所在槽位偏左还是偏右取（heatSide 在 src/lib/pitch.ts）。
+  // 没选中、或这个「位置 + 角色 + 重心」组合查不到时为 null。
+  const selIdx = sel ? form.pos.findIndex((p) => p.lid === sel.lid) : -1;
+  const heat =
+    sel && selIdx >= 0 ? heatOf(sel.position, sel.role, sel.focus, heatSide(tiles[selIdx][0])) : null;
 
   return (
     <main className="tac-page">
@@ -1055,7 +1041,15 @@ export default function Tactics() {
         {/* 左列：球场 + 战术码。战术码跟着球场走，不随分区页签隐藏 */}
         <div className="tac-left">
           <section className="card tac-pitch-panel">
-            <div className="tac-pitch">
+            <div
+              className={`tac-pitch${heat ? " heat-on" : ""}`}
+              onClick={(e) => {
+                const el = e.target as Element | null;
+                if (!el?.closest?.(".tac-tile")) setSelected(null);
+              }}
+            >
+              {/* 选中球员时压暗草地，让热区像全息图一样浮出来（没选中时完全透明） */}
+              <div className="tac-pitch-veil" aria-hidden="true" />
               <svg viewBox="0 0 100 130" preserveAspectRatio="none" aria-hidden="true">
                 <g fill="none" stroke="rgba(244,246,243,.75)" strokeWidth=".6">
                   <rect x="3" y="3" width="94" height="124" />
@@ -1078,19 +1072,28 @@ export default function Tactics() {
                   <circle cx="50" cy="9.5" r=".8" />
                 </g>
               </svg>
+              {/* 选中球员的活动热区：盖在球场线之上、压在磁贴之下 */}
+              {heat ? (
+                <svg className="tac-heat" viewBox="0 0 100 130" preserveAspectRatio="none" aria-hidden="true">
+                  {heat.map((lv, i) =>
+                    lv > 0 ? (
+                      <rect
+                        key={i}
+                        className={`tac-heat-${lv}`}
+                        x={(i % HEAT_COLS) * (100 / HEAT_COLS)}
+                        y={Math.floor(i / HEAT_COLS) * (130 / HEAT_ROWS)}
+                        width={100 / HEAT_COLS}
+                        height={130 / HEAT_ROWS}
+                      />
+                    ) : null,
+                  )}
+                </svg>
+              ) : null}
               {form.pos.map((p, i) => {
-                const xy = [...POS_XY[p.position]];
-                if (CENTRAL[p.position] && counts[p.position] > 1) {
-                  const n = counts[p.position];
-                  xy[0] += SPREAD[n][n - 1 - (seen[p.position] || 0)];
-                }
-                if (cbN >= 3) {
-                  if (p.position === "RB" || p.position === "LB") xy[1] = 38;
-                  if (p.position === "CB") xy[1] = 24;
-                }
-                seen[p.position] = (seen[p.position] || 0) + 1;
+                const xy = tiles[i];
                 const pl = players[i];
                 const nm = displayName(names[String(p.lid)]);
+                const short = nm ? surname(nm) : "";
                 const pid = Number(names[String(p.lid)]);
                 const st = statOf(names[String(p.lid)]);
                 const dup = Number.isInteger(pid) && pid > 0 && dupPids.has(pid);
@@ -1122,12 +1125,40 @@ export default function Tactics() {
                         ⚠
                       </span>
                     ) : null}
-                    <b>{p.position}</b>
-                    {nm ? <small>{nm}</small> : null}
+                    <span className="tac-tile-top">
+                      <b>{p.position}</b>
+                      <span className="tac-tile-role">
+                        {pl.role} - {focusAbbr(pl.focus)}
+                      </span>
+                    </span>
+                    {nm ? (
+                      <small style={{ fontSize: `${nameFontSize(short, TILE_NAME_MAX)}px` }}>{short}</small>
+                    ) : null}
                   </button>
                 );
               })}
             </div>
+            {/* 常驻一行说明：选中/取消选中时高度不跳 */}
+            <p className="tac-heat-legend">
+              {sel ? (
+                <>
+                  <span className="tac-heat-title">热区</span>
+                  <span className="tac-heat-who">
+                    {sel.position} {displayName(names[String(sel.lid)]) || "未命名"} · {roleFull(sel.role)}（{sel.focus}）
+                  </span>
+                  <span className="tac-heat-key" aria-hidden="true">
+                    <i className="tac-heat-3" />
+                    频繁
+                    <i className="tac-heat-2" />
+                    经常
+                    <i className="tac-heat-1" />
+                    偶尔
+                  </span>
+                </>
+              ) : (
+                "点球场上的球员，看他的活动热区"
+              )}
+            </p>
           </section>
 
           {/* 战术码：摆在球场下面，与「这块板上现在是什么打法」紧挨着，任何一层都看得见 */}

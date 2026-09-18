@@ -201,6 +201,23 @@ export function roleFull(r: string): string {
   return ROLE_FULL[r] || r;
 }
 
+// 重心的缩写：磁贴上要跟角色码挤在一行（如 AF-A、BPD-AG），所以压到 1-2 个大写字母。
+const FOCUS_ABBR: Record<string, string> = {
+  Defend: "D",
+  Balanced: "B",
+  "Build-Up": "BU",
+  Support: "S",
+  Attack: "A",
+  Versatile: "V",
+  Aggressive: "AG",
+  "Ball-Winning": "BW",
+  Roaming: "R",
+  Wide: "W",
+};
+export function focusAbbr(f: string): string {
+  return FOCUS_ABBR[f] || f;
+}
+
 function dispName(v: string): string {
   const m = v.match(/^(\d+)(?:-(\d+))?$/);
   if (!m) return v;

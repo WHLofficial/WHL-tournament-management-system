@@ -8,7 +8,7 @@ import { AssignList } from "./LineupView";
 import { CardIcon } from "./Cards";
 import { FORMS, POS_ZH, formTitle } from "../../shared/tactics";
 import { recoverStageLabel } from "../../shared/injuries";
-import { tilePositions } from "../lib/pitch";
+import { surname, tilePositions } from "../lib/pitch";
 import type {
   H2HDTO,
   H2HFormItem,
@@ -482,7 +482,7 @@ function MiniPitch({ form, slots }: { form: string; slots: Map<number, MiniSlot>
               <>
                 <small>
                   {pl.number ? `#${pl.number} ` : ""}
-                  {pl.name ?? "已离队"}
+                  {pl.name ? surname(pl.name) : "已离队"}
                 </small>
                 {pl.starts != null && <i className="h2h-tile-n">×{pl.starts}</i>}
               </>

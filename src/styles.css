@@ -1530,8 +1530,9 @@ button.add-stage {
 
 /* ---------- #13 战术板（公开工具页 /tactics） ---------- */
 .tac-page {
-  /* 右栏多了一列竖排页签（约 110px），页面基准宽度跟着放宽，卡片不至于被挤薄 */
-  max-width: 1160px;
+  /* 右栏多了一列竖排页签（约 110px）+ 左列球场放宽到 480px（磁贴 92px 要摆得开），
+     页面基准宽度跟着放宽，卡片不至于被挤薄 */
+  max-width: 1240px;
   margin: 0 auto;
   padding: 18px 16px 24px;
 }
@@ -1596,9 +1597,9 @@ button.add-stage {
 }
 .tac-layout {
   display: grid;
-  grid-template-columns: 400px 1fr;
+  grid-template-columns: 480px 1fr;
   gap: 16px;
-  /* 球场卡按自己的 10/13 定高（400px 宽 → 约 520px 高），不跟着右栏拉伸：
+  /* 球场卡按自己的 10/13 定高（480px 宽 → 约 624px 高），不跟着右栏拉伸：
      右栏放进①阵容编排的一叠卡后动辄两三千像素高，拉伸会把绿色球场拉成一根竖条 */
   align-items: start;
 }
@@ -1611,15 +1612,17 @@ button.add-stage {
 }
 .tac-pitch-panel {
   display: flex;
+  flex-direction: column;
   padding: 10px 10px 0;
   aspect-ratio: 10 / 13;
-  /* 右栏比球场高时，行高会把面板拉高、宽高比再把宽度顶出 400px 的轨道，压到右栏卡片上；
+  /* 右栏比球场高时，行高会把面板拉高、宽高比再把宽度顶出 480px 的轨道，压到右栏卡片上；
      夹住宽度，宁可球场略微变长也不越界 */
   max-width: 100%;
 }
 .tac-pitch {
   position: relative;
   flex: 1;
+  min-height: 0;
   background: repeating-linear-gradient(
     0deg,
     var(--pitch) 0 12.5%,
@@ -1635,12 +1638,68 @@ button.add-stage {
   width: 100%;
   height: 100%;
 }
+/* 选中球员时压暗草地：热区像全息图一样浮在场上，没选中时完全透明（淡入淡出，高度不跳） */
+.tac-pitch-veil {
+  position: absolute;
+  inset: 0;
+  background: #04120c;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+  pointer-events: none;
+}
+.tac-pitch.heat-on .tac-pitch-veil {
+  opacity: 0.62;
+}
+/* 选中球员的活动热区：三层绿，压在球场线之上、磁贴之下（.tac-heat 那一层 svg）。
+   同一组类也用作图例色块，所以 fill / background 都写上 */
+.tac-heat-1 {
+  fill: rgba(14, 122, 70, 0.25);
+  background: rgba(14, 122, 70, 0.25);
+}
+.tac-heat-2 {
+  fill: rgba(0, 200, 130, 0.6);
+  background: rgba(0, 200, 130, 0.6);
+}
+.tac-heat-3 {
+  fill: rgba(0, 255, 166, 0.85);
+  background: rgba(0, 255, 166, 0.85);
+}
+/* 常驻图例行：占住一行高度，选中/取消选中时球场不跳 */
+.tac-heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 6px 2px 9px;
+  min-height: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tac-heat-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+.tac-heat-who {
+  color: var(--ink);
+}
+.tac-heat-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+.tac-heat-key i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
 .tac-tile {
   position: absolute;
   transform: translate(-50%, -50%);
-  min-width: 50px;
-  min-height: 46px;
-  padding: 3px 6px;
+  width: 92px;
+  min-height: 44px;
+  padding: 3px 4px;
   border-radius: 9px;
   border: 1.5px solid rgba(244, 246, 243, 0.9);
   background: rgba(26, 36, 32, 0.78);
@@ -1653,24 +1712,32 @@ button.add-stage {
   gap: 1px;
   cursor: pointer;
   text-align: center;
+  overflow: hidden;
 }
+/* 第一行：位置码 + 角色-重心缩写（AF-A、BPD-AG） */
+.tac-tile-top {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  justify-content: center;
+  max-width: 100%;
+}
+.tac-tile-role {
+  font: 600 10px/1.1 var(--mono);
+  color: rgba(244, 246, 243, 0.72);
+}
+/* 第二行：姓氏。固定一行、不换行、不省略，放不下由 nameFontSize() 缩字号（src/lib/pitch.ts） */
 .tac-tile small {
   font: 500 10px/1.15 system-ui, sans-serif;
-  max-width: 74px;
   color: rgba(244, 246, 243, 0.85);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
+  white-space: nowrap;
+  max-width: 100%;
 }
+/* 选中态：只描边，不整块反白（磁贴上的字保持浅色） */
 .tac-tile.sel {
   border-color: var(--live);
-  background: var(--live);
-  color: var(--ink);
-}
-.tac-tile.sel small {
-  color: rgba(26, 36, 32, 0.8);
+  border-width: 2px;
+  box-shadow: 0 0 0 2px rgba(232, 89, 12, 0.75);
 }
 .tac-tile:hover {
   filter: brightness(1.12);
@@ -1741,7 +1808,7 @@ button.add-stage {
 .tac-tile.both:not(.sel) { border-color: #c92a2a; }
 .tac-tile.sel.susp,
 .tac-tile.sel.inj,
-.tac-tile.sel.both { box-shadow: inset 0 0 0 2px rgba(209, 26, 26, 0.65); }
+.tac-tile.sel.both { box-shadow: inset 0 0 0 2px rgba(209, 26, 26, 0.65), 0 0 0 2px rgba(232, 89, 12, 0.75); }
 .tac-marks {
   position: absolute;
   top: 3px;
@@ -2226,10 +2293,8 @@ button.add-stage {
     font-size: 17px;
     letter-spacing: 2px;
   }
-  .tac-tile {
-    min-width: 44px;
-    min-height: 44px;
-  }
+  /* 磁贴 92x44 的尺寸不再随屏幕缩：缩小会让 4 后卫阵型的 RB/CB 撞在一起
+     （摆位表的零重叠保证见 tests/pitch.test.ts） */
   /* 指派网格的单列改写放在文件末尾那条 560px 里：基础槽位规则在它后面，写这儿会被盖掉 */
 }
 @media (min-width: 980px) {
@@ -3448,6 +3513,9 @@ button.add-stage {
   }
 }
 @media (max-width: 560px) {
+  /* 手机上球场与桌面同一个比例（.tac-pitch-panel 基础值 10/13），不再单独加高：
+     摆位表是 12% 一档的阶梯，375 视口下球场高约 395px，一档 47px > 磁贴高 44px。
+     更窄的屏靠横向兜底：同行磁贴隔 32%、边路与中路隔 34%（见 tests/pitch.test.ts）。 */
   .tac-assign-field select {
     min-height: 36px;
   }
