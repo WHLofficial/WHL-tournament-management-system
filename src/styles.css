@@ -1558,7 +1558,7 @@ button.add-stage {
   grid-template-columns: 400px 1fr;
   gap: 16px;
   /* 球场卡按自己的 10/13 定高（400px 宽 → 约 520px 高），不跟着右栏拉伸：
-     右栏放进①本场备案的一叠卡后动辄两三千像素高，拉伸会把绿色球场拉成一根竖条 */
+     右栏放进①阵容编排的一叠卡后动辄两三千像素高，拉伸会把绿色球场拉成一根竖条 */
   align-items: start;
 }
 /* 左列自己一叠：球场在上、战术码紧跟其下，右栏再高也顶不动它 */
@@ -3082,27 +3082,24 @@ button.add-stage {
   border-left-color: var(--pitch);
 }
 /* 层条下方的模式徽标：切到②③层后球场磁贴显示的仍是当前身份的名单，必须一眼看出在替谁做事 */
+/* 身份徽标：只在代打模式下出现，提醒这一屏排的是别人的队 */
 .tac-zone-mode {
   align-self: flex-start;
   margin: 8px 0 0;
   padding: 3px 10px;
   border-radius: 999px;
-  background: #eef4ef;
-  color: var(--muted);
+  background: #fde8d0;
+  color: #9a4b06;
+  font-weight: 600;
   font-size: 11px;
   line-height: 1.5;
   /* 窄竖列里宁可换行，也不要把整条页签撑宽 */
   white-space: normal;
 }
-.tac-zone-mode.proxy {
-  background: #fde8d0;
-  color: #9a4b06;
-  font-weight: 600;
-}
 
 /* 右栏卡片顺序（桌面＝右栏那一叠卡里由上往下的顺序；手机两层 display:contents 摊平后，
    同一条链决定整页顺序）。
-   0 是分区页签、1 是常驻核心（选中位置编辑器）、① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8。
+   0 是分区页签、1 是常驻核心（选中位置编辑器）、① 阵容编排 2-5、② 战术设计 7、③ 工具与档案 8。
    战术码已经挪出右栏（跟在球场下面），手机端 order 在 @media 里单独给。 */
 .tac-side > .tac-zones {
   order: 0;
@@ -3222,13 +3219,7 @@ button.add-stage {
   text-transform: none;
   color: var(--muted);
 }
-/* 队长只有一项、组名与项名同词，不排小标题，说明跟在项下面 */
-.tac-assign-note {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.7;
-  color: var(--muted);
-}
+/* 队长只有一项、组名与项名同词：组标题直接当项的标签，项里不再排小标题 */
 .tac-assign-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

@@ -56,10 +56,10 @@ const BENCH = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 const CACHE_TTL = 60_000;
 
 // 分层：球场与「选中位置编辑器」常驻，其余卡片按层显示（层记在 URL ?zone=，刷新/分享/后退都对）。
-// 无球队绑定的身份看不到本场备案层（与提交卡同源），默认落战术设计。
+// 无球队绑定的身份看不到阵容编排层（与提交卡同源），默认落战术设计。
 type Zone = "lineup" | "design" | "tools";
 const ZONES: { key: Zone; label: string; note: string }[] = [
-  { key: "lineup", label: "本场备案", note: "选比赛 · 排首发 · 提交" },
+  { key: "lineup", label: "阵容编排", note: "选比赛 · 排首发 · 提交" },
   { key: "design", label: "战术设计", note: "阵型 · 组织风格 · 防线 · 队长与定位球" },
   { key: "tools", label: "工具与档案", note: "导入战术码 · 存档" },
 ];
@@ -450,7 +450,7 @@ export default function Tactics() {
   const statusTid = proxyOn ? status?.tournamentId ?? null : pickedTid ?? status?.tournamentId ?? null;
   // 本场已授权他人代打：本队教练让位（后端也会 403，这里先把按钮按住）
   const blockedByProxy = !proxyOn && (pickedMatch?.proxyGranted ?? false);
-  // 分层：① 本场备案只对绑了球队（或有代打授权）的身份存在，其余身份默认落 ② 战术设计。
+  // 分层：① 阵容编排只对绑了球队（或有代打授权）的身份存在，其余身份默认落 ② 战术设计。
   // 当前层记在 URL（?zone=），刷新/分享/前进后退都对；默认层不写进 URL。
   const canLineup = user?.teamId != null || (proxySessions?.length ?? 0) > 0;
   const zoneParam = sp.get("zone");
@@ -1157,9 +1157,11 @@ export default function Tactics() {
               {z.label}
             </button>
           ))}
-          {canLineup && (
-            <span className={`tac-zone-mode${proxyOn ? " proxy" : ""}`} aria-live="polite">
-              {proxyOn && proxySession ? `代打：${proxySession.teamName}` : "本队备案"}
+          {/* 身份徽标只在代打时出现：本队模式下标的就是自己队，不用再挂个标签；
+              切到②③层后提交卡看不见，这条是唯一能看出「在替谁排」的地方。 */}
+          {canLineup && proxyOn && proxySession && (
+            <span className="tac-zone-mode" aria-live="polite">
+              代打：{proxySession.teamName}
             </span>
           )}
         </nav>
@@ -1174,7 +1176,7 @@ export default function Tactics() {
             <div className="tac-submit-head">
               <h2>
                 选择目标比赛{" "}
-                <small>{proxyOn ? "代打模式 · 替别人交本场阵容" : "赛前备案 · 开赛后公开"}</small>
+                <small>{proxyOn ? "代打模式 · 替别人交本场阵容" : "赛前提交 · 开赛后公开"}</small>
               </h2>
               <button className="btn" onClick={toggleSubmit}>
                 {subOpen ? "收起" : "展开"}
@@ -1370,7 +1372,7 @@ export default function Tactics() {
             </div>
           </section>
 
-          {/* ① 本场备案 · 收尾：风险提示与两击确认提交。文案分支按本队/代打两套保留 */}
+          {/* ① 阵容编排 · 收尾：风险提示与两击确认提交。文案分支按本队/代打两套保留 */}
           <section className="card tac-submit-bar" hidden={zone !== "lineup"}>
             <h2>
               提交阵容 <small>提交信息包含阵容、战术与定位球</small>
@@ -1585,7 +1587,8 @@ export default function Tactics() {
                     )}
                     <div className="tac-assign-grid">
                       {ASSIGN_RENDER_ORDER.map((g) => {
-                        // 队长只有一项，项名与组名同一个词：组标题是重复的，省掉，说明改到项下列小字。
+                        // 队长只有一项，项名与组名同一个词：这一项就不再重复渲染项名，
+                        // 组标题直接当它的标签用，字号跟界外球、任意球那些组标题一致。
                         const single = g.items.length === 1 && g.items[0].label === g.title;
                         const slot = ASSIGN_SLOT[g.title];
                         return (
@@ -1593,11 +1596,9 @@ export default function Tactics() {
                             className={`tac-assign-group${slot ? ` tac-as-${slot}` : ""}`}
                             key={g.title}
                           >
-                            {single ? null : (
-                              <h3>
-                                {g.title} <small>{g.note}</small>
-                              </h3>
-                            )}
+                            <h3>
+                              {g.title} <small>{g.note}</small>
+                            </h3>
                             {g.items.map((it) => {
                               const v = assign[it.key];
                               const bad = conflictKeys.has(it.key);
@@ -1607,9 +1608,9 @@ export default function Tactics() {
                                   key={it.key}
                                   title={it.hint}
                                 >
-                                  <span>{it.label}</span>
+                                  {single ? null : <span>{it.label}</span>}
                                   <select
-                                    aria-label={`${g.title} · ${it.label}`}
+                                    aria-label={single ? g.title : `${g.title} · ${it.label}`}
                                     value={v ?? ""}
                                     onChange={(e) =>
                                       setAssignKey(
@@ -1631,7 +1632,6 @@ export default function Tactics() {
                                 </label>
                               );
                             })}
-                            {single ? <p className="tac-assign-note">{g.note}</p> : null}
                           </section>
                         );
                       })}
