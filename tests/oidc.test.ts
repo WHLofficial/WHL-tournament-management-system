@@ -63,7 +63,7 @@ const USERINFO_BY_SUB: Record<string, Record<string, unknown>> = {
   "1": {
     sub: "1", name: "oidc管理", locked: false, must_change_pw: false,
     roles: ["tour.coach", "tour.recorder"],
-    permissions: ["tour.match.manage", "tour.team.bind", "tour.team.bindcode.issue"],
+    permissions: ["tour.match.manage", "tour.team.bind", "tour.team.bindcode.issue", "tour.accounts.manage"],
   },
   "2": { sub: "2", name: "oidc教练", locked: false, must_change_pw: false, roles: ["tour.coach"], permissions: ["tour.team.bind"] },
   "3": {
@@ -91,6 +91,47 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     return new Response(JSON.stringify(stub.userinfo ?? USERINFO_BY_SUB[stub.sub] ?? {}), {
       headers: { "content-type": "application/json" },
     });
+  }
+  // 管理能力（增量 8）：账号管理台经机器通道转发认证中心。这里只需要 org-settings 读一条
+  // （真身是 auth 的 organization 表；返回固定值即可，本仓库已不再有自己的开关可读）
+  if (url.pathname.endsWith("/api/admin/org-settings")) {
+    return new Response(JSON.stringify({ allow_open_reg: false }), {
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (url.pathname.endsWith("/api/admin/catalog")) {
+    return new Response(
+      JSON.stringify({
+        apps: [{ client_id: "tour", name: "赛事系统" }],
+        roles: [{ id: 1, app_id: "tour", key: "coach", name: "教练" }],
+        permissions: [{ id: 1, app_id: "tour", key: "tour.team.bind", description: "绑定球队" }],
+        role_permissions: [{ role_id: 1, permission_id: 1 }],
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  }
+  if (url.pathname.endsWith("/api/admin/accounts/list")) {
+    return new Response(
+      JSON.stringify({
+        accounts: [
+          {
+            id: 2,
+            name: "张三",
+            email: null,
+            locked: false,
+            must_change_pw: false,
+            disabled: false,
+            is_super: false,
+            created_at: "2026-01-01T00:00:00.000Z",
+            roles: [{ key: "tour.coach", name: "教练" }],
+            team_id: null,
+            team_name: null,
+          },
+        ],
+        next_after: null,
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
   }
   if (url.pathname.endsWith("/token")) {
     const form = init?.body instanceof URLSearchParams ? init.body : new URLSearchParams(String(init?.body ?? ""));
@@ -166,7 +207,8 @@ function freshEnv(oidc: boolean): Fixture {
     KV: createTestKV(kv) as unknown as KVNamespace,
     MEDIA: {} as never,
     ASSETS: {} as never,
-    ...(oidc ? { OIDC_ISSUER: ISSUER, OIDC_CLIENT_ID: CLIENT_ID } : {}),
+    // 管理台转认证中心用（增量 8）：OIDC 模式下生产必配，未配则管理台的 org-settings/注册码一律 500
+    ...(oidc ? { OIDC_ISSUER: ISSUER, OIDC_CLIENT_ID: CLIENT_ID, AUTH_BIND_SECRET: "test-bind-secret" } : {}),
   };
   return { env, sqlite };
 }
@@ -369,6 +411,50 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     );
     expect(blocked.status).toBe(403);
     expect(((await blocked.json()) as { message: string }).message).toContain("认证中心");
+  });
+
+  it("账号管理台：端点经机器通道转发认证中心，snake_case 映射成前端要的 camelCase（增量 8）", async () => {
+    vi.stubGlobal("fetch", fakeFetch);
+    const { env } = freshEnv(true);
+    const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
+    const coach = await oidcLogin(env, { sub: "2", sid: "sid-coach" });
+
+    const catalog = await app.request(
+      "/api/admin/accounts/catalog",
+      { method: "GET", headers: { Cookie: `__Host-tour_session=${admin.session}` } },
+      env,
+    );
+    expect(catalog.status).toBe(200);
+    const cat = (await catalog.json()) as {
+      roles: { id: number; appId: string; key: string; name: string }[];
+      permissions: { id: number; appId: string; key: string; description: string }[];
+      rolePermissions: { roleId: number; permissionId: number }[];
+    };
+    expect(cat.roles).toEqual([{ id: 1, appId: "tour", key: "coach", name: "教练" }]);
+    expect(cat.permissions).toEqual([{ id: 1, appId: "tour", key: "tour.team.bind", description: "绑定球队" }]);
+    expect(cat.rolePermissions).toEqual([{ roleId: 1, permissionId: 1 }]);
+
+    const list = await app.request(
+      "/api/admin/accounts",
+      { method: "GET", headers: { Cookie: `__Host-tour_session=${admin.session}` } },
+      env,
+    );
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as {
+      accounts: { id: number; mustChangePassword: boolean; teamId: number | null; roles: unknown }[];
+    };
+    expect(body.accounts).toHaveLength(1);
+    expect(body.accounts[0].mustChangePassword).toBe(false);
+    expect(body.accounts[0].teamId).toBeNull();
+    expect(body.accounts[0].roles).toEqual([{ key: "tour.coach", name: "教练" }]);
+
+    // 没有 tour.accounts.manage 的教练：403（权限点照常拦人，不因新端点放水）
+    const forbidden = await app.request(
+      "/api/admin/accounts",
+      { method: "GET", headers: { Cookie: `__Host-tour_session=${coach.session}` } },
+      env,
+    );
+    expect(forbidden.status).toBe(403);
   });
 
   it("回调异常路径：state/临时 cookie/iss → 400；换票/验签/nonce/PKCE → 502", async () => {

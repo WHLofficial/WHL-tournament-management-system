@@ -113,6 +113,10 @@ standing     积分榜（纯重算结果，可随时全量重建）
 user         账号
   id, name, email?, password_hash,   -- PBKDF2
   role                 -- guest 不落库（未登录即 guest）| coach | admin（录入员）| superadmin
+  -- 增量 8 起：本表账号属性只读。账号真源 2026-09-14 已收口 auth
+  -- （account/credential/user_role），管理台的角色改动、解锁、重置密码、注册码、
+  -- 开放注册开关全部改调 auth 管理端点（worker/lib/authAdmin.ts，X-Sign HMAC，
+  -- 12 条 /api/admin/*）；本表的 role/locked/password_hash 不再被应用写入
 
 team         球队（跨赛事复用的实体）
   id, org_id →organization, name, created_by →user
@@ -139,6 +143,8 @@ signup_code  注册码（注册验证：无码不能注册）
   id, code_hash, expires_at?,
   max_uses, used_count,        -- 一次 / 多次有效
   created_by →user             -- 仅超管可生成
+  -- 增量 8 起休眠：注册码真源上收认证中心 signup_code（auth 库主键是 code_hash，
+  -- 无自增 id；管理台发码/列表改调 auth，列表只回哈希前 12 位指纹，明码不可回查）
 ```
 
 ### 4.3 扩展预留（现在只建表/留位，不做功能）
@@ -148,8 +154,11 @@ identity      id, user_id →user, provider, provider_uid
               -- 外部身份留位；聚合登录已确定不接，但表在，将来 OAuth 不动账号体系
 organization  id, name
               -- 多组织预留：org→tournament→stage→match 归属链第一天就通
+              -- 增量 8 起：开放注册开关（allow_open_reg）真源上收 auth 的 organization 表，
+              -- 管理台读写改调 auth；本表这一列不再被应用读写
 audit_log     (P1) id, actor_user_id, action, target, detail_json, created_at
-              -- 改分留痕、解绑留痕
+              -- 改分留痕、解绑留痕；增量 8 起管理动作也记一份（target_type='account'，
+              -- 与 auth 侧审计双写：auth 记业务事实，本表记「哪个管理员干的」）
 match_event   (P0) id, match_id →match, player_id? →player, type, minute?
               -- 进球/红黄牌：live 实时录入 + 赛后补录；进球驱动实时比分；支撑射手榜与停赛
 ```

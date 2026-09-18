@@ -1,5 +1,6 @@
-// 认证中心机器通道（增量 7 球队绑定上收）：绑定真源在 auth 库（team/team_bind_code/team_binding），
-// 本仓经只读 AUTH_DB 派生读，经这里写（发码/烧码/解绑/目录登记）。
+// 认证中心机器通道（增量 7 球队绑定上收 + 增量 8 管理能力）：绑定真源在 auth 库
+// （team/team_bind_code/team_binding），本仓经只读 AUTH_DB 派生读，经这里写（发码/烧码/解绑/目录登记）。
+// 增量 8 的 12 条 /api/admin/* 管理端点见 lib/authAdmin.ts，复用本文件的 machineCall 同一套 HMAC 契约。
 // HMAC 契约与 auth machine.ts / 竞猜插件逐字一致：X-Sign = hex(HMAC-SHA256(secret, "POST|path|ts|raw"))，
 // X-Timestamp 秒级 ±300s。基地址复用 OIDC_ISSUER（同一台认证中心）；密钥 AUTH_BIND_SECRET 独立配。
 import type { AppEnv } from "../env";
@@ -14,9 +15,14 @@ export class AuthApiError extends Error {
   }
 }
 
-type MachineBody = Record<string, unknown>;
+export type MachineBody = Record<string, unknown>;
 
-async function machineCall(env: AppEnv["Bindings"], path: string, body: MachineBody): Promise<Record<string, unknown>> {
+/** 裸调用：签名 + POST + 解析。非 2xx 一律抛 AuthApiError（含 auth 端业务错误码），供调用点分流处置。 */
+export async function machineCall(
+  env: AppEnv["Bindings"],
+  path: string,
+  body: MachineBody,
+): Promise<Record<string, unknown>> {
   const secret = env.AUTH_BIND_SECRET ?? "";
   const base = env.OIDC_ISSUER ?? "";
   if (!secret || !base) throw new AuthApiError("unconfigured", "认证中心通道未配置（OIDC_ISSUER / AUTH_BIND_SECRET）");

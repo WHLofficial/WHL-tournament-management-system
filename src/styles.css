@@ -255,6 +255,47 @@ button.btn-ghost:hover:not(:disabled) {
   color: #6d28d9;
 }
 
+/* 账号管理（增量 8）：多角色 / 多权限点的勾选面板 */
+.st-locked {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.perm-group {
+  margin: 6px 0 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+.perm-group > strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.perm-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  background: #fff;
+}
+.perm-item:has(input:disabled) {
+  cursor: default;
+  color: var(--muted);
+  background: #f7f8f7;
+}
+.row-sel td {
+  background: #f3f7f3;
+}
+
 .tabs {
   display: flex;
   gap: 4px;

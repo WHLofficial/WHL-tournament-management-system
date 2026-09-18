@@ -4,7 +4,8 @@ import { useAuth } from "../auth";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 
 type SignupCodeRow = {
-  id: number;
+  /** 认证中心注册码表主键就是 sha256，没有自增 id：这里是码哈希的前 12 位指纹，只当行标识用 */
+  id: string;
   maxUses: number | null;
   usedCount: number;
   expiresAt: string | null;

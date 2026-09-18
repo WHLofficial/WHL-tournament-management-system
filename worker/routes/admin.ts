@@ -1,6 +1,6 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { AppEnv } from "../env";
-import { generateCode, sha256Hex } from "../lib/crypto";
 import {
   AuthApiError,
   authIssueTeamCode,
@@ -9,6 +9,12 @@ import {
   teamCodes,
   teamMembers,
 } from "../lib/authClient";
+import {
+  authAdminCreateSignupCode,
+  authAdminListSignupCodes,
+  authAdminOrgSettings,
+} from "../lib/authAdmin";
+import { accountAuditStmt } from "../lib/audit";
 import { requirePermission, requirePwChanged } from "../middleware/auth";
 import teamsRoutes from "./admin/teams";
 import tournamentsRoutes from "./admin/tournaments";
@@ -35,11 +41,34 @@ app.route("/announcements", announcementsRoutes);
 app.route("/injuries", injuriesRoutes);
 app.route("/proxy-grants", proxyGrantsRoutes);
 
-// 组织级设置：允许无码注册（建锁定观众号）。改开关仅超管
+// 认证中心通道错误的统一分流：业务码原样给前端文案，未配置/不可达归为 502
+function authFail(c: Context<AppEnv>, e: unknown) {
+  if (e instanceof AuthApiError) {
+    if (e.code === "unconfigured") return c.json({ message: "认证中心通道未配置" }, 500);
+    if (e.code === "account_not_found") return c.json({ message: "账号不存在" }, 404);
+    if (e.code === "session_not_found") return c.json({ message: "会话不存在或已结束" }, 404);
+    if (e.code === "self_forbidden") return c.json({ message: "不能对自己执行这个操作" }, 403);
+    if (e.code === "superadmin_locked") {
+      return c.json({ message: "超级管理员不能在管理台改动，请直接改库" }, 403);
+    }
+    if (e.code === "bad_role" || e.code === "bad_permission" || e.code === "bad body") {
+      return c.json({ message: e.message || "请求格式不对" }, 400);
+    }
+    return c.json({ message: "认证中心暂不可用，请稍后再试" }, 502);
+  }
+  throw e;
+}
+
+// 组织级设置：允许无码注册（建锁定观众号）。改开关仅超管。
+// 增量 8：真源在认证中心 organization 表（收口前这里读写本仓 organization，
+// 改开关对 auth 注册路径零影响 = 死写）。读写都转发 auth，本地留审计。
 app.get("/org-settings", async (c) => {
-  const row = await c.env.DB.prepare("SELECT allow_open_reg FROM organization WHERE id = 1")
-    .first<{ allow_open_reg: number }>();
-  return c.json({ allowOpenReg: row?.allow_open_reg === 1 });
+  try {
+    const out = await authAdminOrgSettings(c.env);
+    return c.json({ allowOpenReg: out.allowOpenReg });
+  } catch (e) {
+    return authFail(c, e);
+  }
 });
 
 app.put("/org-settings", requirePermission("tour.org.settings", "superadmin"), async (c) => {
@@ -47,13 +76,17 @@ app.put("/org-settings", requirePermission("tour.org.settings", "superadmin"), a
   if (typeof body?.allowOpenReg !== "boolean") {
     return c.json({ message: "请求格式不对" }, 400);
   }
-  await c.env.DB.prepare("UPDATE organization SET allow_open_reg = ? WHERE id = 1")
-    .bind(body.allowOpenReg ? 1 : 0)
-    .run();
-  return c.json({ ok: true });
+  const me = c.get("user")!.id;
+  try {
+    const out = await authAdminOrgSettings(c.env, { allowOpenReg: body.allowOpenReg, actorId: me });
+    await accountAuditStmt(c.env.DB, me, "org.open_reg", null, { allowOpenReg: out.allowOpenReg }).run();
+    return c.json({ ok: true, allowOpenReg: out.allowOpenReg });
+  } catch (e) {
+    return authFail(c, e);
+  }
 });
 
-// 生成注册码；明码只在这一次响应里出现，库存 sha256
+// 生成注册码；明码只在这一次响应里出现，认证中心只存 sha256
 app.post("/signup-codes", async (c) => {
   const body = await c.req
     .json<{ maxUses?: number | null; expiresInHours?: number | null }>()
@@ -61,38 +94,26 @@ app.post("/signup-codes", async (c) => {
   const maxUses = typeof body.maxUses === "number" && body.maxUses > 0 ? Math.floor(body.maxUses) : null;
   const expiresInHours =
     typeof body.expiresInHours === "number" && body.expiresInHours > 0 ? body.expiresInHours : null;
-  const expiresAt = expiresInHours ? new Date(Date.now() + expiresInHours * 3600_000).toISOString() : null;
-
-  const code = generateCode(8);
-  await c.env.DB.prepare(
-    "INSERT INTO signup_code (code_hash, expires_at, max_uses, created_by) VALUES (?, ?, ?, ?)",
-  )
-    .bind(await sha256Hex(code), expiresAt, maxUses, c.get("user")!.id)
-    .run();
-  return c.json({ code, maxUses, expiresAt }, 201);
+  const me = c.get("user")!.id;
+  try {
+    const out = await authAdminCreateSignupCode(c.env, { actorId: me, maxUses, expiresInHours });
+    await accountAuditStmt(c.env.DB, me, "signup_code.create", null, {
+      maxUses: out.maxUses,
+      expiresAt: out.expiresAt,
+    }).run();
+    return c.json({ code: out.code, maxUses: out.maxUses, expiresAt: out.expiresAt }, 201);
+  } catch (e) {
+    return authFail(c, e);
+  }
 });
 
-// 注册码使用记录（明码不可回查，只给次数/过期/状态）
+// 注册码使用记录（明码不可回查，只给指纹/次数/过期）
 app.get("/signup-codes", async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT id, max_uses, used_count, expires_at, created_at FROM signup_code
-     ORDER BY created_at DESC, id DESC LIMIT 50`
-  ).all<{
-    id: number;
-    max_uses: number | null;
-    used_count: number;
-    expires_at: string | null;
-    created_at: string;
-  }>();
-  return c.json({
-    codes: (rows.results ?? []).map((r) => ({
-      id: r.id,
-      maxUses: r.max_uses,
-      usedCount: r.used_count,
-      expiresAt: r.expires_at,
-      createdAt: r.created_at,
-    })),
-  });
+  try {
+    return c.json({ codes: await authAdminListSignupCodes(c.env) });
+  } catch (e) {
+    return authFail(c, e);
+  }
 });
 
 // ---- 球队认证码（教练绑定用）：一次有效，默认 24h ----
