@@ -17,6 +17,7 @@ import scoringRoutes from "./admin/scoring";
 import accountsRoutes from "./admin/accounts";
 import announcementsRoutes from "./admin/announcements";
 import injuriesRoutes from "./admin/injuries";
+import proxyGrantsRoutes from "./admin/proxyGrants";
 
 const app = new Hono<AppEnv>();
 
@@ -32,6 +33,7 @@ app.route("/matches", scoringRoutes);
 app.route("/accounts", accountsRoutes);
 app.route("/announcements", announcementsRoutes);
 app.route("/injuries", injuriesRoutes);
+app.route("/proxy-grants", proxyGrantsRoutes);
 
 // 组织级设置：允许无码注册（建锁定观众号）。改开关仅超管
 app.get("/org-settings", async (c) => {

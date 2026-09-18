@@ -146,3 +146,31 @@ export async function teamOfAccounts(env: AppEnv["Bindings"]): Promise<Map<numbe
   for (const r of rows.results) map.set(r.account_id, { teamId: r.tour_team_id, teamName: r.name });
   return map;
 }
+
+export interface BoundAccountRow {
+  userId: number;
+  name: string;
+  teamId: number | null;
+  teamName: string | null;
+}
+
+// 全生态账号（含未绑队的），姓名取 auth 库 account.name。
+// 代打授权要按姓名选人，而 OIDC 收口后新账号在本库 user 表没有行，
+// 拿本库 JOIN 姓名会正好漏掉要授权的那批人——所以姓名只能从 auth 库取。
+export async function boundAccounts(env: AppEnv["Bindings"]): Promise<BoundAccountRow[]> {
+  if (!env.AUTH_DB) return [];
+  const rows = await env.AUTH_DB.prepare(
+    `SELECT a.id AS account_id, a.name, t.tour_team_id, t.name AS team_name
+     FROM account a
+     LEFT JOIN team_binding b ON b.account_id = a.id
+     LEFT JOIN team t ON t.id = b.team_id
+     ORDER BY (t.name IS NULL), t.name, a.name`,
+  )
+    .all<{ account_id: number; name: string; tour_team_id: number | null; team_name: string | null }>();
+  return rows.results.map((r) => ({
+    userId: r.account_id,
+    name: r.name,
+    teamId: r.tour_team_id,
+    teamName: r.team_name,
+  }));
+}

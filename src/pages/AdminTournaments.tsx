@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { api } from "../api";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 import { AnnouncementAdmin } from "../components/AnnouncementAdmin";
+import { ProxyGrantAdmin } from "../components/ProxyGrantAdmin";
 import { FORMAT_HINT, FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import type { TournamentDTO, TournamentFormat } from "../../shared/types";
 
@@ -80,6 +81,8 @@ export function AdminTournaments() {
       </div>
 
       <AnnouncementAdmin />
+
+      {(tournaments?.length ?? 0) > 0 && <ProxyGrantAdmin tournaments={tournaments ?? []} />}
 
       {tournaments === null ? (
         <p className="muted">加载中…</p>
