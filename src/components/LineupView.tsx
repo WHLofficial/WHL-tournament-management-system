@@ -7,7 +7,7 @@ function playerName(p: LineupPlayerDTO): string {
   return num + (p.name ?? "已离队");
 }
 
-// 球员指派清单：教练端赛前回显、管理端备案、公开端开赛后三处共用。
+// 队长与定位球清单：教练端赛前回显、管理端备案、公开端开赛后三处共用。
 // 顺序由后端按 ASSIGN_GROUPS 排好（队长在最前），这里只负责画。
 export function AssignList({ assign }: { assign: LineupAssignDTO[] }) {
   if (!assign || assign.length === 0) return null;
@@ -20,7 +20,7 @@ export function AssignList({ assign }: { assign: LineupAssignDTO[] }) {
             {a.number ? `#${a.number} ` : ""}
             {a.name ?? "已离队"}
           </span>
-          {!a.starter && <span className="lu-assign-off">非本场</span>}
+          {!a.starter && <span className="lu-assign-off">已不在首发</span>}
           {(a.meta?.badges ?? []).map((b) => (
             <span className="lu-chip" key={b}>
               {b}

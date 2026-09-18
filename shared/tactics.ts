@@ -482,7 +482,7 @@ export const ASSIGN_GROUPS: AssignGroup[] = [
   },
   {
     title: "任意球",
-    note: "定位球主罚人",
+    note: "谁去罚任意球",
     items: [
       { key: "fk_left_short", label: "左侧短任意球", hint: "左路短任意球主罚" },
       {
@@ -496,7 +496,7 @@ export const ASSIGN_GROUPS: AssignGroup[] = [
   },
   {
     title: "角球进攻",
-    note: "发球的人与禁区里的接应角色分开填；主罚人不能同时接应",
+    note: "开球的人和禁区里抢点的人要分开填",
     items: [
       { key: "ca_left", label: "左侧角球", hint: "左侧角球主罚（发球的人）" },
       {
@@ -527,7 +527,7 @@ export const ASSIGN_GROUPS: AssignGroup[] = [
   },
   {
     title: "界外球",
-    note: "手抛球主罚者",
+    note: "界外球由谁来掷",
     items: [
       { key: "ti_left", label: "左侧界外球", hint: "左侧界外球主罚者" },
       { key: "ti_right", label: "右侧界外球", hint: "右侧界外球主罚者" },
@@ -593,5 +593,5 @@ export function assignConflicts(
 }
 
 export function conflictText(c: AssignConflict): string {
-  return `角球主罚「${ASSIGN_GROUP_OF[c.a]}·${ASSIGN_LABEL[c.a]}」和接应「${ASSIGN_GROUP_OF[c.b]}·${ASSIGN_LABEL[c.b]}」不能是同一名球员`;
+  return `「${ASSIGN_GROUP_OF[c.a]} · ${ASSIGN_LABEL[c.a]}」和「${ASSIGN_GROUP_OF[c.b]} · ${ASSIGN_LABEL[c.b]}」填了同一个人，但开角球的人和禁区里抢点的人必须分开`;
 }

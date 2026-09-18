@@ -123,19 +123,19 @@ export function parseAssignJson(json: string): AssignMap {
 export function normalizeAssign(raw: unknown): AssignMap {
   if (raw == null) return {};
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new LineupError(400, "指派格式不对，请回战术板重填");
+    throw new LineupError(400, "队长与定位球的格式不对，请回战术板重填");
   }
   const assign: AssignMap = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (!isAssignKey(k)) throw new LineupError(400, "指派项不认识，请回战术板重填");
+    if (!isAssignKey(k)) throw new LineupError(400, "队长与定位球里有不认识的项目，请回战术板重填");
     if (typeof v !== "number" || !Number.isInteger(v) || v <= 0) {
-      throw new LineupError(400, "指派里有点坏掉的项，请回战术板重选球员");
+      throw new LineupError(400, "队长与定位球里有坏掉的项目，请回战术板重选球员");
     }
     assign[k] = v;
   }
   const conflicts = assignConflicts(assign);
   if (conflicts.length) {
-    throw new LineupError(400, `指派冲突：${conflictText(conflicts[0])}`);
+    throw new LineupError(400, `队长与定位球有冲突：${conflictText(conflicts[0])}`);
   }
   return assign;
 }
@@ -158,7 +158,7 @@ export async function validateAssign(
       .bind(teamId, ...ids)
       .first<{ n: number }>();
     if (owned?.n !== ids.length) {
-      throw new LineupError(400, "指派里点到了不属于该球队的球员，请回战术板重选");
+      throw new LineupError(400, "队长与定位球里点到了不属于该球队的球员，请回战术板重选");
     }
   }
   return assign;

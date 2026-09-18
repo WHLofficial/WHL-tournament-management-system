@@ -170,7 +170,9 @@ describe("指派规则（shared/tactics）", () => {
 
   it("冲突文案点名两个角色（含组名，避免近门柱/远门柱歧义）", () => {
     const [c] = assignConflicts({ ca_left: 5, ca_target: 5 });
-    expect(conflictText(c)).toBe("角球主罚「角球进攻·左侧角球」和接应「角球进攻·目标球员」不能是同一名球员");
+    expect(conflictText(c)).toBe(
+      "「角球进攻 · 左侧角球」和「角球进攻 · 目标球员」填了同一个人，但开角球的人和禁区里抢点的人必须分开",
+    );
   });
 });
 
@@ -188,10 +190,10 @@ describe("指派解析/校验（worker/lib/lineup）", () => {
     expect(normalizeAssign(undefined)).toEqual({});
     expect(normalizeAssign(null)).toEqual({});
     expect(normalizeAssign({ captain: 7 })).toEqual({ captain: 7 });
-    expect(() => normalizeAssign("x")).toThrowError("指派格式不对，请回战术板重填");
-    expect(() => normalizeAssign({ nope: 1 })).toThrowError("指派项不认识，请回战术板重填");
-    expect(() => normalizeAssign({ captain: "7" })).toThrowError("指派里有点坏掉的项，请回战术板重选球员");
-    expect(() => normalizeAssign({ ca_left: 5, ca_target: 5 })).toThrowError(/^指派冲突：/);
+    expect(() => normalizeAssign("x")).toThrowError("队长与定位球的格式不对，请回战术板重填");
+    expect(() => normalizeAssign({ nope: 1 })).toThrowError("队长与定位球里有不认识的项目，请回战术板重填");
+    expect(() => normalizeAssign({ captain: "7" })).toThrowError("队长与定位球里有坏掉的项目，请回战术板重选球员");
+    expect(() => normalizeAssign({ ca_left: 5, ca_target: 5 })).toThrowError(/^队长与定位球有冲突：/);
   });
 });
 
@@ -251,11 +253,11 @@ describe("教练端提交指派", () => {
     const { env } = freshEnv();
     let res = await json(env, "a", "/api/coach/matches/802/lineup", { form: FORM, slots: slots(10), assign: { captain: 200 } }, "PUT");
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { message: string }).message).toBe("指派里点到了不属于该球队的球员，请回战术板重选");
+    expect(((await res.json()) as { message: string }).message).toBe("队长与定位球里点到了不属于该球队的球员，请回战术板重选");
 
     res = await json(env, "a", "/api/coach/matches/802/lineup", { form: FORM, slots: slots(10), assign: { nope: 100 } }, "PUT");
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { message: string }).message).toBe("指派项不认识，请回战术板重填");
+    expect(((await res.json()) as { message: string }).message).toBe("队长与定位球里有不认识的项目，请回战术板重填");
   });
 
   it("互斥冲突拦提交，错误消息点名双方角色", async () => {
@@ -269,7 +271,7 @@ describe("教练端提交指派", () => {
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as { message: string }).message).toBe(
-      "指派冲突：角球主罚「角球进攻·左侧角球」和接应「角球进攻·近门柱」不能是同一名球员",
+      "队长与定位球有冲突：「角球进攻 · 左侧角球」和「角球进攻 · 近门柱」填了同一个人，但开角球的人和禁区里抢点的人必须分开",
     );
   });
 });
@@ -324,7 +326,7 @@ describe("代打链路上的指派", () => {
       "PUT",
     );
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { message: string }).message).toBe("指派里点到了不属于该球队的球员，请回战术板重选");
+    expect(((await res.json()) as { message: string }).message).toBe("队长与定位球里点到了不属于该球队的球员，请回战术板重选");
   });
 });
 
@@ -355,6 +357,6 @@ describe("战术存档里的指派", () => {
       { code, form: FORM, buildup: "balanced", lineHeight: 50, assign: { ca_left: 100, ca_target: 100 } },
     );
     expect(bad.status).toBe(400);
-    expect(((await bad.json()) as { message: string }).message).toMatch(/^指派冲突：/);
+    expect(((await bad.json()) as { message: string }).message).toMatch(/^队长与定位球有冲突：/);
   });
 });

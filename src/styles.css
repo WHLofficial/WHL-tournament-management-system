@@ -1812,7 +1812,8 @@ button.add-stage {
 .tac-duo {
   display: flex;
   gap: 16px;
-  align-items: stretch;
+  /* 战术设置卡塞进「队长与定位球」后明显变高：两侧各自贴顶，别把球员卡拉长再摊开内容 */
+  align-items: flex-start;
   flex: 1;
 }
 .tac-duo > .card {
@@ -1821,6 +1822,9 @@ button.add-stage {
   display: flex;
   flex-direction: column;
   justify-content: space-evenly;
+}
+.tac-duo > .tac-settings {
+  justify-content: flex-start;
 }
 .tac-settings h2,
 .tac-bench h2,
@@ -3020,30 +3024,31 @@ button.add-stage {
 }
 .tac-zones {
   display: flex;
-  gap: 6px;
-  margin: 0 0 12px;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 14px;
+  border-bottom: 2px solid var(--border);
   overflow-x: auto;
   scrollbar-width: thin;
 }
 .tac-zone {
   flex: 0 0 auto;
-  min-height: 34px;
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  background: none;
   color: var(--muted);
-  font: 600 14px/1.2 inherit;
+  font: 600 15px/1.3 inherit;
+  white-space: nowrap;
   cursor: pointer;
 }
 .tac-zone:hover {
   color: var(--ink);
-  border-color: var(--muted);
 }
 .tac-zone.on {
-  background: var(--pitch-deep);
-  border-color: var(--pitch-deep);
-  color: #fff;
+  color: var(--pitch);
+  border-bottom-color: var(--pitch);
 }
 /* 层条右端的模式徽标：切到②③层后球场磁贴显示的仍是当前身份的名单，必须一眼看出在替谁做事 */
 .tac-zone-mode {
@@ -3065,7 +3070,10 @@ button.add-stage {
 }
 
 /* 右栏卡片顺序（桌面＝右栏列内顺序；手机 display:contents 后同一条链决定整页顺序）。
-   ① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8-9；1 是常驻核心（选中位置编辑器）。 */
+   0 是分区页签、1 是常驻核心（选中位置编辑器）、① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8-9。 */
+.tac-side > .tac-zones {
+  order: 0;
+}
 .tac-side > .tac-duo {
   order: 1;
 }
@@ -3075,9 +3083,6 @@ button.add-stage {
 }
 .tac-side > .tac-bench {
   order: 3;
-}
-.tac-side > .tac-assign {
-  order: 4;
 }
 .tac-side > .tac-submit-bar {
   order: 5;
@@ -3092,15 +3097,29 @@ button.add-stage {
   order: 9;
 }
 
-/* ---------- 球员指派（① 本场备案） ---------- */
+/* ---------- 队长与定位球（战术设置卡内的收尾块） ---------- */
+.tac-assign-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
 .tac-assign-head {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-.tac-assign-head h2 {
-  margin: 0;
+.tac-assign-head h3 {
   flex: 1 1 auto;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+.tac-assign-head h3 small {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
 }
 .tac-assign-ok,
 .tac-assign-bad {
@@ -3319,10 +3338,6 @@ button.add-stage {
     order: -1;
     margin-left: 0;
   }
-  /* 指派 5 组在手机上单列铺开，组内项目保持一行一项 */
-  .tac-assign-grid {
-    grid-template-columns: 1fr;
-  }
   .tac-zone {
     min-height: 32px;
     padding: 6px 12px;
@@ -3332,6 +3347,10 @@ button.add-stage {
 @media (max-width: 560px) {
   .tac-assign-field select {
     min-height: 36px;
+  }
+  /* 手机上一列一项：下拉点得准，标签也不会被挤成两行 */
+  .tac-assign-grid {
+    grid-template-columns: 1fr;
   }
   .lu-assign li i {
     min-width: 0;

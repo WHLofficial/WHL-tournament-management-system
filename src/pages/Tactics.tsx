@@ -27,6 +27,7 @@ import {
   pairEa,
   roleFull,
   type AssignKey,
+  type AssignGroup,
   type Buildup,
   type TacticState,
 } from "../../shared/tactics";
@@ -58,10 +59,18 @@ const CACHE_TTL = 60_000;
 // 无球队绑定的身份看不到本场备案层（与提交卡同源），默认落战术设计。
 type Zone = "lineup" | "design" | "tools";
 const ZONES: { key: Zone; label: string; note: string }[] = [
-  { key: "lineup", label: "本场备案", note: "选比赛 · 排名单 · 指派 · 提交" },
-  { key: "design", label: "战术设计", note: "阵型 · 组织风格 · 防线 · 战术码" },
+  { key: "lineup", label: "本场备案", note: "选比赛 · 排首发 · 提交" },
+  { key: "design", label: "战术设计", note: "阵型 · 组织风格 · 防线 · 队长与定位球" },
   { key: "tools", label: "工具与档案", note: "导入战术码 · 存档" },
 ];
+// 卡里的展示顺序：队长只有 1 项，界外球 2 项排它后面填掉那点空白；组名对不上就退回原顺序
+const ASSIGN_RENDER_ORDER: AssignGroup[] = (() => {
+  const want = ["队长", "界外球", "任意球", "角球进攻", "角球防守"];
+  const out = want
+    .map((t) => ASSIGN_GROUPS.find((g) => g.title === t))
+    .filter((g): g is AssignGroup => g != null);
+  return out.length === ASSIGN_GROUPS.length ? out : ASSIGN_GROUPS;
+})();
 function isZone(v: string | null): v is Zone {
   return v === "lineup" || v === "design" || v === "tools";
 }
@@ -493,7 +502,7 @@ export default function Tactics() {
   // 折叠态也要能一眼扫到填了什么（按组列，空组不出现）
   const assignSummary = useMemo(() => {
     if (assignFilled.length === 0) {
-      return "都可留空：不填也能提交；填了随阵容落库，管理端赛前备案与开赛后公开端都会列出来。";
+      return "不填也能提交。填了会跟阵容一起交上去，赛前管理员能看到，开赛后公开的比赛页也会显示。";
     }
     return ASSIGN_GROUPS.map((g) => {
       const items = g.items.filter((it) => assign[it.key] != null);
@@ -697,7 +706,7 @@ export default function Tactics() {
     setAssign(Object.fromEntries((l.assign ?? []).map((a) => [a.key, a.playerId])));
     setSelected(null);
     setMsg(null);
-    showToast("已载入该场已提交的阵容");
+    showToast("已载入该场提交的阵容");
   }
 
   function importCode(raw?: string) {
@@ -894,7 +903,7 @@ export default function Tactics() {
       return "首发和替补有重复球员";
     }
     const bad = assignConflicts(assign);
-    if (bad.length > 0) return `球员指派有冲突：${conflictText(bad[0])}`;
+    if (bad.length > 0) return `队长与定位球有冲突：${conflictText(bad[0])}`;
     return null;
   }
 
@@ -1033,26 +1042,6 @@ export default function Tactics() {
         </button>
       </header>
 
-      {/* 分区切换：球场与选中位置编辑器常驻在下面，其余按这一层切。当前层记在 URL query 上。 */}
-      <nav className="tac-zones" aria-label="战术板分区">
-        {ZONES.filter((z) => z.key !== "lineup" || canLineup).map((z) => (
-          <button
-            key={z.key}
-            className={`tac-zone${zone === z.key ? " on" : ""}`}
-            aria-pressed={zone === z.key}
-            title={z.note}
-            onClick={() => selectZone(z.key)}
-          >
-            {z.label}
-          </button>
-        ))}
-        {canLineup && (
-          <span className={`tac-zone-mode${proxyOn ? " proxy" : ""}`} aria-live="polite">
-            {proxyOn && proxySession ? `代打：${proxySession.teamName}` : "本队备案"}
-          </span>
-        )}
-      </nav>
-
       <div className="tac-layout">
         <section className="card tac-pitch-panel">
           <div className="tac-pitch">
@@ -1131,14 +1120,34 @@ export default function Tactics() {
         </section>
 
         <div className="tac-side">
-        {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛口径跟着它走。
+        {/* 分区页签：球场常驻在左列，这一条切右栏下面这一叠卡（当前层记在 URL ?zone=，刷新/后退都对） */}
+        <nav className="tac-zones" aria-label="战术板分区">
+          {ZONES.filter((z) => z.key !== "lineup" || canLineup).map((z) => (
+            <button
+              key={z.key}
+              className={`tac-zone${zone === z.key ? " on" : ""}`}
+              aria-pressed={zone === z.key}
+              title={z.note}
+              onClick={() => selectZone(z.key)}
+            >
+              {z.label}
+            </button>
+          ))}
+          {canLineup && (
+            <span className={`tac-zone-mode${proxyOn ? " proxy" : ""}`} aria-live="polite">
+              {proxyOn && proxySession ? `代打：${proxySession.teamName}` : "本队备案"}
+            </span>
+          )}
+        </nav>
+
+        {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛跟着它走。
             手里有代打授权时上面多一个身份切换器，切过去后整页（名单/口径/提交）都换成目标队。 */}
         {(selfPlayers != null || (proxySessions?.length ?? 0) > 0) && (
           <section className="card tac-submit" hidden={zone !== "lineup"}>
             <div className="tac-submit-head">
               <h2>
                 选择目标比赛{" "}
-                <small>{proxyOn ? "代打模式 · 替别人递交阵容" : "赛前备案 · 开赛后公开"}</small>
+                <small>{proxyOn ? "代打模式 · 替别人交本场阵容" : "赛前备案 · 开赛后公开"}</small>
               </h2>
               <button className="btn" onClick={toggleSubmit}>
                 {subOpen ? "收起" : "展开"}
@@ -1167,9 +1176,9 @@ export default function Tactics() {
                     </label>
                     {proxyOn && (
                       <p className="tac-warn">
-                        你正在替「{proxySession?.teamName ?? "目标队"}」递交本场阵容
-                        {proxySession?.grantedByName ? `（${proxySession.grantedByName} 授权）` : ""}；
-                        球员下拉与伤停停赛口径已切到该队，本队教练在此期间不能提交本场阵容。
+                        你正在替「{proxySession?.teamName ?? "目标队"}」排本场阵容
+                        {proxySession?.grantedByName ? `（${proxySession.grantedByName} 授权）` : ""}
+                        。球员、伤停和停赛都换成了这支队的；这段时间本队教练不能提交本场阵容。
                       </p>
                     )}
                   </div>
@@ -1231,7 +1240,7 @@ export default function Tactics() {
                         {mine.submittedBy ? `，提交人 ${mine.submittedBy}` : ""}
                         {mine.viaProxy ? "（代打）" : ""}，再次提交将覆盖。
                         <button className="btn btn-sm" onClick={() => applySubmitted(mine)}>
-                          载入本次已提交的阵容
+                          载入已提交的阵容
                         </button>
                       </p>
                     )}
@@ -1334,90 +1343,6 @@ export default function Tactics() {
             </div>
           </section>
 
-          {/* ① 本场备案 · 球员指派：FC26「球队管理 → 指派」18 项。候选池＝本场场上 11 名首发。
-              只存已填项，键是角色不是位置，换阵型不影响；未填完不拦提交，互斥冲突拦提交。 */}
-          <section className="card tac-assign" hidden={zone !== "lineup"}>
-            <div className="tac-assign-head">
-              <h2>
-                球员指派 <small>FC26 球队管理 · 指派</small>
-              </h2>
-              {assignConflictList.length > 0 ? (
-                <span className="tac-assign-bad">冲突 {assignConflictList.length}</span>
-              ) : (
-                <span className="tac-assign-ok">
-                  已填 {assignFilled.length}/{ASSIGN_KEYS.length}
-                </span>
-              )}
-              <button className="btn" onClick={toggleAssignOpen}>
-                {assignOpen ? "收起" : "展开"}
-              </button>
-            </div>
-            <p className="tac-assign-sum">{assignSummary}</p>
-            {assignOpen && (
-              <>
-                {assignPool.length < 11 && (
-                  <p className="tac-warn">
-                    先把场上 11 个位置选满（现在 {assignPool.length}/11）——指派只能从本场首发里点人。
-                  </p>
-                )}
-                <div className="tac-assign-grid">
-                  {ASSIGN_GROUPS.map((g) => (
-                    <section className="tac-assign-group" key={g.title}>
-                      <h3>
-                        {g.title} <small>{g.note}</small>
-                      </h3>
-                      {g.items.map((it) => {
-                        const v = assign[it.key];
-                        const bad = conflictKeys.has(it.key);
-                        return (
-                          <label
-                            className={`tac-assign-field${bad ? " bad" : ""}`}
-                            key={it.key}
-                            title={it.hint}
-                          >
-                            <span>{it.label}</span>
-                            <select
-                              aria-label={`${g.title} · ${it.label}`}
-                              value={v ?? ""}
-                              onChange={(e) =>
-                                setAssignKey(
-                                  it.key,
-                                  e.target.value ? Number(e.target.value) : null,
-                                )
-                              }
-                            >
-                              <option value="">（未指派）</option>
-                              {v != null && !assignPool.some((c) => c.id === v) && (
-                                <option value={v}>{playerTag(v)}（已不在首发）</option>
-                              )}
-                              {assignPool.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {poolLabel(c)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        );
-                      })}
-                    </section>
-                  ))}
-                </div>
-                {assignConflictList.length > 0 && (
-                  <p className="tac-warn">
-                    {assignConflictList.map(conflictText).join("；")}
-                    <button className="btn btn-sm" onClick={clearAssignConflicts}>
-                      清除冲突项
-                    </button>
-                  </p>
-                )}
-                <p className="tac-hint">
-                  一人可以兼多项（队长兼点球、同一人开两侧角球都行），但开角球的人和禁区里抢点的人
-                  不能是同一个。
-                </p>
-              </>
-            )}
-          </section>
-
           {/* ① 本场备案 · 收尾：风险提示与两击确认提交。文案分支按本队/代打两套保留 */}
           <section className="card tac-submit-bar" hidden={zone !== "lineup"}>
             <h2>
@@ -1425,11 +1350,19 @@ export default function Tactics() {
               <small>
                 {proxyOn
                   ? `代打 · ${proxySession?.teamName ?? "目标队"}`
-                  : "整份覆盖 · 阵容与指派一起交"}
+                  : "整份替换上一份，阵容与队长定位球一起交"}
               </small>
             </h2>
             {risks.length > 0 && (
               <p className="tac-warn">名单里有状态异常的球员：{risks.join("、")}</p>
+            )}
+            {assignConflictList.length > 0 && (
+              <p className="tac-warn">
+                队长与定位球有 {assignConflictList.length} 处冲突，改掉才能提交。
+                <button className="btn btn-sm" onClick={() => selectZone("design")}>
+                  去改
+                </button>
+              </p>
             )}
             {subMsg && <p className={`tac-msg ${subMsg.t}`}>{subMsg.text}</p>}
             <button
@@ -1451,8 +1384,8 @@ export default function Tactics() {
             </button>
             <p className="tac-hint">
               {curMid == null
-                ? "先在上面选一场待开的比赛。"
-                : "开赛前可反复覆盖；开赛后锁定，公开端随即亮牌。"}
+                ? "先在上面选一场还没开打的比赛。"
+                : "开赛前可以反复覆盖，开赛后锁定，公开的比赛页会亮出双方阵容。"}
             </p>
           </section>
 
@@ -1462,7 +1395,7 @@ export default function Tactics() {
             </h2>
             {proxyOn && (
               <p className="tac-warn">
-                代打模式：存档按你的账号落进你自己球队，不会存进「{proxySession?.teamName ?? "目标队"}」；载入时把阵型、名单与指派带回当前身份。
+                代打模式：存档存进你自己的球队，不会存进「{proxySession?.teamName ?? "目标队"}」；载入时会把阵型、名单和队长与定位球一起带回来。
               </p>
             )}
             {teamPlayers ? (
@@ -1612,6 +1545,90 @@ export default function Tactics() {
                 点击球场上的位置，编辑球员角色与重心
                 {teamPlayers ? "；球员下拉来自你绑定的球队" : ""}
               </p>
+
+              {/* 队长与定位球（FC26「球队管理 → 指派」18 项）：候选池＝场上 11 名首发。
+                  只存已填项，键是角色不是位置，换阵型不影响；没填完不拦提交，互斥冲突拦提交。 */}
+              <div className="tac-assign-block">
+                <div className="tac-assign-head">
+                  <h3>
+                    队长与定位球 <small>FC26 球队管理 · 指派</small>
+                  </h3>
+                  {assignConflictList.length > 0 ? (
+                    <span className="tac-assign-bad">{assignConflictList.length} 处冲突</span>
+                  ) : (
+                    <span className="tac-assign-ok">
+                      已填 {assignFilled.length}/{ASSIGN_KEYS.length}
+                    </span>
+                  )}
+                  <button className="btn btn-sm" onClick={toggleAssignOpen}>
+                    {assignOpen ? "收起" : "展开"}
+                  </button>
+                </div>
+                <p className="tac-assign-sum">{assignSummary}</p>
+                {assignOpen && (
+                  <>
+                    {assignPool.length < 11 && (
+                      <p className="tac-warn">
+                        先把场上 11 个位置选满（现在 {assignPool.length}/11）：队长和定位球只能交给本场首发。
+                      </p>
+                    )}
+                    <div className="tac-assign-grid">
+                      {ASSIGN_RENDER_ORDER.map((g) => (
+                        <section className="tac-assign-group" key={g.title}>
+                          <h3>
+                            {g.title} <small>{g.note}</small>
+                          </h3>
+                          {g.items.map((it) => {
+                            const v = assign[it.key];
+                            const bad = conflictKeys.has(it.key);
+                            return (
+                              <label
+                                className={`tac-assign-field${bad ? " bad" : ""}`}
+                                key={it.key}
+                                title={it.hint}
+                              >
+                                <span>{it.label}</span>
+                                <select
+                                  aria-label={`${g.title} · ${it.label}`}
+                                  value={v ?? ""}
+                                  onChange={(e) =>
+                                    setAssignKey(
+                                      it.key,
+                                      e.target.value ? Number(e.target.value) : null,
+                                    )
+                                  }
+                                >
+                                  <option value="">（不指定）</option>
+                                  {v != null && !assignPool.some((c) => c.id === v) && (
+                                    <option value={v}>{playerTag(v)}（已不在首发）</option>
+                                  )}
+                                  {assignPool.map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                      {poolLabel(c)}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            );
+                          })}
+                        </section>
+                      ))}
+                    </div>
+                    {assignConflictList.length > 0 && (
+                      <p className="tac-warn">
+                        {assignConflictList.map(conflictText).join("；")}
+                        <button className="btn btn-sm" onClick={clearAssignConflicts}>
+                          清除冲突项
+                        </button>
+                      </p>
+                    )}
+                    <p className="tac-hint">
+                      同一个人可以兼好几项：队长兼点球、两侧角球都交给他开，都没问题。只有开角球的人
+                      和禁区里抢点的人必须分开。
+                    </p>
+                  </>
+                )}
+              </div>
             </section>
 
             {sel && (
@@ -1702,12 +1719,12 @@ export default function Tactics() {
                 {selRisk && <p className="tac-warn">{selRisk}。</p>}
                 {selAssigns.length > 0 && (
                   <div className="tac-editor-assign">
-                    <span>本场指派</span>
+                    <span>本场负责</span>
                     {selAssigns.map((k) => (
                       <button
                         key={k}
                         className={`tac-chip${conflictKeys.has(k) ? " bad" : ""}`}
-                        title="清除这一项指派"
+                        title="不再让他负责这一项"
                         onClick={() => setAssignKey(k, null)}
                       >
                         {ASSIGN_LABEL[k]} ✕
@@ -1723,7 +1740,7 @@ export default function Tactics() {
       </div>
 
       <footer className="tac-foot">
-        战术码不含球员名与指派（名字只存在你的浏览器里）；阵容与指派提交后才落到服务器。
+        战术码只带阵型和打法，不带球员名，也不带队长与定位球。名字只存在你的浏览器里；阵容和队长与定位球提交后才到服务器。
       </footer>
 
       {selected != null && <button className="tac-scrim" aria-label="关闭球员卡" onClick={() => setSelected(null)} />}
