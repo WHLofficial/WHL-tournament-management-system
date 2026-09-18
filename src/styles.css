@@ -1560,6 +1560,13 @@ button.add-stage {
      右栏放进①本场备案的一叠卡后动辄两三千像素高，拉伸会把绿色球场拉成一根竖条 */
   align-items: start;
 }
+/* 左列自己一叠：球场在上、战术码紧跟其下，右栏再高也顶不动它 */
+.tac-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
 .tac-pitch-panel {
   display: flex;
   padding: 10px 10px 0;
@@ -1829,7 +1836,8 @@ button.add-stage {
 .tac-settings h2,
 .tac-bench h2,
 .tac-archives h2,
-.tac-submit h2 {
+.tac-submit h2,
+.tac-submit-bar h2 {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 1.2px;
@@ -1839,7 +1847,8 @@ button.add-stage {
 }
 .tac-bench h2 small,
 .tac-archives h2 small,
-.tac-submit h2 small {
+.tac-submit h2 small,
+.tac-submit-bar h2 small {
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
@@ -2101,10 +2110,17 @@ button.add-stage {
   .tac-side {
     display: contents;
   }
+  /* 左列也摊平，让球场和战术码回到这一条 order 链上：战术码紧跟在球场后面 */
+  .tac-left {
+    display: contents;
+  }
   .tac-pitch-panel {
     order: 0;
     flex: 1 1 auto;
     min-height: 380px;
+  }
+  .tac-code-panel {
+    order: 1;
   }
   /* 卡片顺序统一由 .tac-side > * 的 order 管（display:contents 下仍然匹配），这里不再重复 */
   .tac-duo {
@@ -2160,6 +2176,7 @@ button.add-stage {
     min-width: 44px;
     min-height: 44px;
   }
+  /* 指派网格的单列改写放在文件末尾那条 560px 里：基础槽位规则在它后面，写这儿会被盖掉 */
 }
 @media (min-width: 980px) {
   .tac-scrim {
@@ -3070,7 +3087,8 @@ button.add-stage {
 }
 
 /* 右栏卡片顺序（桌面＝右栏列内顺序；手机 display:contents 后同一条链决定整页顺序）。
-   0 是分区页签、1 是常驻核心（选中位置编辑器）、① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8-9。 */
+   0 是分区页签、1 是常驻核心（选中位置编辑器）、① 本场备案 2-5、② 战术设计 7、③ 工具与档案 8。
+   战术码已经挪出右栏（跟在球场下面），手机端 order 在 @media 里单独给。 */
 .tac-side > .tac-zones {
   order: 0;
 }
@@ -3086,9 +3104,6 @@ button.add-stage {
 }
 .tac-side > .tac-submit-bar {
   order: 5;
-}
-.tac-side > .tac-code-panel {
-  order: 7;
 }
 .tac-side > .tac-import-panel {
   order: 8;
@@ -3150,10 +3165,27 @@ button.add-stage {
 }
 .tac-assign-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: 12px 16px;
   margin-top: 12px;
   align-items: start;
+}
+/* 版面按组名归位：左列队长 + 界外球，右列任意球（往下占两行），下一行角球进攻 | 角球防守。
+   组名改了就不套这些类，直接退回自然流。 */
+.tac-as-a {
+  grid-area: 1 / 1;
+}
+.tac-as-b {
+  grid-area: 2 / 1;
+}
+.tac-as-c {
+  grid-area: 1 / 2 / span 2;
+}
+.tac-as-d {
+  grid-area: 3 / 1;
+}
+.tac-as-e {
+  grid-area: 3 / 2;
 }
 .tac-assign-group {
   min-width: 0;
@@ -3173,6 +3205,13 @@ button.add-stage {
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
+  color: var(--muted);
+}
+/* 队长只有一项、组名与项名同词，不排小标题，说明跟在项下面 */
+.tac-assign-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
   color: var(--muted);
 }
 .tac-assign-field {
@@ -3351,6 +3390,14 @@ button.add-stage {
   /* 手机上一列一项：下拉点得准，标签也不会被挤成两行 */
   .tac-assign-grid {
     grid-template-columns: 1fr;
+  }
+  /* 撤掉按组名归的槽位，回到自然流（不写在这儿会被上面的基础规则盖掉） */
+  .tac-as-a,
+  .tac-as-b,
+  .tac-as-c,
+  .tac-as-d,
+  .tac-as-e {
+    grid-area: auto;
   }
   .lu-assign li i {
     min-width: 0;

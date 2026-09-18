@@ -71,6 +71,15 @@ const ASSIGN_RENDER_ORDER: AssignGroup[] = (() => {
     .filter((g): g is AssignGroup => g != null);
   return out.length === ASSIGN_GROUPS.length ? out : ASSIGN_GROUPS;
 })();
+// 版面：左列队长 + 界外球，右列任意球（往下占两行），下一行角球进攻 | 角球防守。
+// 按组名认槽位，组名改了就退回自然流（不套 tac-as-* 类），不会串位。
+const ASSIGN_SLOT: Record<string, string> = {
+  队长: "a",
+  界外球: "b",
+  任意球: "c",
+  角球进攻: "d",
+  角球防守: "e",
+};
 function isZone(v: string | null): v is Zone {
   return v === "lineup" || v === "design" || v === "tools";
 }
@@ -1043,81 +1052,96 @@ export default function Tactics() {
       </header>
 
       <div className="tac-layout">
-        <section className="card tac-pitch-panel">
-          <div className="tac-pitch">
-            <svg viewBox="0 0 100 130" preserveAspectRatio="none" aria-hidden="true">
-              <g fill="none" stroke="rgba(244,246,243,.75)" strokeWidth=".6">
-                <rect x="3" y="3" width="94" height="124" />
-                <line x1="3" y1="65" x2="97" y2="65" />
-                <circle cx="50" cy="65" r="13" />
-                <rect x="27" y="114" width="46" height="13" />
-                <rect x="38.5" y="124" width="23" height="3" />
-                <path d="M36 114 A 14 14 0 0 1 64 114" />
-                <rect x="27" y="3" width="46" height="13" />
-                <rect x="38.5" y="3" width="23" height="3" />
-                <path d="M36 16 A 14 14 0 0 0 64 16" />
-                <path d="M3 5 A 2 2 0 0 0 5 3" />
-                <path d="M97 5 A 2 2 0 0 1 95 3" />
-                <path d="M3 125 A 2 2 0 0 1 5 127" />
-                <path d="M97 125 A 2 2 0 0 0 95 127" />
-              </g>
-              <g fill="rgba(244,246,243,.75)">
-                <circle cx="50" cy="65" r=".9" />
-                <circle cx="50" cy="120.5" r=".8" />
-                <circle cx="50" cy="9.5" r=".8" />
-              </g>
-            </svg>
-            {form.pos.map((p, i) => {
-              const xy = [...POS_XY[p.position]];
-              if (CENTRAL[p.position] && counts[p.position] > 1) {
-                const n = counts[p.position];
-                xy[0] += SPREAD[n][n - 1 - (seen[p.position] || 0)];
-              }
-              if (cbN >= 3) {
-                if (p.position === "RB" || p.position === "LB") xy[1] = 38;
-                if (p.position === "CB") xy[1] = 24;
-              }
-              seen[p.position] = (seen[p.position] || 0) + 1;
-              const pl = players[i];
-              const nm = displayName(names[String(p.lid)]);
-              const pid = Number(names[String(p.lid)]);
-              const st = statOf(names[String(p.lid)]);
-              const dup = Number.isInteger(pid) && pid > 0 && dupPids.has(pid);
-              const isCap = capPid != null && Number.isInteger(pid) && pid === capPid;
-              const mark = st && st.susp > 0 ? (st.inj ? " both" : " susp") : st && st.inj ? " inj" : "";
-              const tip = statTip(st);
-              return (
-                <button
-                  key={p.lid}
-                  className={`tac-tile${selected === p.lid ? " sel" : ""}${mark}${dup ? " dup" : ""}`}
-                  style={{ left: `${xy[0]}%`, top: `${100 - xy[1]}%` }}
-                  title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}${dup ? " · 这名球员在本场占了多个位置" : ""}`}
-                  aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}${tip ? `，${tip}` : ""}${dup ? "，位置重复" : ""}`}
-                  onClick={() => setSelected(selected === p.lid ? null : p.lid)}
-                >
-                  {st && (st.susp > 0 || st.inj) ? (
-                    <span className="tac-marks" aria-hidden="true">
-                      {st.susp > 0 ? <i className="tac-mk-card" /> : null}
-                      {st.inj ? <i className="tac-mk-cross" /> : null}
-                    </span>
-                  ) : null}
-                  {isCap ? (
-                    <span className="tac-cap" title="队长" aria-hidden="true">
-                      C
-                    </span>
-                  ) : null}
-                  {dup ? (
-                    <span className="tac-mk-dup" aria-hidden="true">
-                      ⚠
-                    </span>
-                  ) : null}
-                  <b>{p.position}</b>
-                  {nm ? <small>{nm}</small> : null}
-                </button>
-              );
-            })}
-          </div>
-        </section>
+        {/* 左列：球场 + 战术码。战术码跟着球场走，不随分区页签隐藏 */}
+        <div className="tac-left">
+          <section className="card tac-pitch-panel">
+            <div className="tac-pitch">
+              <svg viewBox="0 0 100 130" preserveAspectRatio="none" aria-hidden="true">
+                <g fill="none" stroke="rgba(244,246,243,.75)" strokeWidth=".6">
+                  <rect x="3" y="3" width="94" height="124" />
+                  <line x1="3" y1="65" x2="97" y2="65" />
+                  <circle cx="50" cy="65" r="13" />
+                  <rect x="27" y="114" width="46" height="13" />
+                  <rect x="38.5" y="124" width="23" height="3" />
+                  <path d="M36 114 A 14 14 0 0 1 64 114" />
+                  <rect x="27" y="3" width="46" height="13" />
+                  <rect x="38.5" y="3" width="23" height="3" />
+                  <path d="M36 16 A 14 14 0 0 0 64 16" />
+                  <path d="M3 5 A 2 2 0 0 0 5 3" />
+                  <path d="M97 5 A 2 2 0 0 1 95 3" />
+                  <path d="M3 125 A 2 2 0 0 1 5 127" />
+                  <path d="M97 125 A 2 2 0 0 0 95 127" />
+                </g>
+                <g fill="rgba(244,246,243,.75)">
+                  <circle cx="50" cy="65" r=".9" />
+                  <circle cx="50" cy="120.5" r=".8" />
+                  <circle cx="50" cy="9.5" r=".8" />
+                </g>
+              </svg>
+              {form.pos.map((p, i) => {
+                const xy = [...POS_XY[p.position]];
+                if (CENTRAL[p.position] && counts[p.position] > 1) {
+                  const n = counts[p.position];
+                  xy[0] += SPREAD[n][n - 1 - (seen[p.position] || 0)];
+                }
+                if (cbN >= 3) {
+                  if (p.position === "RB" || p.position === "LB") xy[1] = 38;
+                  if (p.position === "CB") xy[1] = 24;
+                }
+                seen[p.position] = (seen[p.position] || 0) + 1;
+                const pl = players[i];
+                const nm = displayName(names[String(p.lid)]);
+                const pid = Number(names[String(p.lid)]);
+                const st = statOf(names[String(p.lid)]);
+                const dup = Number.isInteger(pid) && pid > 0 && dupPids.has(pid);
+                const isCap = capPid != null && Number.isInteger(pid) && pid === capPid;
+                const mark = st && st.susp > 0 ? (st.inj ? " both" : " susp") : st && st.inj ? " inj" : "";
+                const tip = statTip(st);
+                return (
+                  <button
+                    key={p.lid}
+                    className={`tac-tile${selected === p.lid ? " sel" : ""}${mark}${dup ? " dup" : ""}`}
+                    style={{ left: `${xy[0]}%`, top: `${100 - xy[1]}%` }}
+                    title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}${dup ? " · 这名球员在本场占了多个位置" : ""}`}
+                    aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}${tip ? `，${tip}` : ""}${dup ? "，位置重复" : ""}`}
+                    onClick={() => setSelected(selected === p.lid ? null : p.lid)}
+                  >
+                    {st && (st.susp > 0 || st.inj) ? (
+                      <span className="tac-marks" aria-hidden="true">
+                        {st.susp > 0 ? <i className="tac-mk-card" /> : null}
+                        {st.inj ? <i className="tac-mk-cross" /> : null}
+                      </span>
+                    ) : null}
+                    {isCap ? (
+                      <span className="tac-cap" title="队长" aria-hidden="true">
+                        C
+                      </span>
+                    ) : null}
+                    {dup ? (
+                      <span className="tac-mk-dup" aria-hidden="true">
+                        ⚠
+                      </span>
+                    ) : null}
+                    <b>{p.position}</b>
+                    {nm ? <small>{nm}</small> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* 战术码：摆在球场下面，与「这块板上现在是什么打法」紧挨着，任何一层都看得见 */}
+          <section className="card tac-code-panel">
+            <div className="tac-code-row">
+              <div className="tac-codebox">
+                <code>{code}</code>
+              </div>
+              <button className="btn tac-btn-primary" onClick={copyCode}>
+                复制
+              </button>
+            </div>
+          </section>
+        </div>
 
         <div className="tac-side">
         {/* 分区页签：球场常驻在左列，这一条切右栏下面这一叠卡（当前层记在 URL ?zone=，刷新/后退都对） */}
@@ -1346,12 +1370,7 @@ export default function Tactics() {
           {/* ① 本场备案 · 收尾：风险提示与两击确认提交。文案分支按本队/代打两套保留 */}
           <section className="card tac-submit-bar" hidden={zone !== "lineup"}>
             <h2>
-              提交阵容{" "}
-              <small>
-                {proxyOn
-                  ? `代打 · ${proxySession?.teamName ?? "目标队"}`
-                  : "整份替换上一份，阵容与队长定位球一起交"}
-              </small>
+              提交阵容 <small>提交信息包含阵容、战术与定位球</small>
             </h2>
             {risks.length > 0 && (
               <p className="tac-warn">名单里有状态异常的球员：{risks.join("、")}</p>
@@ -1457,17 +1476,6 @@ export default function Tactics() {
               <p className="tac-hint">登录并绑定球队后可存档，与同队教练共享。</p>
             )}
           </section>
-          <section className="card tac-code-panel" hidden={zone !== "design"}>
-            <div className="tac-code-row">
-              <div className="tac-codebox">
-                <code>{code}</code>
-              </div>
-              <button className="btn tac-btn-primary" onClick={copyCode}>
-                复制
-              </button>
-            </div>
-          </section>
-
           <section className="card tac-import-panel" hidden={zone !== "tools"}>
             <div className="tac-import-row">
               <input
@@ -1573,46 +1581,57 @@ export default function Tactics() {
                       </p>
                     )}
                     <div className="tac-assign-grid">
-                      {ASSIGN_RENDER_ORDER.map((g) => (
-                        <section className="tac-assign-group" key={g.title}>
-                          <h3>
-                            {g.title} <small>{g.note}</small>
-                          </h3>
-                          {g.items.map((it) => {
-                            const v = assign[it.key];
-                            const bad = conflictKeys.has(it.key);
-                            return (
-                              <label
-                                className={`tac-assign-field${bad ? " bad" : ""}`}
-                                key={it.key}
-                                title={it.hint}
-                              >
-                                <span>{it.label}</span>
-                                <select
-                                  aria-label={`${g.title} · ${it.label}`}
-                                  value={v ?? ""}
-                                  onChange={(e) =>
-                                    setAssignKey(
-                                      it.key,
-                                      e.target.value ? Number(e.target.value) : null,
-                                    )
-                                  }
+                      {ASSIGN_RENDER_ORDER.map((g) => {
+                        // 队长只有一项，项名与组名同一个词：组标题是重复的，省掉，说明改到项下列小字。
+                        const single = g.items.length === 1 && g.items[0].label === g.title;
+                        const slot = ASSIGN_SLOT[g.title];
+                        return (
+                          <section
+                            className={`tac-assign-group${slot ? ` tac-as-${slot}` : ""}`}
+                            key={g.title}
+                          >
+                            {single ? null : (
+                              <h3>
+                                {g.title} <small>{g.note}</small>
+                              </h3>
+                            )}
+                            {g.items.map((it) => {
+                              const v = assign[it.key];
+                              const bad = conflictKeys.has(it.key);
+                              return (
+                                <label
+                                  className={`tac-assign-field${bad ? " bad" : ""}`}
+                                  key={it.key}
+                                  title={it.hint}
                                 >
-                                  <option value="">（不指定）</option>
-                                  {v != null && !assignPool.some((c) => c.id === v) && (
-                                    <option value={v}>{playerTag(v)}（已不在首发）</option>
-                                  )}
-                                  {assignPool.map((c) => (
-                                    <option key={c.id} value={c.id}>
-                                      {poolLabel(c)}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                            );
-                          })}
-                        </section>
-                      ))}
+                                  <span>{it.label}</span>
+                                  <select
+                                    aria-label={`${g.title} · ${it.label}`}
+                                    value={v ?? ""}
+                                    onChange={(e) =>
+                                      setAssignKey(
+                                        it.key,
+                                        e.target.value ? Number(e.target.value) : null,
+                                      )
+                                    }
+                                  >
+                                    <option value="">（不指定）</option>
+                                    {v != null && !assignPool.some((c) => c.id === v) && (
+                                      <option value={v}>{playerTag(v)}（已不在首发）</option>
+                                    )}
+                                    {assignPool.map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        {poolLabel(c)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              );
+                            })}
+                            {single ? <p className="tac-assign-note">{g.note}</p> : null}
+                          </section>
+                        );
+                      })}
                     </div>
                     {assignConflictList.length > 0 && (
                       <p className="tac-warn">
