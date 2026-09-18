@@ -444,3 +444,154 @@ export function pairEa(
   );
   return hit ? hit.eaId : null;
 }
+
+// ── 球员指派（FC26 Assignments）────────────────────────────────────────────
+// 18 项 5 组，口径照 FC26「球队管理 → 指派」。键是角色码不是场上位置：
+// 换阵型、换人不影响已填内容，所以提交与存档都按「角色 → 球员 id」存。
+
+export type AssignKey =
+  | "captain"
+  | "fk_left_short"
+  | "fk_right_short"
+  | "fk_long"
+  | "fk_penalty"
+  | "ca_left"
+  | "ca_right"
+  | "ca_target"
+  | "ca_near"
+  | "ca_far"
+  | "ca_arc"
+  | "ca_cover"
+  | "cd_threat"
+  | "cd_guard"
+  | "cd_near"
+  | "cd_far"
+  | "ti_left"
+  | "ti_right";
+
+export type AssignItem = { key: AssignKey; label: string; hint: string };
+export type AssignGroup = { title: string; note: string; items: AssignItem[] };
+
+export const ASSIGN_GROUPS: AssignGroup[] = [
+  {
+    title: "队长",
+    note: "仅影响动画与点球大战罚球顺序，对球员能力无加成",
+    items: [
+      { key: "captain", label: "队长", hint: "臂标与点球大战罚球顺序" },
+    ],
+  },
+  {
+    title: "任意球",
+    note: "定位球主罚人",
+    items: [
+      { key: "fk_left_short", label: "左侧短任意球", hint: "左路短任意球主罚" },
+      {
+        key: "fk_right_short",
+        label: "右侧短任意球",
+        hint: "右路短任意球主罚",
+      },
+      { key: "fk_long", label: "长任意球", hint: "远距离直接任意球主罚" },
+      { key: "fk_penalty", label: "点球", hint: "点球主罚" },
+    ],
+  },
+  {
+    title: "角球进攻",
+    note: "发球的人与禁区里的接应角色分开填；主罚人不能同时接应",
+    items: [
+      { key: "ca_left", label: "左侧角球", hint: "左侧角球主罚（发球的人）" },
+      {
+        key: "ca_right",
+        label: "右侧角球",
+        hint: "右侧角球主罚（发球的人）",
+      },
+      {
+        key: "ca_target",
+        label: "目标球员",
+        hint: "空中威胁点，头球弹跳最好的那个",
+      },
+      { key: "ca_near", label: "近门柱", hint: "抢前点" },
+      { key: "ca_far", label: "远门柱", hint: "抢后点" },
+      { key: "ca_arc", label: "禁区弧顶", hint: "留禁区外远射或二次进攻" },
+      { key: "ca_cover", label: "防守掩护", hint: "留后场防反击" },
+    ],
+  },
+  {
+    title: "角球防守",
+    note: "角球防守时的分工",
+    items: [
+      { key: "cd_threat", label: "威胁盯防者", hint: "盯对方头球最大威胁" },
+      { key: "cd_guard", label: "门柱守卫", hint: "站门线防守" },
+      { key: "cd_near", label: "近门柱", hint: "守近门柱" },
+      { key: "cd_far", label: "远门柱", hint: "守远门柱" },
+    ],
+  },
+  {
+    title: "界外球",
+    note: "手抛球主罚者",
+    items: [
+      { key: "ti_left", label: "左侧界外球", hint: "左侧界外球主罚者" },
+      { key: "ti_right", label: "右侧界外球", hint: "右侧界外球主罚者" },
+    ],
+  },
+];
+
+export const ASSIGN_KEYS: readonly AssignKey[] = ASSIGN_GROUPS.flatMap((g) =>
+  g.items.map((i) => i.key),
+);
+
+export const ASSIGN_LABEL: Record<AssignKey, string> = Object.fromEntries(
+  ASSIGN_GROUPS.flatMap((g) => g.items.map((i) => [i.key, i.label])),
+) as Record<AssignKey, string>;
+
+export const ASSIGN_GROUP_OF: Record<AssignKey, string> = Object.fromEntries(
+  ASSIGN_GROUPS.flatMap((g) => g.items.map((i) => [i.key, g.title])),
+) as Record<AssignKey, string>;
+
+export function isAssignKey(k: string): k is AssignKey {
+  return (ASSIGN_KEYS as readonly string[]).includes(k);
+}
+
+// 角球主罚人 ⊥ 角球进攻接应角色（双向互斥）：在角旗区发球的人不可能同时在禁区抢点。
+// 同一人仍可同时开左右两侧角球，也仍可与角球防守组 / 任意球 / 点球 / 界外球 / 队长兼任。
+// 要更严（例如左右角球主罚也不能是同一人）往这张表里加一对即可。
+const CORNER_TAKERS: AssignKey[] = ["ca_left", "ca_right"];
+const CORNER_RECEIVERS: AssignKey[] = [
+  "ca_target",
+  "ca_near",
+  "ca_far",
+  "ca_arc",
+  "ca_cover",
+];
+export const ASSIGN_EXCLUSIVE: readonly (readonly [AssignKey, AssignKey])[] =
+  CORNER_TAKERS.flatMap((a) =>
+    CORNER_RECEIVERS.map((b) => [a, b] as const),
+  );
+
+export type AssignConflict = { playerId: number; a: AssignKey; b: AssignKey };
+
+// 前端预检与后端校验共用，规则只定义一处。
+export function assignConflicts(
+  assign: Record<string, number>,
+): AssignConflict[] {
+  const byPid = new Map<number, AssignKey[]>();
+  for (const k of ASSIGN_KEYS) {
+    const pid = assign[k];
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) continue;
+    const arr = byPid.get(pid);
+    if (arr) arr.push(k);
+    else byPid.set(pid, [k]);
+  }
+  const out: AssignConflict[] = [];
+  for (const [pid, keys] of byPid) {
+    for (const [a, b] of ASSIGN_EXCLUSIVE) {
+      if (keys.includes(a) && keys.includes(b)) {
+        out.push({ playerId: pid, a, b });
+      }
+    }
+  }
+  return out;
+}
+
+export function conflictText(c: AssignConflict): string {
+  return `角球主罚「${ASSIGN_GROUP_OF[c.a]}·${ASSIGN_LABEL[c.a]}」和接应「${ASSIGN_GROUP_OF[c.b]}·${ASSIGN_LABEL[c.b]}」不能是同一名球员`;
+}

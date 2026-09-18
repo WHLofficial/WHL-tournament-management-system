@@ -1,5 +1,6 @@
 // 前后端共享的类型与常量。
 import type { InjurySeverity } from "./injuries";
+import type { AssignKey } from "./tactics";
 
 // 伤病档位定义在 shared/injuries.ts（与伤病名库同文件，便于一处维护），这里转出
 export type { InjurySeverity };
@@ -487,6 +488,15 @@ export interface LineupSubmitBody {
   slots: StoredLineupSlot[];
   /** 战术板编码串（FUT26 格式），随阵容存档；管理端备案可见 */
   code?: string;
+  /** 球员指派：角色码 → 球员 id（见 shared/tactics 的 ASSIGN_GROUPS），只带已填项 */
+  assign?: Record<string, number>;
+}
+
+// 球员附加信息（队徽/属性）。当前 player 表只有 id/name/number，
+// worker/lib/playerMeta.ts 默认返回空，将来接 club 平台只改那一个文件；前端「有才渲染」。
+export interface PlayerMeta {
+  badges?: string[];
+  attrs?: Record<string, number>;
 }
 
 export interface LineupPlayerDTO {
@@ -494,6 +504,7 @@ export interface LineupPlayerDTO {
   /** 球员被删后为 null，前端显示「已离队」 */
   name: string | null;
   number: string | null;
+  meta?: PlayerMeta;
 }
 
 export interface LineupStarterDTO extends LineupPlayerDTO {
@@ -506,6 +517,17 @@ export interface LineupBenchDTO extends LineupPlayerDTO {
   kind: "bench";
 }
 
+// 球员指派项。按 shared/tactics 的 ASSIGN_GROUPS 顺序输出；
+// starter=false = 该球员已不在本场首发（保留不静默清空，前端标黄提示）。
+export interface LineupAssignDTO {
+  key: AssignKey;
+  playerId: number;
+  name: string | null;
+  number: string | null;
+  starter: boolean;
+  meta?: PlayerMeta;
+}
+
 export interface TeamLineupDTO {
   teamId: number;
   teamName: string;
@@ -513,8 +535,12 @@ export interface TeamLineupDTO {
   form: string;
   submittedAt: string;
   submittedBy: string | null;
+  /** true = 这份阵容是经管理员授权的代打提交的（submittedBy 是代打者，不是本队教练） */
+  viaProxy: boolean;
   starters: LineupStarterDTO[];
   bench: LineupBenchDTO[];
+  /** 球员指派（未填则空数组） */
+  assign: LineupAssignDTO[];
 }
 
 export interface MatchLineupDTO {
@@ -524,6 +550,89 @@ export interface MatchLineupDTO {
 
 // 管理端 GET /api/admin/matches/:id/lineup：在 MatchLineupDTO 上附加战术码备案（公开端不返回码）
 export type AdminMatchLineupDTO = MatchLineupDTO & { homeCode: string; awayCode: string };
+
+// ---------- 阵容代打（migration 0023） ----------
+// 管理员把「提交某队某场阵容」的权限临时授给另一个账号；精确到单场，
+// 有效性 = 未撤销且比赛未开打，故没有 expires_at。
+
+// 教练端 GET /api/coach/proxy/sessions：我被授权代打的清单
+export interface ProxySessionDTO {
+  matchId: number;
+  teamId: number;
+  teamName: string;
+  opponentName: string | null;
+  side: "home" | "away";
+  tournamentId: number;
+  tournamentName: string;
+  stageName: string | null;
+  stageKind: "elim" | "round_robin" | "group";
+  round: number;
+  leg: number | null;
+  submitted: boolean;
+  submittedBy: string | null;
+  grantedByName: string | null;
+  grantedAt: string;
+}
+
+// 教练端 GET /api/coach/proxy/:mid/board：代打模式一次取全（名单 + 伤停停赛 + 已交阵容）
+export interface ProxyBoardResp {
+  session: ProxySessionDTO;
+  players: { id: number; name: string; number: string | null }[];
+  status: CoachStatusResp;
+  lineup: TeamLineupDTO | null;
+}
+
+// 管理端 GET /api/admin/proxy-grants
+export interface AdminProxyGrantDTO {
+  id: number;
+  matchId: number;
+  teamId: number;
+  teamName: string;
+  opponentName: string | null;
+  side: "home" | "away";
+  tournamentId: number;
+  tournamentName: string;
+  stageName: string | null;
+  round: number;
+  granteeUserId: number;
+  granteeName: string | null;
+  granteeTeamName: string | null;
+  grantedBy: number;
+  grantedByName: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+  /** 未撤销且比赛未开打 */
+  active: boolean;
+  /** 被代打的那一队这场是否已有阵容 */
+  submitted: boolean;
+}
+
+// 管理端 GET /api/admin/proxy-grants/context：授权页的候选账号
+// （姓名取 auth 库 account.name；role 是本库口径，OIDC 新账号没有本库行则为 null）
+export interface ProxyGrantCandidateDTO {
+  userId: number;
+  name: string;
+  teamId: number | null;
+  teamName: string | null;
+  role: Role | null;
+}
+
+// 管理端 GET /api/admin/proxy-grants/match/:mid：选好比赛后取两队的 id 与已有授权
+// （比赛列表 DTO 里没有 team id，靠队名反查不可靠）
+export interface ProxyMatchSidesDTO {
+  matchId: number;
+  status: MatchStatus;
+  tournamentId: number;
+  tournamentName: string;
+  stageName: string | null;
+  round: number;
+  leg: number | null;
+  homeTeamId: number | null;
+  homeTeamName: string | null;
+  awayTeamId: number | null;
+  awayTeamName: string | null;
+  grants: AdminProxyGrantDTO[];
+}
 
 // ---------- 战术存档（tactic 表，migration 0009/0017） ----------
 
@@ -537,6 +646,8 @@ export interface TacticArchiveDTO {
   lineHeight: number;
   note: string;
   roster: Record<string, string>;
+  /** 球员指派：角色码 → 球员 id（跨场复用回填用） */
+  assign: Record<string, number>;
   createdAt: string;
 }
 
@@ -650,6 +761,8 @@ export interface CoachPendingMatchDTO {
   side: "home" | "away";
   opponentName: string | null;
   submitted: boolean;
+  /** 本场本队已授权他人代打：这期间本队教练提交会被拒 */
+  proxyGranted: boolean;
 }
 
 // ---------- 教练端：本队伤停/停赛概览（战术板用，只读派生） ----------

@@ -1,13 +1,30 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { rateLimit } from "../lib/ratelimit";
-import { fetchMatchLineup, LineupError, validateLineupSlots } from "../lib/lineup";
-import { AuthApiError, authBindTeam, boundTeamId, teamMembers } from "../lib/authClient";
+import {
+  fetchMatchLineup,
+  LineupError,
+  normalizeAssign,
+  parseAssignJson,
+  validateAssign,
+  validateLineupSlots,
+  writeLineup,
+  writeLineupStmt,
+} from "../lib/lineup";
+import { AuthApiError, authBindTeam, boundAccounts, boundTeamId, teamMembers } from "../lib/authClient";
 import { requirePermission, requirePwChanged } from "../middleware/auth";
 import { computeSuspensions, parseSuspensionConfig } from "../lib/suspension";
 import { listActiveInjuries } from "../lib/injury";
+import { auditStmt } from "../lib/audit";
+import { accountNames, findGrantForGrantee, findGrantForTeam, getGranteeSession, listGranteeSessions } from "../lib/lineupProxy";
 import { BUILDUPS, FORMS, decodeFut25, decodeFut26 } from "../../shared/tactics";
-import type { CoachStatusResp, LineupSubmitBody, TacticArchiveDTO } from "../../shared/types";
+import type {
+  CoachStatusPlayerDTO,
+  CoachStatusResp,
+  LineupSubmitBody,
+  ProxyBoardResp,
+  TacticArchiveDTO,
+} from "../../shared/types";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
 // 增量 7：绑定真源在 auth 库（team_binding），本仓只读派生（AUTH_DB）。
@@ -127,7 +144,7 @@ app.get("/me/matches", async (c) => {
        s.name AS stage_name, s.kind AS stage_kind,
        he.team_id AS home_tid, ae.team_id AS away_tid,
        ht.name AS home_team_name, at.name AS away_team_name,
-       ts.id AS sub_id
+       ts.id AS sub_id, g.id AS grant_id
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      JOIN tournament t ON t.id = s.tournament_id
@@ -136,12 +153,13 @@ app.get("/me/matches", async (c) => {
      LEFT JOIN team ht ON ht.id = he.team_id
      LEFT JOIN team at ON at.id = ae.team_id
      LEFT JOIN tactic_submission ts ON ts.match_id = m.id AND ts.team_id = ?
+     LEFT JOIN lineup_proxy_grant g ON g.match_id = m.id AND g.team_id = ? AND g.revoked_at IS NULL
      WHERE m.status = 'pending' AND t.status != 'draft'
        AND (m.note IS NULL OR m.note != '轮空')
        AND (he.team_id = ? OR ae.team_id = ?)
      ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`,
   )
-    .bind(teamId, teamId, teamId)
+    .bind(teamId, teamId, teamId, teamId)
     .all<{
       id: number;
       round: number;
@@ -155,6 +173,7 @@ app.get("/me/matches", async (c) => {
       home_team_name: string | null;
       away_team_name: string | null;
       sub_id: number | null;
+      grant_id: number | null;
     }>();
   return c.json({
     matches: (rows.results ?? []).map((r) => {
@@ -170,10 +189,35 @@ app.get("/me/matches", async (c) => {
         side,
         opponentName: side === "home" ? r.away_team_name : r.home_team_name,
         submitted: r.sub_id !== null,
+        // 本场本队的阵容已授权别人代打：本队教练此时交不了，板上要说清缘由
+        proxyGranted: r.grant_id !== null,
       };
     }),
   });
 });
+
+// 某队在某赛事下的停赛清单（口径与录入端一致）。战术板的「本队状态」与代打板都要用，
+// 唯一差别只是传进来的 teamId 是谁，故抽出来共用。
+async function suspensionSliceOf(
+  db: D1Database,
+  teamId: number,
+  tid: number,
+  configJson: string | null,
+): Promise<{ yellowThreshold: number; players: CoachStatusPlayerDTO[] }> {
+  const cfg = parseSuspensionConfig(configJson);
+  // 只重放本队：多队赛事里别队的牌与本队口径无关
+  const all = await computeSuspensions(db, tid, cfg, teamId);
+  const players = all
+    .filter((p) => p.teamId === teamId && (p.remaining > 0 || p.yellows > 0))
+    .map((p) => ({
+      playerId: p.playerId,
+      playerName: p.playerName,
+      remaining: p.remaining,
+      yellows: p.yellows,
+    }))
+    .sort((a, b) => b.remaining - a.remaining || b.yellows - a.yellows || a.playerId - b.playerId);
+  return { yellowThreshold: cfg.yellowThreshold, players };
+}
 
 // 本队伤停/停赛概览：战术板上的状态提示（只读；全部只提示不拦截）。
 // 停赛按赛事算（红黄牌在赛事内独立累计，故板上要能切赛事）；伤停跨赛事，不随赛事变。
@@ -227,24 +271,14 @@ app.get("/me/status", async (c) => {
   const tid = list.some((t) => t.tournamentId === want) ? want : defTid;
   if (tid == null) return c.json({ ...empty, tournaments: list, injuries });
 
-  const cfg = parseSuspensionConfig(rowsAll.find((r) => r.tournament_id === tid)?.config_json);
-  // 只重放本队：多队赛事里别队的牌与本队口径无关
-  const all = await computeSuspensions(c.env.DB, tid, cfg, teamId);
-  const players = all
-    .filter((p) => p.teamId === teamId && (p.remaining > 0 || p.yellows > 0))
-    .map((p) => ({
-      playerId: p.playerId,
-      playerName: p.playerName,
-      remaining: p.remaining,
-      yellows: p.yellows,
-    }))
-    .sort((a, b) => b.remaining - a.remaining || b.yellows - a.yellows || a.playerId - b.playerId);
+  const cfgJson = rowsAll.find((r) => r.tournament_id === tid)?.config_json ?? null;
+  const slice = await suspensionSliceOf(c.env.DB, teamId, tid, cfgJson);
 
   const resp: CoachStatusResp = {
     tournaments: list,
     tournamentId: tid,
-    yellowThreshold: cfg.yellowThreshold,
-    players,
+    yellowThreshold: slice.yellowThreshold,
+    players: slice.players,
     injuries,
   };
   return c.json(resp);
@@ -312,6 +346,11 @@ app.put("/matches/:mid/lineup", async (c) => {
   if (m.status !== "pending") {
     return c.json({ message: "比赛已开打，阵容已锁定" }, 409);
   }
+  // 本场本队的阵容已授权别人代打时，本队教练让位（撤销后立刻恢复）
+  const ceded = await findGrantForTeam(c.env.DB, mid, teamId);
+  if (ceded && ceded.granteeUserId !== user.id) {
+    return c.json({ message: "本场阵容已授权他人代打，你暂不能提交" }, 403);
+  }
 
   const ids = [...new Set(slots.map((s) => s.player_id))];
   const owned = await c.env.DB.prepare(
@@ -322,19 +361,150 @@ app.put("/matches/:mid/lineup", async (c) => {
   if (owned?.n !== ids.length) {
     return c.json({ message: "名单里有不属于你球队的球员，请回战术板重选" }, 400);
   }
+  let assign;
+  try {
+    assign = await validateAssign(c.env.DB, teamId, body.assign);
+  } catch (e) {
+    if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
+    throw e;
+  }
 
-  await c.env.DB.prepare(
-    `INSERT INTO tactic_submission (match_id, team_id, created_by, form, slots_json, code)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(match_id, team_id) DO UPDATE SET
-       created_by = excluded.created_by,
-       form = excluded.form,
-       slots_json = excluded.slots_json,
-       code = excluded.code,
-       created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+  await writeLineup(c.env.DB, {
+    matchId: mid,
+    teamId,
+    userId: user.id,
+    form: body.form,
+    slots,
+    code,
+    assign,
+  });
+  return c.json({ ok: true });
+});
+
+// —— 阵容代打：管理员把「某场某队的阵容提交权」临时授给别的教练（migration 0023）——
+
+// 我在哪些场次被授权代打。开赛或撤销后自动从清单里消失，前端据此显示身份切换器。
+app.get("/proxy/sessions", async (c) => {
+  const user = c.get("user")!;
+  const acct = accountNames(await boundAccounts(c.env));
+  const sessions = await listGranteeSessions(c.env.DB, user.id, acct);
+  return c.json({ sessions });
+});
+
+// 代打板取数：目标队的名单、伤停、停赛与已提交阵容一次取全（口径与 /me/team、/me/status 完全一致，
+// 只把 teamId 换成被代打的那支队，这样战术板的校验与提示无需另写一套）
+app.get("/proxy/:mid/board", async (c) => {
+  const user = c.get("user")!;
+  const mid = Number(c.req.param("mid"));
+  if (!Number.isInteger(mid)) return c.json({ message: "比赛不存在" }, 404);
+
+  const acct = accountNames(await boundAccounts(c.env));
+  const session = await getGranteeSession(c.env.DB, mid, user.id, acct);
+  if (!session) return c.json({ message: "这场没有你的代打授权" }, 403);
+
+  const [players, injuries, lineup, slice] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, name, number FROM player WHERE team_id = ?
+       ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id`,
+    )
+      .bind(session.teamId)
+      .all<{ id: number; name: string; number: string | null }>(),
+    listActiveInjuries(c.env.DB, session.teamId),
+    fetchMatchLineup(c.env.DB, mid, false),
+    (async () => {
+      const t = await c.env.DB.prepare("SELECT config_json FROM tournament WHERE id = ?")
+        .bind(session.tournamentId)
+        .first<{ config_json: string | null }>();
+      return suspensionSliceOf(c.env.DB, session.teamId, session.tournamentId, t?.config_json ?? null);
+    })(),
+  ]);
+
+  const mine =
+    lineup.home?.teamId === session.teamId
+      ? lineup.home
+      : lineup.away?.teamId === session.teamId
+        ? lineup.away
+        : null;
+  const status: CoachStatusResp = {
+    // 赛事被授权锁死在这一场，选择器只留这一个，避免板上切赛事切了个寂寞
+    tournaments: [{ tournamentId: session.tournamentId, name: session.tournamentName, default: true }],
+    tournamentId: session.tournamentId,
+    yellowThreshold: slice.yellowThreshold,
+    players: slice.players,
+    injuries,
+  };
+  const body: ProxyBoardResp = {
+    session,
+    players: players.results.map((p) => ({ id: p.id, name: p.name, number: p.number })),
+    status,
+    lineup: mine,
+  };
+  return c.json(body);
+});
+
+// 代打提交：替被代打队交本场阵容。写 proxy_grant_id 留痕，审计与写入同一批。
+app.put("/proxy/:mid/lineup", async (c) => {
+  const user = c.get("user")!;
+  if (user.locked) return c.json({ message: "你的账号暂不能提交阵容，请联系管理员解锁" }, 403);
+  const ip = c.req.header("CF-Connecting-IP") ?? "local";
+  if (!(await rateLimit(c.env, `tsub:${ip}:${user.id}`, 10, 60))) {
+    return c.json({ message: "提交太频繁，请一分钟后再试" }, 429);
+  }
+
+  const mid = Number(c.req.param("mid"));
+  if (!Number.isInteger(mid)) return c.json({ message: "比赛不存在" }, 404);
+  // 授权先于报文校验：没这份授权，报文再规范也无权交
+  const grant = await findGrantForGrantee(c.env.DB, mid, user.id);
+  if (!grant) return c.json({ message: "这场没有你的代打授权" }, 403);
+
+  const body = await c.req.json<LineupSubmitBody>().catch(() => null);
+  if (!body || typeof body.form !== "string" || !Array.isArray(body.slots)) {
+    return c.json({ message: "请求格式不对" }, 400);
+  }
+  const code = typeof body.code === "string" ? body.code.trim().slice(0, 512) : "";
+  let slots;
+  try {
+    slots = validateLineupSlots(body.form, body.slots);
+  } catch (e) {
+    if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
+    throw e;
+  }
+
+  // 球员归属按被代打队判：代打者交的必须是目标队的在册球员
+  const ids = [...new Set(slots.map((s) => s.player_id))];
+  const owned = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM player WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`,
   )
-    .bind(mid, teamId, user.id, body.form, JSON.stringify(slots), code)
-    .run();
+    .bind(grant.teamId, ...ids)
+    .first<{ n: number }>();
+  if (owned?.n !== ids.length) {
+    return c.json({ message: "名单里有不属于该球队的球员，请回战术板重选" }, 400);
+  }
+  // 指派按被代打队判（不是代打者自己的队），否则合法提交会被判 400
+  let assign;
+  try {
+    assign = await validateAssign(c.env.DB, grant.teamId, body.assign);
+  } catch (e) {
+    if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
+    throw e;
+  }
+
+  await c.env.DB.batch([
+    writeLineupStmt(c.env.DB, {
+      matchId: mid,
+      teamId: grant.teamId,
+      userId: user.id,
+      form: body.form,
+      slots,
+      code,
+      assign,
+      proxyGrantId: grant.id,
+    }),
+    auditStmt(c.env.DB, user.id, "lineup_proxy_submit", mid, {
+      teamId: grant.teamId,
+      grantId: grant.id,
+    }),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -361,7 +531,7 @@ app.get("/tactics", async (c) => {
   const teamId = await teamIdOf(c.env, user.id);
   if (!teamId) return c.json({ tactics: [] });
   const rows = await c.env.DB.prepare(
-    `SELECT id, code, form, buildup, line_height, note, roster_json, created_at
+    `SELECT id, code, form, buildup, line_height, note, roster_json, assign_json, created_at
      FROM tactic WHERE team_id = ? ORDER BY created_at DESC, id DESC LIMIT ${TACTIC_CAP}`,
   )
     .bind(teamId)
@@ -373,6 +543,7 @@ app.get("/tactics", async (c) => {
       line_height: number;
       note: string | null;
       roster_json: string;
+      assign_json: string;
       created_at: string;
     }>();
   const tactics: TacticArchiveDTO[] = rows.results.map((r) => ({
@@ -383,6 +554,7 @@ app.get("/tactics", async (c) => {
     lineHeight: r.line_height,
     note: r.note ?? "",
     roster: parseRoster(r.roster_json),
+    assign: parseAssignJson(r.assign_json),
     createdAt: r.created_at,
   }));
   return c.json({ tactics });
@@ -406,6 +578,7 @@ app.post("/tactics", async (c) => {
       buildup?: string;
       lineHeight?: number;
       roster?: Record<string, unknown>;
+      assign?: Record<string, unknown>;
     }>()
     .catch(() => null);
   const code = typeof body?.code === "string" ? body.code.trim().replace(/\s+/g, "") : "";
@@ -442,6 +615,14 @@ app.post("/tactics", async (c) => {
       if (Object.keys(roster).length >= 24) break;
     }
   }
+  // 指派随存档存一份：跨场复用回填用。存档是草稿本，不做球员归属校验（可存代打目标队的人）
+  let assign;
+  try {
+    assign = normalizeAssign(body?.assign);
+  } catch (e) {
+    if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
+    throw e;
+  }
 
   const full = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM tactic WHERE team_id = ?")
     .bind(teamId)
@@ -451,10 +632,20 @@ app.post("/tactics", async (c) => {
   }
 
   await c.env.DB.prepare(
-    `INSERT INTO tactic (team_id, created_by, code, form, buildup, line_height, note, roster_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tactic (team_id, created_by, code, form, buildup, line_height, note, roster_json, assign_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(teamId, user.id, code, form, buildup, lineHeight, note || null, JSON.stringify(roster))
+    .bind(
+      teamId,
+      user.id,
+      code,
+      form,
+      buildup,
+      lineHeight,
+      note || null,
+      JSON.stringify(roster),
+      JSON.stringify(assign),
+    )
     .run();
   return c.json({ ok: true });
 });
