@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --port 8790",
-    "dev:oidc": "wrangler dev --port 8797 --var OIDC_ISSUER:http://127.0.0.1:8792 --var OIDC_CLIENT_ID:tour",
+    "dev:oidc": "wrangler dev --port 8797 --var AUTH_MODE:oidc --var OIDC_ISSUER:http://127.0.0.1:8792 --var OIDC_CLIENT_ID:tour",
     "test": "vitest run",
     "dev:web": "vite",
     "build": "vite build",

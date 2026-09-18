@@ -208,7 +208,7 @@ function freshEnv(oidc: boolean): Fixture {
     MEDIA: {} as never,
     ASSETS: {} as never,
     // 管理台转认证中心用（增量 8）：OIDC 模式下生产必配，未配则管理台的 org-settings/注册码一律 500
-    ...(oidc ? { OIDC_ISSUER: ISSUER, OIDC_CLIENT_ID: CLIENT_ID, AUTH_BIND_SECRET: "test-bind-secret" } : {}),
+    ...(oidc ? { AUTH_MODE: "oidc", OIDC_ISSUER: ISSUER, OIDC_CLIENT_ID: CLIENT_ID, AUTH_BIND_SECRET: "test-bind-secret" } : {}),
   };
   return { env, sqlite };
 }

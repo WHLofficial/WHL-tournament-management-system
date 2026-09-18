@@ -21,14 +21,17 @@ export function safeReturn(v: unknown): string {
 
 export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
 
-/** 配置 OIDC_ISSUER + OIDC_CLIENT_ID 即 OIDC 模式；未配置 = 兼容模式（共享 KV 会话） */
+/** OIDC 模式 = AUTH_MODE 显式配 "oidc"（增量 9 显式化，TECH_DESIGN §9.1）+ 两项连接变量齐备；
+ *  未配 AUTH_MODE = 兼容模式（共享 KV 会话）。不再靠 OIDC_ISSUER 的有无隐式判定——
+ *  vars 随 wrangler.jsonc 一起部署，杜绝「忘配/半配悄悄改行为」。 */
 export interface OidcEnv {
+  AUTH_MODE: string;
   OIDC_ISSUER: string;
   OIDC_CLIENT_ID: string;
 }
 
 export function isOidc(env: Partial<OidcEnv> | undefined): env is OidcEnv {
-  return Boolean(env?.OIDC_ISSUER && env?.OIDC_CLIENT_ID);
+  return Boolean(env?.AUTH_MODE === "oidc" && env?.OIDC_ISSUER && env?.OIDC_CLIENT_ID);
 }
 
 /** base64url 随机串（32 字节 = 43 字符，也是合法的 PKCE verifier） */
