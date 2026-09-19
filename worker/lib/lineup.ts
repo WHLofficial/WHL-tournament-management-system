@@ -250,14 +250,32 @@ type SubRow = {
   proxy_grant_id: number | null;
 };
 
+// 指派的三档口径：
+//   full    = 教练端本队回显、代打板、管理端赛前备案（18 项全给）
+//   captain = 公开端（开赛后）：只给队长，定位球与角球属于战术隐私
+//   none    = 一概不回
+export type AssignMode = "full" | "captain" | "none";
+
+function listAssign(
+  assign: AssignMap,
+  mode: AssignMode,
+  players: Map<number, { name: string; number: string | null }>,
+  starterPids: Set<number>,
+  meta: Map<number, PlayerMeta>,
+): LineupAssignDTO[] {
+  if (mode === "none") return [];
+  const all = resolveAssign(assign, players, starterPids, meta);
+  return mode === "captain" ? all.filter((a) => a.key === "captain") : all;
+}
+
 async function buildTeamLineup(
   db: D1Database,
   row: SubRow,
-  withAssign = true,
+  assignMode: AssignMode = "full",
 ): Promise<TeamLineupDTO> {
   const slots = parseSlotsJson(row.slots_json);
   // 不回指派时连解析都省掉：公开端只看首发、替补和阵型
-  const assign = withAssign ? parseAssignJson(row.assign_json) : {};
+  const assign = assignMode === "none" ? {} : parseAssignJson(row.assign_json);
   // 指派指向的球员可能已不在首发（甚至已不在名单），所以 id 集合要把指派项一并算上
   const ids = [
     ...new Set([...slots.map((s) => s.player_id), ...Object.values(assign)]),
@@ -304,18 +322,19 @@ async function buildTeamLineup(
     viaProxy: row.proxy_grant_id != null,
     starters,
     bench,
-    assign: withAssign ? resolveAssign(assign, players, starterPids, meta) : [],
+    assign: listAssign(assign, assignMode, players, starterPids, meta),
   };
 }
 
 // 一场比赛双方提交的阵容。requireStarted=true（公开接口）时比赛未开打或赛事还在草稿，
 // 一律返回双方 null——赛前不亮牌是产品决策；管理员端传 false 备案可见。
-// withAssign=false 时不回「队长与定位球」：那属于战术隐私，公开端只给首发、替补和阵型。
+// assignMode 控制「队长与定位球」露出多少：公开端传 "captain"（开赛后只公开队长，
+// 定位球与角球仍是战术隐私），教练端与管理端用默认的 "full"。
 export async function fetchMatchLineup(
   db: D1Database,
   matchId: number,
   requireStarted: boolean,
-  withAssign = true,
+  assignMode: AssignMode = "full",
 ): Promise<MatchLineupDTO> {
   const m = await db
     .prepare(
@@ -358,8 +377,8 @@ export async function fetchMatchLineup(
   const awayRow = m.away_tid != null ? byTeam.get(m.away_tid) : undefined;
   // 双方阵容构建互不依赖，并行发
   const [home, away] = await Promise.all([
-    homeRow ? buildTeamLineup(db, homeRow, withAssign) : Promise.resolve(null),
-    awayRow ? buildTeamLineup(db, awayRow, withAssign) : Promise.resolve(null),
+    homeRow ? buildTeamLineup(db, homeRow, assignMode) : Promise.resolve(null),
+    awayRow ? buildTeamLineup(db, awayRow, assignMode) : Promise.resolve(null),
   ]);
   return { home, away };
 }

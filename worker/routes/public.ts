@@ -561,10 +561,10 @@ app.get("/tournaments/:id/matches/:mid", pubCache(60), async (c) => {
 });
 
 // 已提交战术阵容：开赛（live/finished）后公开；未开打或草稿赛事一律双方 null（赛前不亮牌）。
-// 只给首发、替补和阵型：队长与定位球是战术隐私，公开端一律不回（withAssign=false）。
+// 只给首发、替补、阵型和队长：定位球与角球是战术隐私，公开端不回（assignMode="captain"）。
 app.get("/matches/:mid/lineup", pubCache(60), async (c) => {
   try {
-    return c.json(await fetchMatchLineup(c.env.DB, Number(c.req.param("mid")), true, false));
+    return c.json(await fetchMatchLineup(c.env.DB, Number(c.req.param("mid")), true, "captain"));
   } catch (e) {
     if (e instanceof LineupError) return c.json({ message: e.message }, e.status);
     throw e;

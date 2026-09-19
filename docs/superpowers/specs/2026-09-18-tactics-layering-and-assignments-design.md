@@ -266,8 +266,8 @@
 
 - `src/pages/Tactics.tsx` 里 `<h3>队长与定位球 <small>FC26 球队管理 · 指派</small></h3>` → `<h3>队长与定位球</h3>`。
 
-### 10.3 开赛后公开端只给首发、替补和阵型
+### 10.3 开赛后公开端只公开队长
 
-- 口径：**队长与定位球属于战术隐私**，公开端一律不回。`worker/lib/lineup.ts` 的 `buildTeamLineup(db, row, withAssign = true)` 与 `fetchMatchLineup(db, matchId, requireStarted, withAssign = true)` 加开关，`worker/routes/public.ts` 的 `GET /matches/:mid/lineup` 传 `false`；教练端本队回显、代打板、管理端赛前备案照旧带指派。
-- 前端不用改：`LineupView.tsx` 的 `AssignList` 空数组渲染成空，队长的 C 标也由 `assign` 里找 `captain` 决定。
-- `tests/assign.test.ts` 加了这条的用例（开赛后公开端 `assign` 为 `[]`，同时教练端仍看得到），并补上公开路由需要的 `caches` 最小桩。
+- 口径：**队长公开，定位球与角球属于战术隐私**。`worker/lib/lineup.ts` 的 `buildTeamLineup(db, row, assignMode)` 与 `fetchMatchLineup(db, matchId, requireStarted, assignMode)` 用三档 `AssignMode`：`full`（教练端本队回显、代打板、管理端赛前备案，18 项全给）、`captain`（公开端，只留 `key === "captain"` 那一项）、`none`（一概不回）；`worker/routes/public.ts` 的 `GET /matches/:mid/lineup` 传 `"captain"`。
+- 前端不用改：`LineupView.tsx` 的 `AssignList` 按收到的项渲染，队长的 C 标由 `assign` 里找 `captain` 决定，所以公开端会自动只显示队长。
+- `tests/assign.test.ts` 的用例提交 `{captain, fk_penalty, ti_left}` 三项，断言公开端只回队长那一项、同一时刻教练端仍拿到三项；并补上公开路由需要的 `caches` 最小桩。
