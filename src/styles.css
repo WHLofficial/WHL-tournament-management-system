@@ -182,6 +182,80 @@ button.btn-ghost:hover:not(:disabled) {
 .nav-links a:hover {
   color: #fff;
 }
+/* 当前页：白字 + 橙色下划线（组按钮同理） */
+.nav-links a.on,
+.nav-menu-btn.on {
+  color: #fff;
+  box-shadow: inset 0 -2px 0 var(--live);
+}
+/* 个人入口与管理入口之间的一条细线 */
+.nav-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.22);
+}
+/* 「账号与审计」下拉：组里多于一项时收成一项，点开才展开 */
+.nav-menu {
+  position: relative;
+}
+.nav-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #d6e3da;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.nav-menu-btn:hover {
+  color: #fff;
+}
+.nav-caret {
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
+}
+.nav-menu-list {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 148px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 12px 32px rgba(26, 36, 32, 0.28);
+}
+.nav-menu-list a {
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 14px;
+}
+.nav-menu-list a:hover {
+  color: var(--ink);
+  background: var(--chalk);
+}
+.nav-menu-list a.on {
+  color: var(--pitch);
+  font-weight: 600;
+  background: none;
+  box-shadow: none;
+}
+/* 右侧集群：鸣谢、竞猜站、账号区 —— 不是站内导航，不占导航栏 */
+.topbar-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
 
 .page-head {
   display: flex;
@@ -402,10 +476,12 @@ button.btn-ghost:hover:not(:disabled) {
   padding: 3px 10px;
   font-size: 13px;
 }
-.btn-danger {
+/* 危险红：选择器必须写成 .btn.btn-danger —— button.btn 是 (0,1,1)，只写 .btn-danger (0,1,0) 会被它盖掉，
+   全站十几个「两段式确认」按钮一直是绿的 */
+.btn.btn-danger {
   background: #dc2626;
 }
-.btn-danger:hover:not(:disabled) {
+.btn.btn-danger:hover:not(:disabled) {
   background: #b91c1c;
 }
 .muted {
@@ -2331,8 +2407,8 @@ button.add-stage {
     0 0 14px rgba(240, 190, 70, 0.95),
     0 0 30px rgba(240, 190, 70, 0.55);
 }
-/* 顶栏竞猜站入口：与鸣谢同款按钮形态，冷色调区分（选择器要压过 .nav-links a 的标签样式） */
-.nav-links a.btn-guess {
+/* 顶栏竞猜站入口：与鸣谢同款按钮形态，冷色调区分（在右侧集群里，不在导航栏内） */
+.topbar-right a.btn-guess {
   display: inline-flex;
   align-items: center;
   min-height: 36px;
@@ -2351,7 +2427,7 @@ button.add-stage {
     0 0 10px rgba(80, 205, 235, 0.7),
     0 0 22px rgba(80, 205, 235, 0.35);
 }
-.nav-links a.btn-guess:hover {
+.topbar-right a.btn-guess:hover {
   color: #06303d;
   filter: brightness(1.07);
   box-shadow:
@@ -2375,6 +2451,8 @@ button.add-stage {
   max-width: 430px;
   width: 100%;
   background: var(--card);
+  /* 弹层挂在顶栏里，继承下来的是白字；卡片是白底，正文必须显式给深色 */
+  color: var(--ink);
   border: 1px solid #e0a93e;
   border-radius: 14px;
   padding: 22px 24px 20px;

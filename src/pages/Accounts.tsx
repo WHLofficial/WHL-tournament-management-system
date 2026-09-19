@@ -346,7 +346,11 @@ export function Accounts() {
             </h3>
             <div className="btn-col">
               {detail.account.id !== user?.id && !detail.account.isSuper && (
-                <button className="btn btn-sm" disabled={busy} onClick={() => void toggleDisable(detail.account)}>
+                <button
+                  className={`btn btn-sm${detail.account.disabled ? "" : " btn-danger"}`}
+                  disabled={busy}
+                  onClick={() => void toggleDisable(detail.account)}
+                >
                   {detail.account.disabled ? "启用账号" : "停用账号"}
                 </button>
               )}
