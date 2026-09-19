@@ -1,7 +1,8 @@
 // 球员指派（FC26 Assignments）测试：纯规则 + 提交/代打/存档三条链路的落库与回读。
-// 钉死六件事：18 项 5 组不多不少、互斥只在「角球主罚 ↔ 角球进攻接应」之间、
+// 钉死七件事：18 项 5 组不多不少、互斥只在「角球主罚 ↔ 角球进攻接应」之间、
 // 提交的指派随阵容落库并按 ASSIGN_GROUPS 顺序回读、指派里点非本队球员被 400、
-// 代打提交按被代打队判归属、存档（草稿本）不做归属校验且 assign 能往返。
+// 代打提交按被代打队判归属、存档（草稿本）不做归属校验且 assign 能往返、
+// 公开端（开赛后）只回首发/替补/阵型，指派一律不回。
 import { beforeAll, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
@@ -102,6 +103,13 @@ const json = (env: Env, who: "a" | "b" | "admin", path: string, body: unknown, m
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+// 公开端路由挂了 pubCache（caches.default + executionCtx.waitUntil），测试环境补最小桩
+(globalThis as unknown as { caches: unknown }).caches = {
+  default: { match: async () => undefined, put: async () => {} },
+};
+const execCtx = { waitUntil: () => {}, passThroughOnException: () => {} };
+const pub = (env: Env, path: string) => app.request(path, {}, env, execCtx as never);
 
 const FORM = "433";
 
@@ -237,6 +245,31 @@ describe("教练端提交指派", () => {
     expect(adm.home?.assign).toEqual([
       { key: "captain", playerId: 100, name: "红1", number: "1", starter: true },
     ]);
+  });
+
+  it("开赛后公开端只给首发、替补和阵型：队长与定位球一律不回（战术隐私）", async () => {
+    const { env, sqlite } = freshEnv();
+    await json(env, "a", "/api/coach/matches/802/lineup", { form: FORM, slots: slots(10), assign: { captain: 100 } }, "PUT");
+    // 公开端要比赛已开打才回阵容（pending 时双方一律 null，赛前不亮牌）
+    sqlite.prepare("UPDATE match SET status = 'live' WHERE id = 802").run();
+
+    const pubBack = (await (await pub(env, "/api/public/matches/802/lineup")).json()) as {
+      home: { form: string; starters: unknown[]; bench: unknown[]; assign: LineupAssign[] } | null;
+      away: unknown;
+    };
+    // 首发、替补、阵型照给
+    expect(pubBack.home?.form).toBe(FORM);
+    expect(pubBack.home?.starters).toHaveLength(11);
+    expect(pubBack.home?.bench).toHaveLength(0);
+    expect(pubBack.away).toBeNull();
+    // 指派为空数组：公开端连「队长是谁」都拿不到
+    expect(pubBack.home?.assign).toEqual([]);
+
+    // 同一时刻，本队教练自己那份照样带指派（教练端换设备能回显）
+    const mine = (await (await req(env, "a", "/api/coach/matches/802/lineup")).json()) as {
+      lineup: { assign: LineupAssign[] } | null;
+    };
+    expect(mine.lineup?.assign).toHaveLength(1);
   });
 
   it("覆盖提交整份替换：第二次不带指派就把指派清空", async () => {

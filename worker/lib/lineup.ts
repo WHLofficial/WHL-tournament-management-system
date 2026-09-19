@@ -250,9 +250,14 @@ type SubRow = {
   proxy_grant_id: number | null;
 };
 
-async function buildTeamLineup(db: D1Database, row: SubRow): Promise<TeamLineupDTO> {
+async function buildTeamLineup(
+  db: D1Database,
+  row: SubRow,
+  withAssign = true,
+): Promise<TeamLineupDTO> {
   const slots = parseSlotsJson(row.slots_json);
-  const assign = parseAssignJson(row.assign_json);
+  // 不回指派时连解析都省掉：公开端只看首发、替补和阵型
+  const assign = withAssign ? parseAssignJson(row.assign_json) : {};
   // 指派指向的球员可能已不在首发（甚至已不在名单），所以 id 集合要把指派项一并算上
   const ids = [
     ...new Set([...slots.map((s) => s.player_id), ...Object.values(assign)]),
@@ -299,16 +304,18 @@ async function buildTeamLineup(db: D1Database, row: SubRow): Promise<TeamLineupD
     viaProxy: row.proxy_grant_id != null,
     starters,
     bench,
-    assign: resolveAssign(assign, players, starterPids, meta),
+    assign: withAssign ? resolveAssign(assign, players, starterPids, meta) : [],
   };
 }
 
 // 一场比赛双方提交的阵容。requireStarted=true（公开接口）时比赛未开打或赛事还在草稿，
 // 一律返回双方 null——赛前不亮牌是产品决策；管理员端传 false 备案可见。
+// withAssign=false 时不回「队长与定位球」：那属于战术隐私，公开端只给首发、替补和阵型。
 export async function fetchMatchLineup(
   db: D1Database,
   matchId: number,
   requireStarted: boolean,
+  withAssign = true,
 ): Promise<MatchLineupDTO> {
   const m = await db
     .prepare(
@@ -351,8 +358,8 @@ export async function fetchMatchLineup(
   const awayRow = m.away_tid != null ? byTeam.get(m.away_tid) : undefined;
   // 双方阵容构建互不依赖，并行发
   const [home, away] = await Promise.all([
-    homeRow ? buildTeamLineup(db, homeRow) : Promise.resolve(null),
-    awayRow ? buildTeamLineup(db, awayRow) : Promise.resolve(null),
+    homeRow ? buildTeamLineup(db, homeRow, withAssign) : Promise.resolve(null),
+    awayRow ? buildTeamLineup(db, awayRow, withAssign) : Promise.resolve(null),
   ]);
   return { home, away };
 }

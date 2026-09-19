@@ -1614,14 +1614,16 @@ button.add-stage {
   display: flex;
   flex-direction: column;
   padding: 10px 10px 0;
-  aspect-ratio: 10 / 13;
-  /* 右栏比球场高时，行高会把面板拉高、宽高比再把宽度顶出 480px 的轨道，压到右栏卡片上；
-     夹住宽度，宁可球场略微变长也不越界 */
+  /* 面板高度跟着内容走，不再由面板的宽高比定死：球场自己按比例定高（见 .tac-pitch），
+     图例行多一行也挤不矮球场。右栏比球场高时，行高会把面板拉高、宽高比再把宽度顶出
+     480px 的轨道，压到右栏卡片上；夹住宽度，宁可球场略微变长也不越界 */
   max-width: 100%;
 }
 .tac-pitch {
   position: relative;
-  flex: 1;
+  /* 高度只由自己的宽度定：点谁、图例写多长，都不再改动球场尺寸 */
+  flex: 0 0 auto;
+  aspect-ratio: 10 / 13;
   min-height: 0;
   background: repeating-linear-gradient(
     0deg,
@@ -1664,15 +1666,19 @@ button.add-stage {
   fill: rgba(0, 255, 166, 0.85);
   background: rgba(0, 255, 166, 0.85);
 }
-/* 常驻图例行：占住一行高度，选中/取消选中时球场不跳 */
+/* 常驻图例行：高度锁死两行，说明文字再长也不会把球场挤矮、也不会让下面的卡片上下跳。
+   选中时「谁的热区」一行、配色说明一行；没选中时只有提示语，第二行留空 */
 .tac-heat-legend {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
+  align-content: center;
+  gap: 3px 5px;
   margin: 0;
-  padding: 6px 2px 9px;
-  min-height: 20px;
+  padding: 4px 2px 6px;
+  min-height: 40px;
   font-size: 12px;
+  line-height: 15px;
   color: var(--muted);
 }
 .tac-heat-title {
@@ -1683,10 +1689,11 @@ button.add-stage {
   color: var(--ink);
 }
 .tac-heat-key {
+  /* 永远另起一行：图例恒为两行，高度不随内容变 */
+  flex: 0 0 100%;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: auto;
 }
 .tac-heat-key i {
   width: 10px;
@@ -2247,10 +2254,7 @@ button.add-stage {
   .tac-duo {
     flex: 0 0 auto;
   }
-  .tac-pitch {
-    aspect-ratio: auto;
-    align-self: stretch;
-  }
+  /* 手机不再单独覆盖球场比例：跟着桌面走 10/13，摆位表 12% 一档才有余量（375 视口一档 49px） */
   .tac-submit-cols {
     grid-template-columns: 1fr;
   }
@@ -3513,8 +3517,8 @@ button.add-stage {
   }
 }
 @media (max-width: 560px) {
-  /* 手机上球场与桌面同一个比例（.tac-pitch-panel 基础值 10/13），不再单独加高：
-     摆位表是 12% 一档的阶梯，375 视口下球场高约 395px，一档 47px > 磁贴高 44px。
+  /* 手机球场跟桌面同一个比例 10/13（.tac-pitch 自持，图例再长也不压它）：
+     摆位表是 12% 一档的阶梯，375 视口下球场 314x408，一档 49px > 磁贴高 44px。
      更窄的屏靠横向兜底：同行磁贴隔 32%、边路与中路隔 34%（见 tests/pitch.test.ts）。 */
   .tac-assign-field select {
     min-height: 36px;

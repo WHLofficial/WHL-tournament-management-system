@@ -1594,9 +1594,7 @@ export default function Tactics() {
                   只存已填项，键是角色不是位置，换阵型不影响；没填完不拦提交，互斥冲突拦提交。 */}
               <div className="tac-assign-block">
                 <div className="tac-assign-head">
-                  <h3>
-                    队长与定位球 <small>FC26 球队管理 · 指派</small>
-                  </h3>
+                  <h3>队长与定位球</h3>
                   {assignConflictList.length > 0 ? (
                     <span className="tac-assign-bad">{assignConflictList.length} 处冲突</span>
                   ) : (
