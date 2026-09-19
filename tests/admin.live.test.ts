@@ -13,6 +13,7 @@ import type { AppEnv } from "../worker/env";
 import { AuthApiError } from "../worker/lib/authClient";
 import {
   authAdminAccountDetail,
+  authAdminAuditQuery,
   authAdminCatalog,
   authAdminCreateSignupCode,
   authAdminListAccounts,
@@ -29,15 +30,29 @@ const env = { OIDC_ISSUER: URL_, AUTH_BIND_SECRET: SECRET } as unknown as AppEnv
 const ACTOR = 1;
 
 describe("管理能力实联：tour → 真实 auth 的机器通道", () => {
-  live("目录：真实认证中心返回 3 系统 / 7 角色 / 17 权限点 + 角色权限映射", async () => {
+  live("目录：真实认证中心返回 3 系统 / 7 角色 / 16 权限点（0010 已删死点）+ 角色权限映射", async () => {
     const cat = await authAdminCatalog(env);
     expect(cat.apps.map((a) => a.clientId).sort()).toEqual(["club", "guess", "tour"]);
     expect(cat.roles).toHaveLength(7);
-    expect(cat.permissions).toHaveLength(17);
+    expect(cat.permissions).toHaveLength(16);
     expect(cat.rolePermissions.length).toBeGreaterThan(0);
     const superRole = cat.roles.find((r) => r.appId === null && r.key === "superadmin");
     expect(superRole?.name).toBe("超级管理员");
-    expect(cat.rolePermissions.filter((rp) => rp.roleId === superRole!.id)).toHaveLength(17);
+    expect(cat.rolePermissions.filter((rp) => rp.roleId === superRole!.id)).toHaveLength(16);
+  });
+
+  live("审计查询（增量 10）：真实通道返回事件数组与游标，续翻页严格更旧", async () => {
+    const out = await authAdminAuditQuery(env, { limit: 10 });
+    expect(Array.isArray(out.events)).toBe(true);
+    for (const e of out.events) {
+      expect(typeof e.id).toBe("number");
+      expect(typeof e.event).toBe("string");
+      expect(typeof e.createdAt).toBe("string");
+    }
+    if (out.nextCursor !== null) {
+      const p2 = await authAdminAuditQuery(env, { limit: 10, cursor: out.nextCursor });
+      for (const e of p2.events) expect(e.id).toBeLessThan(out.nextCursor!);
+    }
   });
 
   live("账号列表：字段名对得上（camelCase 映射靠的是真实响应）", async () => {

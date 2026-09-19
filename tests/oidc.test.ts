@@ -63,18 +63,20 @@ const USERINFO_BY_SUB: Record<string, Record<string, unknown>> = {
   "1": {
     sub: "1", name: "oidc管理", locked: false, must_change_pw: false,
     roles: ["tour.coach", "tour.recorder"],
-    permissions: ["tour.match.manage", "tour.team.bind", "tour.team.bindcode.issue", "tour.accounts.manage"],
+    permissions: ["tour.match.manage", "tour.team.bind", "tour.accounts.manage"],
   },
   "2": { sub: "2", name: "oidc教练", locked: false, must_change_pw: false, roles: ["tour.coach"], permissions: ["tour.team.bind"] },
   "3": {
     sub: "3", name: "oidc待改密", locked: false, must_change_pw: true,
-    roles: ["tour.recorder"], permissions: ["tour.match.manage", "tour.team.bindcode.issue"],
+    roles: ["tour.recorder"], permissions: ["tour.match.manage"],
   },
 };
 
 let stub: StubState;
 
 let fakeFetchCalls = 0;
+/** 记录最近一次转发给 auth 的审计查询 body（断言筛选参数确实透传） */
+let lastAuditBody: Record<string, unknown> | null = null;
 
 async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = input instanceof URL ? input : new URL(String(input));
@@ -98,6 +100,20 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     return new Response(JSON.stringify({ allow_open_reg: false }), {
       headers: { "content-type": "application/json" },
     });
+  }
+  // 审计查询（增量 10）：转发 /api/admin/audit/query，body 供断言筛选透传
+  if (url.pathname.endsWith("/api/admin/audit/query")) {
+    lastAuditBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        events: [
+          { id: 12, account_id: 3, event: "login.fail", detail: { name: "x" }, ip: "1.2.3.4", created_at: "2026-09-19T00:00:00.000Z" },
+          { id: 11, account_id: null, event: "logout", detail: null, ip: null, created_at: "2026-09-18T00:00:00.000Z" },
+        ],
+        next_cursor: null,
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
   }
   if (url.pathname.endsWith("/api/admin/catalog")) {
     return new Response(
@@ -459,6 +475,43 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     // 没有 tour.accounts.manage 的教练：403（权限点照常拦人，不因新端点放水）
     const forbidden = await app.request(
       "/api/admin/accounts",
+      { method: "GET", headers: { Cookie: `__Host-tour_session=${coach.session}` } },
+      env,
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
+  it("审计日志：筛选参数透传认证中心 + snake_case 映射 camelCase，无权限点拦下（增量 10）", async () => {
+    vi.stubGlobal("fetch", fakeFetch);
+    const { env } = freshEnv(true);
+    const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
+    const coach = await oidcLogin(env, { sub: "2", sid: "sid-coach" });
+
+    const res = await app.request(
+      "/api/admin/audit?event=login.fail&account=3&since=2026-09-01T00:00:00.000Z",
+      { method: "GET", headers: { Cookie: `__Host-tour_session=${admin.session}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: { id: number; accountId: number | null; event: string; ip: string | null; createdAt: string }[];
+      nextCursor: number | null;
+    };
+    expect(body.events).toHaveLength(2);
+    expect(body.events[0]).toMatchObject({
+      id: 12,
+      accountId: 3,
+      event: "login.fail",
+      ip: "1.2.3.4",
+      createdAt: "2026-09-19T00:00:00.000Z",
+    });
+    expect(body.nextCursor).toBeNull();
+    // 查询参数确实透传给了认证中心（snake_case 原样；纯读端点不带 actor_id）
+    expect(lastAuditBody).toMatchObject({ event: "login.fail", account_id: 3, since: "2026-09-01T00:00:00.000Z" });
+
+    // 没有 tour.accounts.manage 的教练：403（审计含全生态安全事件，与账号管理同档）
+    const forbidden = await app.request(
+      "/api/admin/audit",
       { method: "GET", headers: { Cookie: `__Host-tour_session=${coach.session}` } },
       env,
     );

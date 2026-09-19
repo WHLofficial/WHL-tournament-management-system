@@ -275,3 +275,50 @@ export async function authAdminListSignupCodes(env: AppEnv["Bindings"]): Promise
     createdAt: String(r.created_at),
   }));
 }
+
+export interface AdminAuditEvent {
+  id: number;
+  accountId: number | null;
+  event: string;
+  detail: Record<string, unknown> | null;
+  ip: string | null;
+  createdAt: string;
+}
+
+export interface AdminAuditQuery {
+  accountId?: number | null;
+  event?: string | null;
+  since?: string | null;
+  until?: string | null;
+  /** 单批行数，auth 端夹取 1-100，缺省 50 */
+  limit?: number;
+  /** 上一页响应的 next_cursor；不传 = 第一页 */
+  cursor?: number | null;
+}
+
+/** 审计日志查询（增量 10，PRD P1-3）：真源在 auth audit_log，本仓只转发筛选条件。
+ *  auth 端按 id 倒序返回并带 next_cursor（翻页），单次一条 SELECT 不做 COUNT。 */
+export async function authAdminAuditQuery(
+  env: AppEnv["Bindings"],
+  q: AdminAuditQuery,
+): Promise<{ events: AdminAuditEvent[]; nextCursor: number | null }> {
+  const out = await machineCall(env, "/api/admin/audit/query", {
+    account_id: q.accountId ?? null,
+    event: q.event ?? null,
+    since: q.since ?? null,
+    until: q.until ?? null,
+    limit: q.limit ?? 50,
+    cursor: q.cursor ?? null,
+  });
+  return {
+    events: asArr(out.events).map((r) => ({
+      id: num(r.id),
+      accountId: asNum(r.account_id),
+      event: String(r.event),
+      detail: r.detail && typeof r.detail === "object" ? (r.detail as Record<string, unknown>) : null,
+      ip: asStr(r.ip),
+      createdAt: String(r.created_at),
+    })),
+    nextCursor: asNum(out.next_cursor),
+  };
+}

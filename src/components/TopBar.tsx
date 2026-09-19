@@ -38,6 +38,7 @@ export function TopBar() {
             <Link to="/admin/injuries">伤停管理</Link>
             <Link to="/admin/codes">注册码</Link>
             {user.role === "superadmin" ? <Link to="/admin/accounts">账号管理</Link> : null}
+            {user.role === "superadmin" ? <Link to="/admin/audit">审计日志</Link> : null}
           </>
         ) : null}
         {user && !forced ? <Link to="/my-team">我的球队</Link> : null}

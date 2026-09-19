@@ -33,6 +33,9 @@ const MyTeam = lazy(() => import("./pages/MyTeam"));
 const Accounts = lazy(() =>
   import("./pages/Accounts").then((m) => ({ default: m.Accounts })),
 );
+const AuditLog = lazy(() =>
+  import("./pages/AuditLog").then((m) => ({ default: m.AuditLog })),
+);
 const ChangePassword = lazy(() =>
   import("./pages/ChangePassword").then((m) => ({ default: m.ChangePassword })),
 );
@@ -149,6 +152,14 @@ function AppShell() {
             element={
               <RequireRole roles={["superadmin"]}>
                 <Accounts />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/audit"
+            element={
+              <RequireRole roles={["superadmin"]}>
+                <AuditLog />
               </RequireRole>
             }
           />
