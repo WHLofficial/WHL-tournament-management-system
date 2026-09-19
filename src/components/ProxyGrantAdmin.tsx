@@ -207,7 +207,6 @@ export function ProxyGrantAdmin({ tournaments }: { tournaments: TournamentDTO[] 
               <option key={a.userId} value={a.userId}>
                 {a.name}
                 {a.teamName ? `（${a.teamName}）` : "（未绑队）"}
-                {a.role === "admin" ? " · 无教练端权限" : ""}
               </option>
             ))}
           </select>

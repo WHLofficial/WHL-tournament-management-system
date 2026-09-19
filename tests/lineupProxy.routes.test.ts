@@ -164,13 +164,13 @@ describe("管理端代打授权", () => {
     });
 
     const ctx = (await (await req(env, "admin", "/api/admin/proxy-grants/context")).json()) as {
-      accounts: { userId: number; name: string; teamId: number | null; teamName: string | null; role: string | null }[];
+      accounts: { userId: number; name: string; teamId: number | null; teamName: string | null }[];
     };
     // 姓名来自 auth 库（本库 user 表 JOIN 会漏人）；未绑队的管理员排在最后（teamId null）
     expect(ctx.accounts).toEqual([
-      { userId: 1, name: "教练甲", teamId: 10, teamName: "红队", role: "coach" },
-      { userId: 2, name: "教练乙", teamId: 11, teamName: "蓝队", role: "coach" },
-      { userId: 3, name: "管理员", teamId: null, teamName: null, role: "admin" },
+      { userId: 1, name: "教练甲", teamId: 10, teamName: "红队" },
+      { userId: 2, name: "教练乙", teamId: 11, teamName: "蓝队" },
+      { userId: 3, name: "管理员", teamId: null, teamName: null },
     ]);
   });
 

@@ -608,13 +608,12 @@ export interface AdminProxyGrantDTO {
 }
 
 // 管理端 GET /api/admin/proxy-grants/context：授权页的候选账号
-// （姓名取 auth 库 account.name；role 是本库口径，OIDC 新账号没有本库行则为 null）
+// （姓名取 auth 库 account.name；不带角色——教练端能不能用由权限点判定，看本库 role 会误判）
 export interface ProxyGrantCandidateDTO {
   userId: number;
   name: string;
   teamId: number | null;
   teamName: string | null;
-  role: Role | null;
 }
 
 // 管理端 GET /api/admin/proxy-grants/match/:mid：选好比赛后取两队的 id 与已有授权

@@ -3,7 +3,7 @@ import type { AppEnv } from "../../env";
 import { boundAccounts } from "../../lib/authClient";
 import { auditStmt } from "../../lib/audit";
 import { accountNames, listGrants, matchInfo, revokeGrant, upsertGrant } from "../../lib/lineupProxy";
-import type { ProxyGrantCandidateDTO, ProxyMatchSidesDTO, Role } from "../../../shared/types";
+import type { ProxyGrantCandidateDTO, ProxyMatchSidesDTO } from "../../../shared/types";
 
 // 阵容代打授权（migration 0023）。挂在 /api/admin 下，继承 admin.ts 的
 // requirePermission("tour.match.manage")——即录入员也能授权（授权点就在赛事管理首页）。
@@ -22,20 +22,16 @@ app.get("/", async (c) => {
   return c.json({ grants });
 });
 
-// 候选账号：有球队绑定关系的账号（没绑队的账号既不能当被代打方也没必要当代打者）。
-// 本库 role 只用于前端提示「录入员无教练端权限」——OIDC 收口后 role 不权威，故不在此硬拦。
+// 候选账号：认证中心里的全部账号（姓名取 auth 库 account.name——OIDC 收口后新账号
+// 在本库 user 表没有行，拿本库 JOIN 姓名会正好漏掉要授权的那批人）。
+// 未绑队的也会列出来并标「未绑队」：当代打者不需要绑队，被代打方才需要。
 app.get("/context", async (c) => {
-  const [rows, roles] = await Promise.all([
-    boundAccounts(c.env),
-    c.env.DB.prepare("SELECT id, role FROM user").all<{ id: number; role: Role }>(),
-  ]);
-  const roleOf = new Map((roles.results ?? []).map((r) => [r.id, r.role]));
+  const rows = await boundAccounts(c.env);
   const accounts: ProxyGrantCandidateDTO[] = rows.map((r) => ({
     userId: r.userId,
     name: r.name,
     teamId: r.teamId,
     teamName: r.teamName,
-    role: roleOf.get(r.userId) ?? null,
   }));
   return c.json({ accounts });
 });
