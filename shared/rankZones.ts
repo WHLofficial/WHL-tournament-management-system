@@ -120,6 +120,11 @@ export function validateRankZoneSettings(
   return { style, zones };
 }
 
+// 图例文案用的名次区间：单名次只出一个数字（1–1 → 1）。
+export function formatRankRange(from: number, to: number): string {
+  return from === to ? String(from) : `${from}–${to}`;
+}
+
 // 命中：数组顺序即优先级，返回第一条命中的标记；未命中返回 null。
 // stageId/groupId 为该行所属积分表（组表传组 id；无组循环表 groupId 传 null）。
 export function matchRankZone(

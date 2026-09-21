@@ -4,6 +4,7 @@ import {
   validateRankZoneSettings,
   matchRankZone,
   zonesForTable,
+  formatRankRange,
   MAX_ZONES,
 } from "../shared/rankZones";
 import type { RankZone } from "../shared/types";
@@ -139,5 +140,14 @@ describe("zonesForTable", () => {
     expect(zonesForTable(zones, 7, [3]).map((z) => z.id)).toEqual(["all", "grp"]);
     expect(zonesForTable(zones, 8, [9]).map((z) => z.id)).toEqual(["all", "stage2"]);
     expect(zonesForTable(zones, 8, [])?.map((z) => z.id)).toEqual(["all", "stage2"]);
+  });
+});
+
+describe("formatRankRange", () => {
+  it("单名次只出一个数字，区间照常出两端", () => {
+    expect(formatRankRange(1, 1)).toBe("1");
+    expect(formatRankRange(9, 9)).toBe("9");
+    expect(formatRankRange(1, 2)).toBe("1–2");
+    expect(formatRankRange(3, 18)).toBe("3–18");
   });
 });

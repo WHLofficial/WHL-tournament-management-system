@@ -4,7 +4,7 @@ import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawTableCard } from "../lib/share";
 import type { StageStandingDTO, RankZone, RankZoneSettings } from "../../shared/types";
-import { matchRankZone, zonesForTable } from "../../shared/rankZones";
+import { formatRankRange, matchRankZone, zonesForTable } from "../../shared/rankZones";
 
 // 积分榜：小组/循环阶段各一张表，行序已由后端排好（积分→净胜→进球→相互战绩）。
 // 管理端挂在「积分榜」tab；公开页直接复用 <StandingsTables>。
@@ -79,7 +79,7 @@ export function StandingsTables({
           zones,
           st.stageId,
           st.groups.map((g) => g.groupId).filter((id): id is number => id != null),
-        ).map((z) => ({ color: z.color, name: z.name, range: `${z.from}–${z.to}` }));
+        ).map((z) => ({ color: z.color, name: z.name, range: formatRankRange(z.from, z.to) }));
         const zoneRowColors = allRows.map(({ g, r }) =>
           matchRankZone(r.rank, zones, st.stageId, g.groupId)?.color ?? null,
         );
@@ -274,7 +274,7 @@ function RankZoneTable({
                 {applicable.map((z) => (
                   <span key={z.id}>
                     <i style={{ background: z.color }} />
-                    {z.name}（{z.from}–{z.to}）
+                    {z.name}（{formatRankRange(z.from, z.to)}）
                   </span>
                 ))}
               </div>
