@@ -187,11 +187,15 @@ match_event   (P0) id, match_id →match, player_id? →player, type, minute?
 | 姓名或号码不同 | 以 club 为准 `UPDATE`（号码空串与 `null` 等价） |
 | club 无、tour 有 | `DELETE`；被外键拒绝（有比赛事件 / 伤停引用）则保留并进 `kept` 报告 |
 
-**三条防御**（写库前）：空快照整体跳过（拉取失败不能清空名单）；形状不对抛错不写库；**只对快照里出现过的队做删除**（没出现的队一律不碰）。另有两条：同一 `fcId` 出现在两队 ⇒ 抛错；快照里的 `clubId` 本仓没有对应 `team` ⇒ 记 `unknownTeams` 并整体跳过其球员。
+**拉取契约**：`fetchClubSquads` 逐层校验形状（`squads` 数组 / `players` 数组 / `fcId` 整数 / `name` 字符串），坏数据抛错不写库；请求带 `AbortSignal.timeout(10_000)` —— 没有 signal 时对方挂住会让 cron 的 catch 永不执行，一行日志都没有，observability 也抓不到。号码一律归一化（空串 ≡ `null`），否则每次同步都会白改一次号。
+
+**四条防御**（写库前）：空快照整体跳过（拉取失败不能清空名单）；形状不对抛错不写库；**只对快照里出现过的队做删除**（没出现的队一律不碰）；**快照里某队名单为空即抛错** —— 只挡 `squads.length === 0` 挡不住「快照非空但某队 `players: []`」，那种队会被判成 stale 整队删光。另有两条：同一 `fcId` 出现在两队 ⇒ 抛错；快照里的 `clubId` 本仓没有对应 `team` ⇒ 记 `unknownTeams` 并整体跳过其球员。
 
 **触发**：`triggers.crons = ["0 * * * *"]`（每小时一次，入口 `runRosterSync`，配置缺失或失败只记日志不抛）；手动立即同步 = `POST /api/admin/sync-rosters`（加 `?dryRun=1` 只算不写，返回对账预期）。**`vars.CLUB_API_BASE` 撤掉 = 同步整体跳过**，即回滚开关。
 
 **为什么按 id 而不按姓名**：`player.id` 就是 FC26 playerid（两个系统早前一起 rekey 过，实测 570/570 命中），而两侧姓名写法不同（tour 存完整人名 `Erling Haaland`，俱乐部平台存 FC26 派生显示名 `Erling Haaland` / 官方缩写名 `E. Haaland` 的回落）——按姓名匹配会漏人、会认错人。
+
+**已知后果（评审查出，本轮不改）**：自动删除球员后，`tactic.roster_json` / `tactic_submission.assign_json` 里会留下悬挂的球员 id（JSON 文本无外键），教练下次保存战术时 `validateAssign` 会抛 400「队长与定位球里点到了不属于该球队的球员」——手工删除时代同样存在，要修得动教练子系统。伤停的 `ON DELETE CASCADE` 实际不可达：伤停必须挂在一条 `match_event` 上，而 `match_event.player_id` 无 `ON DELETE`（NO ACTION）⇒ 有伤停的球员必然删不掉、行进 `kept`。另外手动同步端点没有 UI、`/api/health` 不含上次同步时间 ⇒ 每小时静默失败无处发现；分批 `batch` 无原子性（代码注释已声明）。
 
 ## 5. 统一对阵模型 + 可插拔编排器/晋级器
 
