@@ -201,7 +201,7 @@ describe("名册同步对账（syncRosters）", () => {
 
     expect(s.stale).toBe(1);
     expect(s.deleted).toBe(0);
-    expect(s.kept).toEqual([{ id: 100, name: "张三", reason: "有比赛事件/伤停引用，保留" }]);
+    expect(s.kept).toEqual([{ id: 100, name: "张三", reason: "有比赛事件引用，保留" }]);
     // 历史比赛记录不能为了「同步干净」被删
     expect(sqlGet(sqlite, "SELECT id FROM player WHERE id = 100")).toEqual({ id: 100 });
   });
@@ -325,6 +325,30 @@ describe("拉取的形状校验（fetchClubSquads）", () => {
 
     vi.stubGlobal("fetch", async () => jsonResponse({ squads: [{ clubId: 10, players: [{ fcId: 1, name: "  " }] }] }));
     await expect(fetchClubSquads("https://club.example.com")).rejects.toThrow("缺姓名");
+  });
+
+  it("快照里出现的队名单为空 → 抛错（空名单会把该队镜像整队删光）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      async () => jsonResponse({ squads: [{ clubId: 10, clubName: "阿森纳", players: [] }] })
+    );
+    await expect(fetchClubSquads("https://club.example.com")).rejects.toThrow("名单是空的");
+  });
+
+  it("拉取带超时信号：对方挂住时要有可观察的失败，不能一直挂着", async () => {
+    let saw: AbortSignal | null = null;
+    vi.stubGlobal("fetch", (_url: string, init?: RequestInit) => {
+      saw = init?.signal ?? null;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+
+    await expect(fetchClubSquads("https://club.example.com", { timeoutMs: 10 })).rejects.toThrow();
+
+    const signal = saw as AbortSignal | null;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(true);
   });
 });
 

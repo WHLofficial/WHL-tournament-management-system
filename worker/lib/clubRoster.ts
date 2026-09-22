@@ -62,10 +62,25 @@ function numberText(v: unknown): string | null {
   return t === "" ? null : t;
 }
 
-/** 拉取并**校验**俱乐部平台的一线队快照；形状不对一律抛错，绝不把半截数据当快照用 */
-export async function fetchClubSquads(base: string): Promise<ClubSquad[]> {
+/** 拉取超时：这是无人值守的定时任务，对方挂住时必须变成一条可观察的失败分支 */
+const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * 拉取并**校验**俱乐部平台的一线队快照；形状不对一律抛错，绝不把半截数据当快照用。
+ *
+ * 「快照里出现过的队至少有一名一线队球员」是硬契约：删除的判据是「在 scopedTeamIds 里、
+ * 且快照没提到」，所以一个空名单的队会把它整队镜像删光，而防御①（squads.length === 0）
+ * 只数队数、挡不住它。宁可整轮不跑也不误删。
+ */
+export async function fetchClubSquads(
+  base: string,
+  opts: { timeoutMs?: number } = {}
+): Promise<ClubSquad[]> {
   const url = `${base.replace(/\/+$/, "")}/api/squads`;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
+  const res = await fetch(url, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(opts.timeoutMs ?? FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`GET ${url} 返回 ${res.status}`);
   const body = (await res.json()) as { squads?: unknown };
   if (!Array.isArray(body.squads)) throw new Error(`GET ${url} 响应里没有 squads 数组`);
@@ -77,6 +92,9 @@ export async function fetchClubSquads(base: string): Promise<ClubSquad[]> {
     }
     if (!Array.isArray(s.players)) {
       throw new Error(`俱乐部平台球队 ${s.clubId} 缺 players 数组`);
+    }
+    if (s.players.length === 0) {
+      throw new Error(`俱乐部平台球队 ${s.clubId} 的名单是空的，快照不可信`);
     }
     const players: ClubSquadPlayer[] = s.players.map((raw2, j) => {
       const p = raw2 as { fcId?: unknown; name?: unknown; number?: unknown };
@@ -198,7 +216,11 @@ export async function syncRosters(
   }
 
   // 删除逐条执行（不能进 batch）：外键拦下一条不该把整批一起回滚，
-  // 而且逐条才拿得到「是哪一行被拦下的」这个信息
+  // 而且逐条才拿得到「是哪一行被拦下的」这个信息。
+  //
+  // 能挡下删除的只有 match_event.player_id（无 ON DELETE ⇒ NO ACTION）。injury.player_id 是
+  // ON DELETE CASCADE（0021），它不挡删除 —— 只是伤停登记必须挂在一个记了该球员的伤病事件上，
+  // 所以实际上删不动；万一那个事件的球员后来被清空，伤停与缺阵记录会随球员一起消失。
   for (const r of stale) {
     try {
       await db.prepare("DELETE FROM player WHERE id = ?").bind(r.id).run();
@@ -208,7 +230,7 @@ export async function syncRosters(
       out.kept.push({
         id: r.id,
         name: r.name,
-        reason: /FOREIGN KEY/i.test(msg) ? "有比赛事件/伤停引用，保留" : msg,
+        reason: /FOREIGN KEY/i.test(msg) ? "有比赛事件引用，保留" : msg,
       });
     }
   }
