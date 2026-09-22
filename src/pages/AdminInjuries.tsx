@@ -29,7 +29,7 @@ export function AdminInjuries() {
   const [fTour, setFTour] = useState("");
   const [fTeam, setFTeam] = useState("");
   const [fQ, setFQ] = useState("");
-  const [activeOnly, setActiveOnly] = useState(false);
+  const [activeOnly, setActiveOnly] = useState(true); // 默认只看仍在伤停：已伤愈的历史登记只是档案
 
   async function reload() {
     const [a, b] = await Promise.all([
