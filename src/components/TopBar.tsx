@@ -74,7 +74,8 @@ export function TopBar() {
   return (
     <header className="topbar">
       <Link to="/" className="brand">
-        WHL 赛事系统
+        <img className="brand-logo" src="/assets/brand/whl-badge-96.webp" alt="WHL 徽章" />
+        <span>WHL 赛事系统</span>
       </Link>
       <nav className="nav-links">
         {!forced && (
