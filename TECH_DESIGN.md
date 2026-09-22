@@ -123,6 +123,10 @@ team         球队（跨赛事复用的实体）
 
 player       球员（只挂队伍，不挂账号）
   id, team_id →team, name, number
+  -- 增量 33 起：本表是**只读镜像**，真源在俱乐部平台（club.whleague.win）。
+  -- name（FC26 存档派生的显示名）与 number（球衣号）都由 clubRoster 拉取同步写入，
+  -- 本仓不再有任何球员写端点；player.id 就是 FC26 playerid（两库早前一起 rekey 过），
+  -- 所以对账按 id 认人，绝不按姓名匹配（tour 存完整人名、平台存官方缩写名，写法会不同）
 
 auth_code    队伍认证码（谈判插件同款规则）
   id, team_id →team,
@@ -167,6 +171,27 @@ match_event   (P0) id, match_id →match, player_id? →player, type, minute?
 - 加用户体系：`user`/`identity`/`team_member` 现在就齐，无需改赛事域。
 - 加多组织：`organization` 表 + 各实体的 `org_id` 已在，把"全局 admin"升级为"org 级 admin"只动权限判断层。
 - 加赛制：`match` 表对赛制无感知（见第 5 节）。
+
+### 4.4 名册同步（增量 33 起：球员表是俱乐部平台的只读镜像）
+
+**真源归位**：球员的姓名与球衣号真源在俱乐部平台（`club.whleague.win`）——签约、解约、定号、改号都在那边操作。本仓的 `player` 表降级为镜像，只由同步写入。原先本仓的四个球员写端点（`POST /:id/players`、`POST /:id/players/bulk`、`PATCH /:id/players/:pid`、`DELETE /:id/players/:pid`）已删除，管理端球队详情页的名单区改为只读。队级端点（建队 / 批量建队 / 改名 / 删队 / 队徽）不受影响。
+
+**数据源**：`GET {CLUB_API_BASE}/api/squads` —— 俱乐部平台一次 JOIN 出全部 20 队的一线队名册，返回 `{ squads: [{ clubId, clubName, players: [{ fcId, name, number }] }] }`。
+
+**对账规则**（`worker/lib/clubRoster.ts` 的 `syncRosters`）：
+
+| 情形 | 动作 |
+|---|---|
+| club 有、tour 无 | `INSERT INTO player (id, team_id, name, number)`，**以 fcId 当 `player.id`** |
+| 两队归属不同 | `UPDATE … SET team_id = ?`（换队） |
+| 姓名或号码不同 | 以 club 为准 `UPDATE`（号码空串与 `null` 等价） |
+| club 无、tour 有 | `DELETE`；被外键拒绝（有比赛事件 / 伤停引用）则保留并进 `kept` 报告 |
+
+**三条防御**（写库前）：空快照整体跳过（拉取失败不能清空名单）；形状不对抛错不写库；**只对快照里出现过的队做删除**（没出现的队一律不碰）。另有两条：同一 `fcId` 出现在两队 ⇒ 抛错；快照里的 `clubId` 本仓没有对应 `team` ⇒ 记 `unknownTeams` 并整体跳过其球员。
+
+**触发**：`triggers.crons = ["0 * * * *"]`（每小时一次，入口 `runRosterSync`，配置缺失或失败只记日志不抛）；手动立即同步 = `POST /api/admin/sync-rosters`（加 `?dryRun=1` 只算不写，返回对账预期）。**`vars.CLUB_API_BASE` 撤掉 = 同步整体跳过**，即回滚开关。
+
+**为什么按 id 而不按姓名**：`player.id` 就是 FC26 playerid（两个系统早前一起 rekey 过，实测 570/570 命中），而两侧姓名写法不同（tour 存完整人名 `Erling Haaland`，俱乐部平台存 FC26 派生显示名 `Erling Haaland` / 官方缩写名 `E. Haaland` 的回落）——按姓名匹配会漏人、会认错人。
 
 ## 5. 统一对阵模型 + 可插拔编排器/晋级器
 
