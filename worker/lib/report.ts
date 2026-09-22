@@ -113,18 +113,21 @@ function buildNarrative(
       } else {
         verb = pickText(evSeed, [`为${scoringTeam}扳回一城`, `帮${scoringTeam}追回一球`]);
       }
-      // 助攻从句：句库散变体 + 整场去重（乌龙无助攻），并进对应进球句
-      const assist = (() => {
-        if (!e.assistName || e.type === "own_goal") return "";
+      // 助攻从句：只给关键节点进球提（首开纪录/扳平/反超），且写在进球之前——数据里几乎每个进球
+      // 都记了助攻，逐个写太机械；领先方扩大优势、落后方追回一球都不提。句库散变体 + 整场去重（乌龙无助攻）。
+      const assistLead = (() => {
+        const nowAhead = scoring === "home" ? home > away : away > home;
+        const key = !wasAhead && (nowAhead || home === away);
+        if (!e.assistName || e.type === "own_goal" || !key) return "";
         const pool = ["送出助攻", "助攻得手", "送出妙传", "贡献一记助攻", "做饼得手", "送出致命一传"];
         const seed = `${evSeed}:ast`;
         let a = pickText(seed, pool);
         if (usedAssist.has(a)) a = pickText(`${seed}:r`, pool);
         if (usedAssist.has(a)) a = pool.find((x) => !usedAssist.has(x)) ?? a;
         usedAssist.add(a);
-        return `，${e.assistName} ${a}`;
+        return `${e.assistName} ${a}，`;
       })();
-      const s = `${pre}${who} ${verb}${assist}。`;
+      const s = `${pre}${assistLead}${who} ${verb}。`;
       sentences.push(s);
       goalFacts.push({
         minute: e.minute,

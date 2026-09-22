@@ -372,6 +372,23 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
     lastIdx.set(n, i);
   });
 
+  // 关键节点标记（口径同战报）：该球让进球方从「不领先」变「扳平或超出」（首开纪录/扳平/反超）；
+  // 领先方扩大优势、落后方追回一球都不算。只有关键节点才提助攻——数据里几乎每个进球都记了助攻，逐个写太机械。
+  const keyFlags: boolean[] = [];
+  {
+    let h = 0;
+    let a = 0;
+    for (const g of goals) {
+      const side = scoringSide(g);
+      const scoring = g.type === "own_goal" ? (side === "home" ? "away" : "home") : side;
+      const wasAhead = scoring === "home" ? h > a : a > h;
+      if (scoring === "home") h += 1;
+      else a += 1;
+      const nowAhead = scoring === "home" ? h > a : a > h;
+      keyFlags.push(!wasAhead && (nowAhead || h === a));
+    }
+  }
+
   const phrase = (e: RawEvent, i: number, withTime: boolean, used: Set<string>) => {
     const n = nameOf(e);
     const first = i === 0;
@@ -432,19 +449,19 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
         : null;
     // 功臣语序同战报：收尾句「梅开二度锁定胜局」融合动词，非收尾句功臣短语直接作谓语
     const core = hero ? (closing ? `${hero}${p}` : hero) : p;
-    // 助攻从句：与战报同句库散变体 + 本句去重；助攻事实挂在进球事件上，无需关心相邻性
-    let ast = "";
-    if (e.assistName && e.type !== "own_goal") {
+    // 助攻从句：只给关键节点进球提，且写在进球之前（语序同战报）；句库散变体 + 本句去重
+    let astLead = "";
+    if (e.assistName && e.type !== "own_goal" && keyFlags[i]) {
       const apool = ["送出助攻", "助攻得手", "送出妙传", "贡献一记助攻", "做饼得手", "送出致命一传"];
       const aseed = `ast:${m.id}:${i}`;
       let a = pickText(aseed, apool);
       if (used.has(`a:${a}`)) a = pickText(`${aseed}:r`, apool);
       if (used.has(`a:${a}`)) a = apool.find((x) => !used.has(`a:${x}`)) ?? a;
       used.add(`a:${a}`);
-      ast = `，${e.assistName} ${a}`;
+      astLead = `${e.assistName} ${a}，`;
     }
-    if (withTime && e.minute !== null) return `${n} 第 ${e.minute} 分钟${core}${ast}`;
-    return `${n} ${core}${ast}`;
+    if (withTime && e.minute !== null) return `${astLead}${n} 第 ${e.minute} 分钟${core}`;
+    return `${astLead}${n} ${core}`;
   };
 
   if (goals.length === 1) {
