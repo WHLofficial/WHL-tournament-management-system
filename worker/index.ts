@@ -1,6 +1,7 @@
 import { Hono } from "hono";
-import type { AppEnv } from "./env";
+import type { AppEnv, Bindings } from "./env";
 import { attachUser } from "./middleware/auth";
+import { runRosterSync } from "./lib/clubRoster";
 import oidcRoutes from "./routes/oidc";
 import authRoutes from "./routes/auth";
 import adminRoutes from "./routes/admin";
@@ -36,4 +37,11 @@ app.route("/api/media", mediaRoutes);
 // （未命中按 SPA 规则回退 index.html），这里只兜底 API 的未知路径。
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
-export default app;
+// 增量 33：名册同步定时任务（wrangler.jsonc 的 triggers.crons）。用 Object.assign 把 scheduled
+// 挂到同一个 app 上，默认导出仍是这个 Hono 实例——测试里的 `app.request(...)` 因此一行不用改。
+// runRosterSync 内部自己吞异常并记日志：一次网络抖动不该把这次 cron 记成失败（cron 也没有重试）。
+export default Object.assign(app, {
+  scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext) {
+    ctx.waitUntil(runRosterSync(env));
+  },
+});

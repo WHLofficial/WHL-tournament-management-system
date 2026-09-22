@@ -25,6 +25,7 @@ import auditRoutes from "./admin/audit";
 import announcementsRoutes from "./admin/announcements";
 import injuriesRoutes from "./admin/injuries";
 import proxyGrantsRoutes from "./admin/proxyGrants";
+import rostersRoutes from "./admin/rosters";
 
 const app = new Hono<AppEnv>();
 
@@ -42,6 +43,8 @@ app.route("/audit", auditRoutes);
 app.route("/announcements", announcementsRoutes);
 app.route("/injuries", injuriesRoutes);
 app.route("/proxy-grants", proxyGrantsRoutes);
+// 增量 33：POST /api/admin/sync-rosters —— 从俱乐部平台强制拉一次名册（定时任务走同一套 lib）
+app.route("/", rostersRoutes);
 
 // 认证中心通道错误的统一分流：业务码原样给前端文案，未配置/不可达归为 502
 function authFail(c: Context<AppEnv>, e: unknown) {

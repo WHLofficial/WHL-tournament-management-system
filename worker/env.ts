@@ -16,6 +16,9 @@ export type Bindings = {
   OIDC_CLIENT_ID?: string;
   /** 本地联调兜底：wrangler dev 对 custom_domain 路由会重写 request.url 的 origin，用环境变量盖回真实源 */
   OIDC_REDIRECT_ORIGIN?: string;
+  /** 增量 33：俱乐部平台基址（如 https://club.whleague.win）。名册同步从它的 /api/squads 拉一线队快照；
+   *  不配 = 同步整体跳过（本地 dev 默认不配，免得开发和测试时去够生产） */
+  CLUB_API_BASE?: string;
 };
 
 export type SessionUser = {
