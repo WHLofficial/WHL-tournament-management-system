@@ -3614,6 +3614,10 @@ button.add-stage {
   .tac-assign-grid {
     grid-template-columns: 1fr;
   }
+  /* 替补席同样一列一项（一行一个）：三列时每个下拉只剩七十来像素，选中的名字只看得见一个姓 */
+  .tac-bench-grid {
+    grid-template-columns: 1fr;
+  }
   /* 撤掉按组名归的槽位，回到自然流（不写在这儿会被上面的基础规则盖掉） */
   .tac-as-a,
   .tac-as-b,
