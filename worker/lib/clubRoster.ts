@@ -3,6 +3,11 @@
 // 为什么是「拉」而不是「推」：赛事系统只读俱乐部平台，反过来俱乐部平台完全不需要知道赛事系统的
 // 存在，也就不必在俱乐部平台里放第二个系统的写入凭据。拉的一方负责对账，边界最干净。
 //
+// 增量 37 的边界调整（上面这段原文保留，改动在此声明）：这条「只拉不推」的规矩对**名册**依然
+// 成立，但对「球队建档」破了一个口子——建档是一次性事件、两侧管理端都可能先发起，纯拉取要等
+// 1 小时 cron，且本仓读不到俱乐部平台库、反向拉不出「俱乐部有而赛事无」。所以建档走对称的
+// `POST /api/internal/team-upsert`（见 worker/lib/clubSync.ts）；名册一行都不推。
+//
 // 对账语义（squads 是俱乐部平台的一线队全量快照）：
 // - club 有 / tour 无 → INSERT，**用 fcId 当 player.id**（两库早前一起 rekey 过，
 //   赛事系统的 player.id 就是 FC26 playerid）
@@ -139,8 +144,10 @@ export async function syncRosters(
     return { ...out, skipped: "俱乐部平台回了 0 支球队，按防御策略不动库" };
   }
 
-  // 队还没建到本仓的（理论上不该有：队是在本仓先建再镜像过去的）整体跳过，
-  // 否则 INSERT 会撞 team_id 外键、把整批插入一起打回
+  // 队还没建到本仓的，整体跳过：否则 INSERT 会撞 team_id 外键、把整批插入一起打回。
+  // （增量 33 时这里写的是「理论上不该有，队是在本仓先建再镜像过去的」——那个假设不成立：
+  // 当时本仓→俱乐部平台根本没有写入通道，俱乐部平台侧的队可以是先在那边建的。增量 37 补上了
+  // 双向建档，这条路径才真正常态为空；防御逻辑本身不变。）
   const teamRows = await db.prepare("SELECT id FROM team").all<{ id: number }>();
   const knownTeams = new Set(teamRows.results.map((r) => r.id));
   const scoped = squads.filter((s) => knownTeams.has(s.clubId));
