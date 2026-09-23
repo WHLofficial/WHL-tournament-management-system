@@ -23,6 +23,7 @@ export function AdminInjuries() {
   const [events, setEvents] = useState<InjuryEventCandidateDTO[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [openInj, setOpenInj] = useState<number | null>(null); // 展开编辑的登记 id
   const [openEvent, setOpenEvent] = useState<number | null>(null); // 展开登记的事件 id
   // 筛选：赛事 / 球队 / 球员搜索 / 只看仍在伤停
@@ -38,6 +39,7 @@ export function AdminInjuries() {
     ]);
     setList(a.injuries);
     setEvents(b.events);
+    setLoadErr(null);
   }
 
   // 待登记卡片整块可点：再按一次收起。没记球员的事件打不开（登记要有人）
@@ -50,7 +52,8 @@ export function AdminInjuries() {
     reload().catch((e: unknown) => {
       setList([]);
       setEvents([]);
-      setMsg(e instanceof Error ? e.message : "加载失败");
+      // 置空只是类型需要，但空列表会被读成「一条伤停都没有」——失败要单独标出来
+      setLoadErr(e instanceof Error ? e.message : "加载失败");
     });
   }, []);
 
@@ -112,6 +115,7 @@ export function AdminInjuries() {
       </p>
 
       {msg && <p className="banner">{msg}</p>}
+      {loadErr && <p className="error-msg">伤停数据加载失败：{loadErr}</p>}
 
       <div className="card">
         <div className="inj-filter">
@@ -160,9 +164,11 @@ export function AdminInjuries() {
         {list === null ? (
           <p className="muted">加载中…</p>
         ) : injuries.length === 0 ? (
-          <p className="muted">
-            {all.length === 0 ? "还没有伤停登记。" : "没有符合筛选的登记。"}
-          </p>
+          loadErr ? null : (
+            <p className="muted">
+              {all.length === 0 ? "还没有伤停登记。" : "没有符合筛选的登记。"}
+            </p>
+          )
         ) : (
           <table className="table">
             <thead>

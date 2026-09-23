@@ -33,12 +33,12 @@ app.post("/", async (c) => {
   const b = await c.req.json<{ title?: unknown; body?: unknown }>();
   const title = typeof b.title === "string" ? b.title.trim() : "";
   const body = typeof b.body === "string" ? b.body.trim() : "";
-  if (!title || !body) return c.json({ error: "标题与正文不能为空" }, 400);
+  if (!title || !body) return c.json({ error: "bad_request", message: "标题与正文不能为空" }, 400);
   if (title.length > TITLE_MAX || body.length > BODY_MAX) {
-    return c.json({ error: `标题不超过 ${TITLE_MAX} 字、正文不超过 ${BODY_MAX} 字` }, 400);
+    return c.json({ error: "bad_request", message: `标题不超过 ${TITLE_MAX} 字、正文不超过 ${BODY_MAX} 字` }, 400);
   }
   const user = c.get("user");
-  if (!user) return c.json({ error: "unauthorized" }, 401);
+  if (!user) return c.json({ error: "unauthorized", message: "请先登录" }, 401);
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE announcement SET active = 0, updated_at = ? WHERE active = 1").bind(now),
@@ -55,20 +55,20 @@ app.post("/", async (c) => {
 // 编辑 / 上线 / 下线：上线与下线旧条同批，保持至多一条 active
 app.put("/:id", async (c) => {
   const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "bad_id" }, 400);
+  if (!Number.isInteger(id)) return c.json({ error: "bad_id", message: "公告 id 不合法" }, 400);
   const b = await c.req.json<{ title?: unknown; body?: unknown; active?: unknown }>();
   const existing = await c.env.DB.prepare(
     "SELECT id, title, body, active FROM announcement WHERE id = ?",
   )
     .bind(id)
     .first<{ id: number; title: string; body: string; active: number }>();
-  if (!existing) return c.json({ error: "not_found" }, 404);
+  if (!existing) return c.json({ error: "not_found", message: "公告不存在，可能已被删除" }, 404);
 
   const title = typeof b.title === "string" ? b.title.trim() : existing.title;
   const body = typeof b.body === "string" ? b.body.trim() : existing.body;
-  if (!title || !body) return c.json({ error: "标题与正文不能为空" }, 400);
+  if (!title || !body) return c.json({ error: "bad_request", message: "标题与正文不能为空" }, 400);
   if (title.length > TITLE_MAX || body.length > BODY_MAX) {
-    return c.json({ error: `标题不超过 ${TITLE_MAX} 字、正文不超过 ${BODY_MAX} 字` }, 400);
+    return c.json({ error: "bad_request", message: `标题不超过 ${TITLE_MAX} 字、正文不超过 ${BODY_MAX} 字` }, 400);
   }
   const active = typeof b.active === "boolean" ? (b.active ? 1 : 0) : existing.active;
   const now = new Date().toISOString();

@@ -58,7 +58,7 @@ app.post("/matches/:mid/motm", requireUser, async (c) => {
 // 结果（公开读；登录用户附带自己的一票）
 app.get("/matches/:mid/motm", async (c) => {
   const mid = Number(c.req.param("mid"));
-  if (!Number.isInteger(mid)) return c.json({ error: "bad_request" }, 400);
+  if (!Number.isInteger(mid)) return c.json({ error: "bad_request", message: "比赛 id 不合法" }, 400);
   const totals = await c.env.DB.prepare(
     `SELECT mv.player_id AS playerId, p.name AS playerName, COUNT(*) AS cnt
      FROM motm_vote mv JOIN player p ON p.id = mv.player_id

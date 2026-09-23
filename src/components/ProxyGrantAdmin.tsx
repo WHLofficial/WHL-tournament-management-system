@@ -39,21 +39,38 @@ export function ProxyGrantAdmin({ tournaments }: { tournaments: TournamentDTO[] 
   const [teamSel, setTeamSel] = useState<number | null>(null);
   const [acctSel, setAcctSel] = useState<number | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // 四处拉失败都会被读成「这里本来就是空的」：账号候选空了像没人可授权、比赛空了像该赛事没比赛、
+  // 授权列表空了像从没授过权、两队信息没了像你还没选比赛——所以每处各留一条可见的失败信息
+  const [acctErr, setAcctErr] = useState<string | null>(null);
+  const [grantsErr, setGrantsErr] = useState<string | null>(null);
+  const [matchErr, setMatchErr] = useState<string | null>(null);
+  const [sidesErr, setSidesErr] = useState<string | null>(null);
   const { busy, error, setError, run } = useSubmit();
 
   async function reloadGrants() {
     const b = await api<{ grants: AdminProxyGrantDTO[] }>("/api/admin/proxy-grants");
     setGrants(b.grants ?? []);
+    setGrantsErr(null);
   }
   async function reloadSides(matchId: number) {
     setSides(await api<ProxyMatchSidesDTO>(`/api/admin/proxy-grants/match/${matchId}`));
+    setSidesErr(null);
   }
 
   useEffect(() => {
     api<{ accounts: ProxyGrantCandidateDTO[] }>("/api/admin/proxy-grants/context")
-      .then((b) => setAccounts(b.accounts ?? []))
-      .catch(() => setAccounts([]));
-    reloadGrants().catch(() => setGrants([]));
+      .then((b) => {
+        setAccounts(b.accounts ?? []);
+        setAcctErr(null);
+      })
+      .catch((e: unknown) => {
+        setAccounts([]);
+        setAcctErr(e instanceof Error ? e.message : "加载失败");
+      });
+    reloadGrants().catch((e: unknown) => {
+      setGrants([]);
+      setGrantsErr(e instanceof Error ? e.message : "加载失败");
+    });
   }, []);
 
   // 只有未开打、且不是轮空的场次才谈得上代打
@@ -68,13 +85,16 @@ export function ProxyGrantAdmin({ tournaments }: { tournaments: TournamentDTO[] 
       return;
     }
     let dead = false;
+    setMatchErr(null);
     api<{ matches: MatchDTO[] }>(`/api/admin/tournaments/${tid}/matches`)
       .then((b) => {
         if (dead) return;
         setMatches((b.matches ?? []).filter((m) => m.status === "pending" && m.note !== "轮空"));
       })
-      .catch(() => {
-        if (!dead) setMatches([]);
+      .catch((e: unknown) => {
+        if (dead) return;
+        setMatches([]);
+        setMatchErr(e instanceof Error ? e.message : "加载失败");
       });
     return () => {
       dead = true;
@@ -85,6 +105,7 @@ export function ProxyGrantAdmin({ tournaments }: { tournaments: TournamentDTO[] 
   useEffect(() => {
     if (mid == null) return;
     let dead = false;
+    setSidesErr(null);
     api<ProxyMatchSidesDTO>(`/api/admin/proxy-grants/match/${mid}`)
       .then((b) => {
         if (dead) return;
@@ -92,8 +113,10 @@ export function ProxyGrantAdmin({ tournaments }: { tournaments: TournamentDTO[] 
         setTeamSel(b.homeTeamId);
         setAcctSel(null);
       })
-      .catch(() => {
-        if (!dead) setSides(null);
+      .catch((e: unknown) => {
+        if (dead) return;
+        setSides(null);
+        setSidesErr(e instanceof Error ? e.message : "加载失败");
       });
     return () => {
       dead = true;
@@ -217,12 +240,18 @@ export function ProxyGrantAdmin({ tournaments }: { tournaments: TournamentDTO[] 
         </button>
       </div>
 
-      {matches != null && matches.length === 0 && <p className="muted">该赛事当前没有待开的比赛。</p>}
+      {matchErr && <p className="error-msg">比赛列表加载失败：{matchErr}</p>}
+      {sidesErr && <p className="error-msg">该场两队信息加载失败：{sidesErr}，请重新选一次比赛</p>}
+      {acctErr && <p className="error-msg">代打账号候选加载失败：{acctErr}</p>}
+      {grantsErr && <p className="error-msg">授权列表加载失败：{grantsErr}</p>}
+      {matches != null && matches.length === 0 && !matchErr && (
+        <p className="muted">该赛事当前没有待开的比赛。</p>
+      )}
       {error && <p className="error-msg">{error}</p>}
       {done && <p className="ok-msg">{done}</p>}
 
       {grants.length === 0 ? (
-        <p className="muted">还没有代打授权。</p>
+        grantsErr ? null : <p className="muted">还没有代打授权。</p>
       ) : (
         <table className="table">
           <thead>

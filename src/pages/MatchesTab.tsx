@@ -200,21 +200,22 @@ export default function MatchesTab({
   const act = async (
     fn: () => Promise<string | null>,
     opts?: { light?: boolean; resusp?: boolean },
-  ) => {
+  ): Promise<string | null> => {
     setBusy(true);
     setMessage(null);
-    let ok = false;
+    let note: string | null = null;
     try {
-      const note = await fn();
-      // 解锁先行：操作一返回就放行下一次录入，提示即时给出
-      if (note) setMessage(note);
-      ok = true;
+      note = await fn();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "操作失败");
-    } finally {
+      const msg = e instanceof Error ? e.message : "操作失败";
+      setMessage(msg);
       setBusy(false);
+      // 失败不刷新（原来的 if (!ok) return 语义），并把文案交给调用方做就近提示
+      return msg;
     }
-    if (!ok) return;
+    setBusy(false);
+    // 解锁先行：操作一返回就放行下一次录入，提示即时给出
+    if (note) setMessage(note);
     // 后台刷新不阻塞下一次操作：赛程必刷（live 比分在列）；事件增删走轻刷新
     // （跳过整届详情，entries/stages 不因事件改变）；停赛在「影响停赛账本」的操作后
     // 重拉——牌类事件（新 ban）与开赛/终场（live 消耗/落账），进球不必拉
@@ -222,6 +223,7 @@ export default function MatchesTab({
     if (!opts?.light) void reload();
     setTick((t) => t + 1);
     if (!opts?.light || opts.resusp) setSuspTick((t) => t + 1);
+    return null;
   };
 
   if (matches === null) return <p className="muted card">加载中…</p>;
@@ -353,10 +355,13 @@ export default function MatchesTab({
   );
 }
 
+// 返回值 = 失败时的文案（成功为 null）。act 自己会把错误放到页顶 banner，但报分/弃权按钮在
+// 长列表的某张卡片里，卡片滚出视野时那条 banner 就等于没提示——所以调用方还要拿这个返回值
+// 在按钮旁就近再提示一次
 type Act = (
   fn: () => Promise<string | null>,
   opts?: { light?: boolean; resusp?: boolean },
-) => Promise<void>;
+) => Promise<string | null>;
 
 function MatchRow({
   match: m,
@@ -723,9 +728,7 @@ function ScoreForm({
       );
       onDone();
       return b.regenerated ? "淘汰赛对阵已自动生成" : null;
-    }).then(() => undefined, (e: unknown) => {
-      setErr(e instanceof Error ? e.message : "提交失败");
-    });
+    }).then((msg) => setErr(msg));
   };
 
   const submit = () => {
@@ -751,9 +754,7 @@ function ScoreForm({
       );
       onDone();
       return b.regenerated ? "淘汰赛对阵已自动生成" : null;
-    }).then(() => undefined, (e: unknown) => {
-      setErr(e instanceof Error ? e.message : "提交失败");
-    });
+    }).then((msg) => setErr(msg));
   };
 
   const equal = sh !== "" && sa !== "" && Number(sh) === Number(sa);
@@ -948,6 +949,7 @@ function AuditPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<AuditEntryDTO[] | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || rows) return;
@@ -958,8 +960,11 @@ function AuditPanel({
       .then((b) => {
         if (on) setRows(b.entries);
       })
-      .catch(() => {
-        if (on) setRows([]);
+      .catch((e: unknown) => {
+        if (!on) return;
+        // 空列表会被读成「本场没改过」，所以失败要标出来
+        setRows([]);
+        setLoadErr(e instanceof Error ? e.message : "加载失败");
       });
     return () => {
       on = false;
@@ -1019,7 +1024,10 @@ function AuditPanel({
         收起记录
       </button>
       {rows === null && <p className="muted">加载中…</p>}
-      {rows !== null && rows.length === 0 && <p className="muted">本场还没有改动记录。</p>}
+      {loadErr && <p className="error-msg">改动记录加载失败：{loadErr}</p>}
+      {rows !== null && rows.length === 0 && !loadErr && (
+        <p className="muted">本场还没有改动记录。</p>
+      )}
       {rows !== null && rows.length > 0 && (
         <ul className="audit-list">
           {rows.map((a) => (

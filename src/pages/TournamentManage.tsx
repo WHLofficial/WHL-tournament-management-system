@@ -495,6 +495,10 @@ function SuspensionCard({ tid }: { tid: number }) {
   const [red2yBan, setRed2yBan] = useState("1");
   const [yellowThreshold, setYellowThreshold] = useState("3");
   const { busy, error, setError, run } = useSubmit();
+  // 拉不到配置时表单里是默认值（2/1/3），看起来却和线上配置没区别——管理员一按保存就把错阈值写进
+  // config_json。所以加载失败必须显式标出来，并在重新加载成功之前锁住保存
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
   // 清零两击确认：首击进入待确认态，3 秒内再击才执行；照终场确认的防误触模式
   const [arm, setArm] = useState(false);
   const armTimer = useRef<number | null>(null);
@@ -502,6 +506,7 @@ function SuspensionCard({ tid }: { tid: number }) {
 
   useEffect(() => {
     let on = true;
+    setLoadErr(null);
     api<SuspensionsResp>(`/api/admin/tournaments/${tid}/suspensions`)
       .then((b) => {
         if (!on) return;
@@ -510,11 +515,14 @@ function SuspensionCard({ tid }: { tid: number }) {
         setRed2yBan(String(b.config.red2yBan));
         setYellowThreshold(String(b.config.yellowThreshold));
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if (!on) return;
+        setLoadErr(e instanceof Error ? e.message : "停赛配置加载失败");
+      });
     return () => {
       on = false;
     };
-  }, [tid]);
+  }, [tid, reloadTick]);
 
   useEffect(() => {
     return () => {
@@ -604,15 +612,27 @@ function SuspensionCard({ tid }: { tid: number }) {
           />
         </label>
       </div>
+      {loadErr && (
+        <p className="error-msg">
+          {loadErr}。下面显示的是默认值，不是线上配置，请先重新加载再保存。
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setReloadTick((t) => t + 1)}
+          >
+            重新加载
+          </button>
+        </p>
+      )}
       {error && <p className="error-msg">{error}</p>}
       <div className="logo-row">
-        <button type="button" className="btn" disabled={busy} onClick={save}>
+        <button type="button" className="btn" disabled={busy || !!loadErr} onClick={save}>
           保存停赛规则
         </button>
         <button
           type="button"
           className={arm ? "btn btn-danger" : "btn btn-ghost"}
-          disabled={busy}
+          disabled={busy || !!loadErr}
           onClick={resetYellows}
         >
           {arm ? "再点一次确认清零" : "清零黄牌累计"}

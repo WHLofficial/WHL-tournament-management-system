@@ -9,6 +9,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { jwtVerify, type JWTPayload } from "jose";
 import type { AppEnv } from "../env";
 import { sha256Hex } from "../lib/crypto";
+import { mirrorAccountStmt } from "../lib/accountMirror";
 import {
   BACKCHANNEL_LOGOUT_EVENT,
   OIDC_PROBE_COOKIE,
@@ -192,13 +193,10 @@ oidcRoutes.get("/callback", async (c) => {
   if (!timingSafeEq(typeof payload.nonce === "string" ? payload.nonce : "", temp.nonce)) {
     return c.json({ error: "oidc_verify_error", message: "登录凭证校验失败，请重新登录" }, 502);
   }
-  // sub 必须是数字串（过渡期 = tour user id，步骤③收口后即 auth 账号 id）；sid 供登出联动
-  if (
-    typeof payload.sub !== "string" ||
-    !/^\d+$/.test(payload.sub) ||
-    typeof payload.sid !== "string" ||
-    !payload.sid
-  ) {
+  // sub 必须是数字串，且收口后一律按 auth account.id 解释（authClient.ts 的 boundTeamId 就是
+  // `WHERE b.account_id = ?`，teamOfAccounts 也注明「键 = account.id（= user.id）」）；sid 供登出联动
+  const accountId = typeof payload.sub === "string" ? Number(payload.sub) : NaN;
+  if (!Number.isSafeInteger(accountId) || accountId <= 0 || typeof payload.sid !== "string" || !payload.sid) {
     return c.json({ error: "oidc_claim_error", message: "登录凭证不完整，请重新登录" }, 502);
   }
 
@@ -232,18 +230,34 @@ oidcRoutes.get("/callback", async (c) => {
   const now = new Date().toISOString();
   await c.env.DB.prepare("DELETE FROM oidc_session WHERE expires_at < ?").bind(now).run();
   const token = randomB64url(32);
-  await c.env.DB.prepare(
-    "INSERT INTO oidc_session (token_hash, sub, auth_sid, claims, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-  )
-    .bind(
-      await sha256Hex(token),
-      payload.sub,
-      payload.sid,
-      claims,
-      now,
-      new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
-    )
-    .run();
+  // 账号投影与建会话同批提交（增量 36）：要么登录成功且本库 user 行存在，要么这次登录如实失败。
+  // 收口后本库 user 表没有写入方，而 14 列外键仍指向它（tactic.created_by / match_event.created_by /
+  // audit_log.actor_user_id …，见 lib/accountMirror.ts 顶部）。不同批的下场就是「登录一切正常、
+  // 进站写存档或报分才撞外键 500」，且前端只看到「请求失败（500）」——2026-09-23 事故即此形状。
+  try {
+    await c.env.DB.batch([
+      mirrorAccountStmt(c.env.DB, {
+        id: accountId,
+        name: ui.name,
+        locked: ui.locked,
+        createdAt: now, // 登录时刻凑的，定时对账会改回 auth 的真实注册时间
+      }),
+      c.env.DB.prepare(
+        "INSERT INTO oidc_session (token_hash, sub, auth_sid, claims, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(
+        await sha256Hex(token),
+        String(accountId),
+        payload.sid,
+        claims,
+        now,
+        new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
+      ),
+    ]);
+  } catch (e) {
+    // 只记日志会让用户看到「登录成功但什么都没保存」的假象，所以这里让登录可见地失败
+    console.error(`[oidc] 账号投影失败 account=${accountId}：${e instanceof Error ? e.message : String(e)}`);
+    return c.json({ error: "oidc_account_mirror_error", message: "登录初始化失败，请稍后重试" }, 502);
+  }
 
   setCookie(c, OIDC_SESSION_COOKIE, token, {
     httpOnly: true,

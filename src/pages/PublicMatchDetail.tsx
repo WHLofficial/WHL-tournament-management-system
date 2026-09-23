@@ -84,6 +84,8 @@ export default function PublicMatchDetail() {
   const [tInfo, setTInfo] = useState<{ name: string; coverUrl: string | null } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [lineup, setLineup] = useState<MatchLineupDTO | null>(null);
+  // 阵容拉失败时 lineup 是 null，而 null 的渲染结果和「还没提交阵容」完全一样——要分开标出来
+  const [lineupErr, setLineupErr] = useState<string | null>(null);
   const [absences, setAbsences] = useState<MatchAbsencesResp | null>(null);
 
   // 分享卡标题需要赛事名，进来时顺手拉一次
@@ -127,15 +129,19 @@ export default function PublicMatchDetail() {
   useEffect(() => {
     if (!m || m.status === "pending" || m.note === "轮空") {
       setLineup(null);
+      setLineupErr(null);
       return;
     }
     let dead = false;
+    setLineupErr(null);
     api<MatchLineupDTO>(`/api/public/matches/${matchId}/lineup`)
       .then((b) => {
         if (!dead) setLineup(b);
       })
-      .catch(() => {
-        if (!dead) setLineup(null);
+      .catch((e: unknown) => {
+        if (dead) return;
+        setLineup(null);
+        setLineupErr(e instanceof Error ? e.message : "加载失败");
       });
     return () => {
       dead = true;
@@ -247,6 +253,9 @@ export default function PublicMatchDetail() {
                 <h3>提交阵容</h3>
                 <LineupGrid home={lineup.home} away={lineup.away} />
               </div>
+            )}
+            {lineupErr && (
+              <p className="error-msg md-empty">提交阵容加载失败：{lineupErr}（不代表双方没交阵容）</p>
             )}
           </div>
         </>

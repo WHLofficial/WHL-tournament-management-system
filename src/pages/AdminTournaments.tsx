@@ -12,14 +12,20 @@ export function AdminTournaments() {
   const [tournaments, setTournaments] = useState<TournamentDTO[] | null>(null);
   const [name, setName] = useState("");
   const [format, setFormat] = useState<TournamentFormat | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const { busy, error, setError, run } = useSubmit();
 
   async function reload() {
     const data = await api<{ tournaments: TournamentDTO[] }>("/api/admin/tournaments");
     setTournaments(data.tournaments);
+    setLoadErr(null);
   }
   useEffect(() => {
-    reload().catch(() => setTournaments([]));
+    // 拉失败不能显示成「还没有赛事」：管理员会以为赛事丢了
+    reload().catch((e: unknown) => {
+      setLoadErr(e instanceof Error ? e.message : "加载失败");
+      setTournaments([]);
+    });
   }, []);
 
   function create(e: FormEventLike) {
@@ -84,10 +90,11 @@ export function AdminTournaments() {
 
       {(tournaments?.length ?? 0) > 0 && <ProxyGrantAdmin tournaments={tournaments ?? []} />}
 
+      {loadErr && <p className="error-msg">赛事列表加载失败：{loadErr}</p>}
       {tournaments === null ? (
         <p className="muted">加载中…</p>
       ) : tournaments.length === 0 ? (
-        <p className="muted">还没有赛事，先创建一个。</p>
+        loadErr ? null : <p className="muted">还没有赛事，先创建一个。</p>
       ) : (
         <table className="table">
           <thead>

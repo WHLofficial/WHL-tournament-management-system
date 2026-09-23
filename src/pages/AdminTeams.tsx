@@ -9,15 +9,21 @@ export function AdminTeams() {
   const [teams, setTeams] = useState<TeamDTO[] | null>(null);
   const [name, setName] = useState("");
   const [paste, setPaste] = useState("");
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const createForm = useSubmit();
   const bulkForm = useSubmit();
 
   async function reload() {
     const data = await api<{ teams: TeamDTO[] }>("/api/admin/teams");
     setTeams(data.teams);
+    setLoadErr(null);
   }
   useEffect(() => {
-    reload().catch(() => setTeams([]));
+    // 拉失败不能显示成「球队库是空的」：管理员会以为球队被删了
+    reload().catch((e: unknown) => {
+      setLoadErr(e instanceof Error ? e.message : "加载失败");
+      setTeams([]);
+    });
   }, []);
 
   function create(e: React.FormEvent) {
@@ -97,10 +103,11 @@ export function AdminTeams() {
         {bulkForm.error && <p className="error-msg">{bulkForm.error}</p>}
       </div>
 
+      {loadErr && <p className="error-msg">球队列表加载失败：{loadErr}</p>}
       {teams === null ? (
         <p className="muted">加载中…</p>
       ) : teams.length === 0 ? (
-        <p className="muted">球队库是空的。</p>
+        loadErr ? null : <p className="muted">球队库是空的。</p>
       ) : (
         <table className="table">
           <thead>

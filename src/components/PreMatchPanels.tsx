@@ -58,25 +58,32 @@ const TABS: { key: TabKey; label: string }[] = [
 // 本队教练已提交本场阵容时，它排在最前并默认选中（只有本队账号看得到）
 const MINE_TAB: { key: TabKey; label: string } = { key: "mine", label: "已提交阵容" };
 
-// 挂载即拉一次、不进 30 秒轮询；失败静默（非关键内容不挡页面）
-function useFetch<T>(url: string | null): { data: T | null; fail: boolean } {
+// 挂载即拉一次、不进 30 秒轮询；失败只影响这一块、不挡页面——但也不能一声不吭，
+// 所以把失败原因带出来交给面板显示
+function useFetch<T>(url: string | null): { data: T | null; fail: string | null } {
   const [data, setData] = useState<T | null>(null);
-  const [fail, setFail] = useState(false);
+  const [fail, setFail] = useState<string | null>(null);
   useEffect(() => {
     if (!url) return;
     let dead = false;
+    setFail(null);
     api<T>(url)
       .then((b) => {
         if (!dead) setData(b);
       })
-      .catch(() => {
-        if (!dead) setFail(true);
+      .catch((e: unknown) => {
+        if (!dead) setFail(e instanceof Error ? e.message : "加载失败");
       });
     return () => {
       dead = true;
     };
   }, [url]);
   return { data, fail };
+}
+
+// 拉失败不能渲染成空白：用户点了这个 Tab 却什么都没有，分不清是「本来没数据」还是「请求挂了」
+function PanelFail({ msg }: { msg: string }) {
+  return <p className="error-msg pmt-loading">这部分内容加载失败：{msg}</p>;
 }
 
 export function PreMatchTabs({
@@ -90,7 +97,7 @@ export function PreMatchTabs({
 }) {
   // 本队教练赛前回显自己那份：只有绑了队的账号才去问教练端点（公开端点不读登录态，教练端点无缓存且只回本队）
   const { user } = useAuth();
-  const { data: mine } = useFetch<{ lineup: TeamLineupDTO | null }>(
+  const { data: mine, fail: mineFail } = useFetch<{ lineup: TeamLineupDTO | null }>(
     user?.teamId != null ? `/api/coach/matches/${match.id}/lineup` : null,
   );
   const myLineup = mine?.lineup ?? null;
@@ -113,6 +120,9 @@ export function PreMatchTabs({
           </button>
         ))}
       </div>
+      {mineFail && (
+        <p className="error-msg pmt-loading">本队已提交阵容加载失败：{mineFail}（标签页因此没出现）</p>
+      )}
       {cur === "mine" && myLineup && <MyLineupPanel l={myLineup} />}
       {cur === "h2h" && <H2HPanel tid={tid} match={match} />}
       {cur === "players" && <PlayersPanel tid={tid} match={match} absences={absences} />}
@@ -131,7 +141,7 @@ function H2HPanel({ tid, match }: { tid: number; match: MatchDTO }) {
   const { data: d, fail } = useFetch<H2HDTO>(
     `/api/public/tournaments/${tid}/matches/${match.id}/h2h`,
   );
-  if (fail) return null;
+  if (fail) return <PanelFail msg={fail} />;
   if (!d) return <Loading />;
   if (!d.home || !d.away) return null;
   const homeTid = d.home.teamId;
@@ -257,7 +267,7 @@ function PlayersPanel({
   absences?: MatchAbsencesResp | null;
 }) {
   const { data: d, fail } = useFetch<ToplistsData>(`/api/public/tournaments/${tid}/toplists`);
-  if (fail) return null;
+  if (fail) return <PanelFail msg={fail} />;
   if (!d) return <Loading />;
   const hn = match.homeTeamName ?? "";
   const an = match.awayTeamName ?? "";
@@ -413,7 +423,7 @@ function LineupPanel({ tid, match }: { tid: number; match: MatchDTO }) {
   const { data: d, fail } = useFetch<LineupStatsDTO>(
     `/api/public/tournaments/${tid}/matches/${match.id}/lineup-stats`,
   );
-  if (fail) return null;
+  if (fail) return <PanelFail msg={fail} />;
   if (!d) return <Loading />;
   if (!d.home && !d.away) return <p className="muted pmt-empty">两队还没有阵容记录。</p>;
   return (

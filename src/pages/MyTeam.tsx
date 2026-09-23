@@ -32,13 +32,19 @@ export default function MyTeam() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 拉失败时 team 会被置成 null，而 null 在本页的含义是「还没绑队」——直接显示就成了假信息
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   async function reload() {
     const d = await api<{ team: MyTeam | null }>("/api/coach/me/team");
     setTeam(d.team);
+    setLoadErr(null);
   }
   useEffect(() => {
-    reload().catch(() => setTeam(null));
+    reload().catch((e: unknown) => {
+      setLoadErr(e instanceof Error ? e.message : "加载失败");
+      setTeam(null);
+    });
   }, []);
 
   async function bind(e: React.FormEvent) {
@@ -64,7 +70,15 @@ export default function MyTeam() {
 
       {team === undefined && <p className="muted">加载中…</p>}
 
-      {team === null && user?.locked && (
+      {loadErr && (
+        <div className="card">
+          <h3>球队信息加载失败</h3>
+          <p className="error-msg">{loadErr}</p>
+          <p className="muted">这不代表你没有球队，请刷新页面重试。</p>
+        </div>
+      )}
+
+      {team === null && !loadErr && user?.locked && (
         <div className="card">
           <h3>观众账号</h3>
           <p className="muted">
@@ -73,7 +87,7 @@ export default function MyTeam() {
         </div>
       )}
 
-      {team === null && !user?.locked && (
+      {team === null && !loadErr && !user?.locked && (
         <div className="card">
           <h3>绑定球队</h3>
           <p className="muted">

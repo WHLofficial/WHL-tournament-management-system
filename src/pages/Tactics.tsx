@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -180,6 +180,20 @@ export default function Tactics() {
   const [board, setBoard] = useState<ProxyBoardResp | null>(null);
   const [boardNonce, setBoardNonce] = useState(0);
   const [boardBusy, setBoardBusy] = useState(false);
+  // 侧栏那几个取数失败后都置空，而置空在界面上跟「本来就没有」长得一样：没存档、没比赛、
+  // 没授权、没提交过阵容。所以每个来源各记一条，成功时清掉自己那条，统一在侧栏顶上显示。
+  const [loadErrs, setLoadErrs] = useState<Record<string, string>>({});
+  const markLoadErr = useCallback((key: string, text: string | null) => {
+    setLoadErrs((prev) => {
+      if (text == null) {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return prev[key] === text ? prev : { ...prev, [key]: text };
+    });
+  }, []);
   // 取数缓存与「已解析口径」：同一赛事/同一场比赛来回切时不再重发请求
   const statusCache = useRef(new Map<number, StatusSlice>());
   const statusTidRef = useRef<number | null>(null);
@@ -225,21 +239,21 @@ export default function Tactics() {
     let dead = false;
     api<{ team: { name: string; players: TeamPlayer[] } | null }>("/api/coach/me/team")
       .then((b) => {
-        if (!dead) {
-          setSelfPlayers(b.team?.players ?? null);
-          setSelfTeamName(b.team?.name ?? null);
-        }
+        if (dead) return;
+        markLoadErr("本队名单", null);
+        setSelfPlayers(b.team?.players ?? null);
+        setSelfTeamName(b.team?.name ?? null);
       })
-      .catch(() => {
-        if (!dead) {
-          setSelfPlayers(null);
-          setSelfTeamName(null);
-        }
+      .catch((e: unknown) => {
+        if (dead) return;
+        markLoadErr("本队名单", e instanceof Error ? e.message : "加载失败");
+        setSelfPlayers(null);
+        setSelfTeamName(null);
       });
     return () => {
       dead = true;
     };
-  }, [user]);
+  }, [user, markLoadErr]);
 
   // 存档登录后即可拉（未绑队端点返回空列表）：不再等本队名单那一跳
   useEffect(() => {
@@ -250,15 +264,19 @@ export default function Tactics() {
     let dead = false;
     api<{ tactics: TacticArchiveDTO[] }>("/api/coach/tactics")
       .then((b) => {
-        if (!dead) setArchives(b.tactics ?? []);
+        if (dead) return;
+        markLoadErr("战术存档", null);
+        setArchives(b.tactics ?? []);
       })
-      .catch(() => {
-        if (!dead) setArchives([]);
+      .catch((e: unknown) => {
+        if (dead) return;
+        markLoadErr("战术存档", e instanceof Error ? e.message : "加载失败");
+        setArchives([]);
       });
     return () => {
       dead = true;
     };
-  }, [user]);
+  }, [user, markLoadErr]);
 
   // 待选比赛：登录后即拉，默认选中未开赛的第一场（端点只返 pending 场）
   useEffect(() => {
@@ -273,16 +291,19 @@ export default function Tactics() {
         if (dead) return;
         const list = b.matches ?? [];
         matchesAt.current = Date.now();
+        markLoadErr("待选比赛", null);
         setSubMatches(list);
         setSubMatchId((cur) => (cur != null && list.some((m) => m.id === cur) ? cur : list[0]?.id ?? null));
       })
-      .catch(() => {
-        if (!dead) setSubMatches([]);
+      .catch((e: unknown) => {
+        if (dead) return;
+        markLoadErr("待选比赛", e instanceof Error ? e.message : "加载失败");
+        setSubMatches([]);
       });
     return () => {
       dead = true;
     };
-  }, [user]);
+  }, [user, markLoadErr]);
 
   // 所选比赛的我方已提交阵容：自动选中与手动切换共用。
   // 命中缓存先画出来，避免切轮次时「已提交」提示与按钮文案闪回。
@@ -293,21 +314,27 @@ export default function Tactics() {
     }
     const hit = mineCache.current.get(subMatchId);
     setSelfMine(hit ? hit.v : null);
-    if (hit && Date.now() - hit.at < CACHE_TTL) return;
+    if (hit && Date.now() - hit.at < CACHE_TTL) {
+      markLoadErr("本场已交阵容", null);
+      return;
+    }
     let dead = false;
     api<{ lineup: TeamLineupDTO | null }>(`/api/coach/matches/${subMatchId}/lineup`)
       .then((b) => {
         if (dead) return;
         mineCache.current.set(subMatchId, { v: b.lineup, at: Date.now() });
+        markLoadErr("本场已交阵容", null);
         setSelfMine(b.lineup);
       })
-      .catch(() => {
-        if (!dead && !hit) setSelfMine(null);
+      .catch((e: unknown) => {
+        if (dead) return;
+        markLoadErr("本场已交阵容", e instanceof Error ? e.message : "加载失败");
+        if (!hit) setSelfMine(null);
       });
     return () => {
       dead = true;
     };
-  }, [subMatchId, user]);
+  }, [subMatchId, user, markLoadErr]);
 
   // 停赛口径跟随所选比赛所在赛事
   const pickedMatch = (subMatches ?? []).find((m) => m.id === subMatchId) ?? null;
@@ -321,10 +348,14 @@ export default function Tactics() {
       setSelfStatusBusy(false);
       statusTidRef.current = null;
       statusReq.current = undefined;
+      markLoadErr("停赛状态", null);
       return;
     }
     // 代打模式下停赛口径来自代打板（目标队所在赛事），这条本队口径的请求让位
-    if (proxyOn) return;
+    if (proxyOn) {
+      markLoadErr("停赛状态", null);
+      return;
+    }
     const want = pickedTid;
     const cur = statusTidRef.current;
     if (statusReq.current !== undefined && (want === null || want === statusReq.current || want === cur)) {
@@ -355,10 +386,13 @@ export default function Tactics() {
             yellowThreshold: b.yellowThreshold,
           });
         }
+        markLoadErr("停赛状态", null);
         setSelfStatus(b);
       })
-      .catch(() => {
-        if (!dead) setSelfStatus(null);
+      .catch((e: unknown) => {
+        if (dead) return;
+        markLoadErr("停赛状态", e instanceof Error ? e.message : "加载失败");
+        setSelfStatus(null);
       })
       .finally(() => {
         if (!dead) setSelfStatusBusy(false);
@@ -366,7 +400,7 @@ export default function Tactics() {
     return () => {
       dead = true;
     };
-  }, [user, pickedTid, proxyOn]);
+  }, [user, pickedTid, proxyOn, markLoadErr]);
 
   // 代打授权清单：登录后即拉（没授权返空数组）；有授权才出现身份切换器
   useEffect(() => {
@@ -381,18 +415,21 @@ export default function Tactics() {
       .then((b) => {
         if (dead) return;
         const list = b.sessions ?? [];
+        markLoadErr("代打授权", null);
         setProxySessions(list);
         setProxyMid((cur) => (cur != null && list.some((s) => s.matchId === cur) ? cur : list[0]?.matchId ?? null));
         // 授权被撤销/比赛开打后清单会空掉，这时自动切回本队身份
         if (list.length === 0) setProxyOn(false);
       })
-      .catch(() => {
-        if (!dead) setProxySessions([]);
+      .catch((e: unknown) => {
+        if (dead) return;
+        markLoadErr("代打授权", e instanceof Error ? e.message : "加载失败");
+        setProxySessions([]);
       });
     return () => {
       dead = true;
     };
-  }, [user]);
+  }, [user, markLoadErr]);
 
   // 代打板：目标队名单 + 伤停停赛 + 该场已交阵容，一次整包取回（口径全由服务端定）
   useEffect(() => {
@@ -855,9 +892,13 @@ export default function Tactics() {
     api<{ matches: CoachPendingMatchDTO[] }>("/api/coach/me/matches")
       .then((b) => {
         matchesAt.current = Date.now();
+        markLoadErr("待选比赛", null);
         setSubMatches(b.matches);
       })
-      .catch(() => setSubMatches([]));
+      .catch((e: unknown) => {
+        markLoadErr("待选比赛", e instanceof Error ? e.message : "加载失败");
+        setSubMatches([]);
+      });
   }
 
   function disarmSubmit() {
@@ -1199,6 +1240,17 @@ export default function Tactics() {
 
         {/* 页签右边这一叠卡：自己一列，跟竖排页签各自从顶头开始排 */}
         <div className="tac-side-body">
+
+        {/* 取数失败不再静默：置空在界面上跟「本来就没有」长得一样，所以每个来源各显示一条 */}
+        {Object.keys(loadErrs).length > 0 && (
+          <div role="status">
+            {Object.entries(loadErrs).map(([k, v]) => (
+              <p className="error-msg" key={k}>
+                {k}加载失败：{v}
+              </p>
+            ))}
+          </div>
+        )}
 
         {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛跟着它走。
             手里有代打授权时上面多一个身份切换器，切过去后整页（名单/口径/提交）都换成目标队。 */}

@@ -13,14 +13,20 @@ export function AnnouncementAdmin() {
   const [body, setBody] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const { busy, error, setError, run } = useSubmit();
 
   async function reload() {
     const d = await api<{ announcements: AdminAnnouncement[] }>("/api/admin/announcements");
     setList(d.announcements);
+    setLoadErr(null);
   }
   useEffect(() => {
-    reload().catch(() => setList([]));
+    // 拉失败时列表是空的，而空列表在本卡里没有占位文案——管理员会以为一条公告都没有
+    reload().catch((e: unknown) => {
+      setLoadErr(e instanceof Error ? e.message : "加载失败");
+      setList([]);
+    });
   }, []);
 
   function submit(e: FormEventLike) {
@@ -94,6 +100,8 @@ export function AnnouncementAdmin() {
           )}
         </div>
       </form>
+
+      {loadErr && <p className="error-msg">公告列表加载失败：{loadErr}</p>}
 
       {list !== null && list.length > 0 && (
         <div className="ann-list">

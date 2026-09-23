@@ -25,7 +25,7 @@ export default function StandingsTab({ tournamentId }: { tournamentId: number })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : "加载积分榜失败"));
   }, [tournamentId]);
 
-  if (err) return <p className="muted card">{err}</p>;
+  if (err) return <p className="error-msg card">{err}</p>;
   if (standings === null) return <p className="muted card">加载中…</p>;
   if (standings.length === 0)
     return <p className="muted card">还没有积分榜。循环赛或小组赛阶段产生比分后，这里会自动出现排名。</p>;

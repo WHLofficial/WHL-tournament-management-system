@@ -90,7 +90,7 @@ export default function ReportPage() {
   if (err) {
     return (
       <main className="container">
-        <p className="muted card">{err}</p>
+        <p className="error-msg card">{err}</p>
         <p>
           <Link to="/">← 回到首页</Link>
         </p>

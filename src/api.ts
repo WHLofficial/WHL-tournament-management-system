@@ -9,6 +9,18 @@ export class ApiError extends Error {
   }
 }
 
+// 服务端约定每个错误响应都带中文 message（worker/index.ts 的 onError 兜底 500 也带）。
+// 但边缘自己产生的错误没有 JSON 体（Cloudflare 超时/错误页是 HTML），res.json() 拿不到东西，
+// 此时只能按状态码给一句能指导动作的话——否则用户只看到「请求失败（504）」，
+// 既不知道是什么问题、也不知道该不该重试。状态码留在文案里，便于用户报错时定位。
+function fallbackMessage(status: number): string {
+  if (status >= 500) return `服务暂时不可用（${status}），请稍后重试`;
+  if (status === 404) return "内容不存在或已被删除";
+  if (status === 401) return "登录已过期，请重新登录";
+  if (status === 403) return "没有权限执行此操作";
+  return `请求失败（${status}）`;
+}
+
 export async function api<T>(
   path: string,
   opts?: { method?: string; body?: unknown; contentType?: string; timeoutMs?: number },
@@ -43,12 +55,18 @@ export async function api<T>(
         window.location.href = "/password";
         throw new ApiError("密码刚被重置，请先设置新密码", res.status, err.code);
       }
-      throw new ApiError(err.message ?? `请求失败（${res.status}）`, res.status, err.code ?? "error");
+      throw new ApiError(err.message ?? fallbackMessage(res.status), res.status, err.code ?? "error");
     }
     return data as T;
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") {
       throw new ApiError("网络超时，请重试", 0, "timeout");
+    }
+    // fetch 抛 TypeError = 请求没发出去或响应没拿到（断网、DNS、TLS、被中断）。WebKit 的文案是
+    // "Load failed"、Chromium 是 "Failed to fetch"，原样抛出去就会把英文糊到界面上，
+    // 所以统一换中文，并用 status 0 让调用方认出这是网络问题而非服务端拒绝
+    if (e instanceof TypeError) {
+      throw new ApiError("网络异常，请检查网络后重试", 0, "network");
     }
     throw e;
   } finally {

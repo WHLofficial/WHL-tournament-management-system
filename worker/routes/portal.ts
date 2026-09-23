@@ -62,7 +62,7 @@ app.get("/weekly", pubCache(300), async (c) => {
 app.get("/matches/:mid/report", pubCache(60), async (c) => {
   const mid = Number(c.req.param("mid"));
   const report = await buildMatchReport(c.env.DB, mid);
-  if (!report) return c.json({ error: "not_found" }, 404);
+  if (!report) return c.json({ error: "not_found", message: "该比赛暂无战报（仅完赛场自动成文）" }, 404);
   return c.json({ report });
 });
 
@@ -71,9 +71,9 @@ app.get("/tournaments/:tid/round/:sid/:round", pubCache(300), async (c) => {
   const tid = Number(c.req.param("tid"));
   const sid = Number(c.req.param("sid"));
   const round = Number(c.req.param("round"));
-  if (![tid, sid, round].every(Number.isInteger)) return c.json({ error: "bad_request" }, 400);
+  if (![tid, sid, round].every(Number.isInteger)) return c.json({ error: "bad_request", message: "轮次参数不合法" }, 400);
   const recap = await buildRoundRecap(c.env.DB, tid, sid, round);
-  if (!recap) return c.json({ error: "not_found" }, 404);
+  if (!recap) return c.json({ error: "not_found", message: "该轮暂无综述" }, 404);
   return c.json({ recap });
 });
 

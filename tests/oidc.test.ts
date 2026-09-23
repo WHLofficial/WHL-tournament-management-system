@@ -10,6 +10,7 @@ import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
 import app from "../worker/index";
 import { hashPassword } from "../worker/lib/crypto";
 import { applyMigrations, createTestD1, createTestKV, sqlGet } from "./d1";
+import { runAccountMirror, MIRROR_PASSWORD } from "../worker/lib/accountMirror";
 import { BACKCHANNEL_LOGOUT_EVENT, b64urlDecode } from "../worker/lib/oidc";
 
 const ISSUER = "https://auth.example";
@@ -238,7 +239,10 @@ function cookieOf(res: Response, name: string): string | undefined {
 }
 
 /** 完整登录：发起 → 伪 auth 发码 → 回调。返回回调响应与会话 cookie。 */
-async function oidcLogin(env: Record<string, unknown>, opts?: { sub?: string; sid?: string }) {
+async function oidcLogin(
+  env: Record<string, unknown>,
+  opts?: { sub?: string; sid?: string; userinfo?: Record<string, unknown> },
+) {
   const login = await app.request("/api/auth/login", { method: "GET" }, env);
   expect(login.status).toBe(302);
   const authUrl = new URL(login.headers.get("Location")!);
@@ -250,6 +254,7 @@ async function oidcLogin(env: Record<string, unknown>, opts?: { sub?: string; si
     nonce: authUrl.searchParams.get("nonce")!,
     sub: opts?.sub ?? "2",
     sid: opts?.sid ?? "sid-1",
+    userinfo: opts?.userinfo,
     tokenCalls: [],
   };
   const cb = await app.request(
@@ -394,6 +399,93 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(((await legacy.json()) as { user: unknown }).user).toBeNull();
   });
 
+  // 增量 36：收口后本库 user 表没有写入方，但 14 列外键仍指向它（tactic.created_by、
+  // match_event.created_by、audit_log.actor_user_id …）。回调不投影账号行，新账号的第一次
+  // 写入就撞 FOREIGN KEY constraint failed → 500，而前端只看到「请求失败（500）」
+  it("新账号登录：回调把账号投影进本库 user 表，此后写档不再撞外键（增量 36）", async () => {
+    vi.stubGlobal("fetch", fakeFetch);
+    const { env, sqlite } = freshEnv(true);
+    // 账号 14 在认证中心存在、本库 user 表没有行——收口后的新账号就是这个形状
+    const { cb } = await oidcLogin(env, {
+      sub: "14",
+      sid: "sid-new",
+      userinfo: {
+        sub: "14",
+        name: "雷雷雷",
+        locked: false,
+        must_change_pw: false,
+        roles: ["tour.coach"],
+        permissions: ["tour.team.bind"],
+      },
+    });
+    expect(cb.status).toBe(302);
+
+    const row = sqlGet<{ name: string; password_hash: string; role: string; locked: number }>(
+      sqlite,
+      "SELECT name, password_hash, role, locked FROM user WHERE id = 14",
+    );
+    expect(row).toEqual({ name: "雷雷雷", password_hash: MIRROR_PASSWORD, role: "coach", locked: 0 });
+
+    // 投影的意义就在这条：没有补行时它抛 FOREIGN KEY constraint failed（线上 2026-09-23 的形状）
+    sqlite
+      .prepare(
+        "INSERT INTO tactic (team_id, created_by, code, form, buildup, line_height) VALUES (NULL, ?, ?, ?, ?, ?)",
+      )
+      .run(14, "12345678901", "433", "balanced", 50);
+    expect(sqlGet<{ n: number }>(sqlite, "SELECT COUNT(*) AS n FROM tactic WHERE created_by = 14")?.n).toBe(1);
+
+    // 已存在的老账号：只同步 name/locked；role 与 password_hash 绝不能被覆盖
+    // （role 跟着 auth 走就是第二个角色真源，password_hash 跟着走就是本地能自证身份）
+    const { cb: cb2 } = await oidcLogin(env, {
+      sub: "1",
+      sid: "sid-admin",
+      userinfo: {
+        sub: "1",
+        name: "改名后的管理",
+        locked: true,
+        must_change_pw: false,
+        roles: ["tour.recorder"],
+        permissions: ["tour.match.manage"],
+      },
+    });
+    expect(cb2.status).toBe(302);
+    expect(
+      sqlGet<{ name: string; role: string; locked: number; password_hash: string }>(
+        sqlite,
+        "SELECT name, role, locked, password_hash FROM user WHERE id = 1",
+      ),
+    ).toEqual({ name: "改名后的管理", role: "admin", locked: 1, password_hash: userHash });
+  });
+
+  it("定时对账：补上没登录过的账号、同步改名与注册时间，不删行（增量 36）", async () => {
+    const { env, sqlite } = freshEnv(true);
+    const authSqlite = new DatabaseSync(":memory:");
+    authSqlite.exec(
+      "CREATE TABLE account (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+    );
+    authSqlite.exec(
+      `INSERT INTO account (id, name, locked, created_at) VALUES
+       (1, '改名后的管理', 1, '2026-09-01T00:00:00.000Z'),
+       (2, 'oidc教练', 0, '2026-09-02T00:00:00.000Z'),
+       (20, '新来的', 0, '2026-09-20T00:00:00.000Z')`,
+    );
+    await runAccountMirror({ ...env, AUTH_DB: createTestD1(authSqlite) } as never);
+
+    // 建了账号却没登录过的 20 补上了；改名与注册时间按 auth 的真值纠正
+    expect(sqlGet<{ name: string; created_at: string }>(sqlite, "SELECT name, created_at FROM user WHERE id = 20")).toEqual({
+      name: "新来的",
+      created_at: "2026-09-20T00:00:00.000Z",
+    });
+    expect(sqlGet<{ name: string; locked: number }>(sqlite, "SELECT name, locked FROM user WHERE id = 1")).toEqual({
+      name: "改名后的管理",
+      locked: 1,
+    });
+    // 只补不删：auth 里没有的本库行（例如已下线账号）留着，它们是历史数据的外键靶子
+    expect(sqlGet<{ n: number }>(sqlite, "SELECT COUNT(*) AS n FROM user")?.n).toBe(4);
+    // 未配 AUTH_DB（本地 dev）不报错，只记日志跳过
+    await expect(runAccountMirror(env as never)).resolves.toBeUndefined();
+  });
+
   it("验收探针：OIDC 会话下教练端点与管理台端点正常认人、权限点照常拦人", async () => {
     vi.stubGlobal("fetch", fakeFetch);
     const { env, sqlite } = freshEnv(true);
@@ -435,6 +527,39 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     );
     expect(blocked.status).toBe(403);
     expect(((await blocked.json()) as { message: string }).message).toContain("认证中心");
+  });
+
+  // 线上教训（2026-09-23 用户反馈「500 报错」却查不出原因）：Hono 默认的未捕获异常处理是
+  // console.error + text/plain 的 "Internal Server Error"，前端 res.json() 拿不到东西，
+  // 于是只剩「请求失败（500）」——既没有给用户任何解释，也没有给排查留下路径。
+  it("未捕获异常：500 回 JSON 带中文 message，并在日志里留下方法与路径（增量 36）", async () => {
+    vi.stubGlobal("fetch", fakeFetch);
+    const { env, sqlite } = freshEnv(true);
+    const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
+    // 制造真实的 DB 故障（不是 mock 抛错）：表没了，路由里的 UPDATE 就会炸
+    sqlite.exec("DROP TABLE announcement");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await app.request(
+      "/api/admin/announcements",
+      {
+        method: "POST",
+        headers: {
+          Cookie: `__Host-tour_session=${admin.session}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: "标题", body: "正文" }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    expect(await res.json()).toEqual({ error: "internal", message: "服务异常，请稍后重试" });
+    const line = logged.mock.calls.map((c) => String(c[0])).find((s) => s.includes("announcements"));
+    expect(line).toContain("POST");
+    expect(line).toContain("no such table");
+    logged.mockRestore();
   });
 
   it("账号管理台：端点经机器通道转发认证中心，snake_case 映射成前端要的 camelCase（增量 8）", async () => {

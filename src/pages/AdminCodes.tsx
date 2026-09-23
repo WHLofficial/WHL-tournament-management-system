@@ -34,6 +34,7 @@ export function AdminCodes() {
   const [newCode, setNewCode] = useState<string | null>(null);
   const [allowOpen, setAllowOpen] = useState<boolean | null>(null);
   const [toggleErr, setToggleErr] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const gen = useSubmit();
 
   async function load() {
@@ -43,10 +44,15 @@ export function AdminCodes() {
     ]);
     setRows(d.codes);
     setAllowOpen(s.allowOpenReg);
+    setLoadErr(null);
   }
 
   useEffect(() => {
-    load().catch(() => setRows([]));
+    // 拉失败时开关会停在「关」，而它看起来和「线上就是关」一模一样
+    load().catch((e: unknown) => {
+      setLoadErr(e instanceof Error ? e.message : "加载失败");
+      setRows([]);
+    });
   }, []);
 
   async function toggleOpen(checked: boolean) {
@@ -88,6 +94,12 @@ export function AdminCodes() {
         注册码选填：有码注册可直接绑队；开关打开后没码也能注册，会建「观众」账号（锁定绑队，需在账号管理解锁）。
         明码只在生成时显示一次，库里的哈希查不回来——发给要注册的人就行。
       </p>
+
+      {loadErr && (
+        <p className="error-msg">
+          注册码与开关状态加载失败：{loadErr}。下面开关显示为「关」不代表线上状态，请刷新页面重试。
+        </p>
+      )}
 
       <div className="card">
         <h3>无码注册</h3>
@@ -147,7 +159,7 @@ export function AdminCodes() {
         {rows === null ? (
           <p className="muted">加载中…</p>
         ) : rows.length === 0 ? (
-          <p className="muted">还没有生成过注册码。</p>
+          loadErr ? null : <p className="muted">还没有生成过注册码。</p>
         ) : (
           <table className="table">
             <thead>

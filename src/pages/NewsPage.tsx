@@ -13,6 +13,7 @@ export default function NewsPage() {
   const [loading, setLoading] = useState(false);
   const [reactions, setReactions] = useState<Record<string, ReactionCounts>>({});
   const [mine, setMine] = useState<Record<string, Set<string>>>({});
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const react = useCallback(async (itemId: string, emoji: "fire" | "thumb" | "mind" | "cry") => {
     const key = `whl.react.${itemId}`;
@@ -38,6 +39,7 @@ export default function NewsPage() {
   const loadMore = useCallback(
     async (fresh: boolean) => {
       setLoading(true);
+      setLoadErr(null);
       try {
         const base = fresh ? [] : items;
         const last = base[base.length - 1];
@@ -52,8 +54,9 @@ export default function NewsPage() {
           );
           setReactions((prev) => ({ ...prev, ...r.reactions }));
         }
-      } catch {
-        setDone(true);
+      } catch (e) {
+        // 失败不置 done：置了会显示「没有更多了」并收起按钮，用户以为快讯已到底、也没法重试
+        setLoadErr(e instanceof Error ? e.message : "加载失败");
       } finally {
         setLoading(false);
       }
@@ -110,7 +113,8 @@ export default function NewsPage() {
           ))}
         </div>
 
-        {items.length === 0 && !loading && <p className="muted">还没有快讯。</p>}
+        {items.length === 0 && !loading && !loadErr && <p className="muted">还没有快讯。</p>}
+        {loadErr && <p className="error-msg">加载失败：{loadErr}</p>}
         {!done && (
           <div className="pager">
             <button type="button" disabled={loading} onClick={() => void loadMore(false)}>

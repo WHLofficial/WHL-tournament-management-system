@@ -122,6 +122,7 @@ export function Toplists({
   const [data, setData] = useState<ToplistsData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [watch, setWatch] = useState<InjuryWatchGroupDTO[] | null>(null);
+  const [watchErr, setWatchErr] = useState<string | null>(null);
   const [seg, setSeg] = useState<Seg>("player");
   const [sel, setSel] = useState("scorers");
 
@@ -139,16 +140,19 @@ export function Toplists({
     };
   }, [tid, base]);
 
-  // 伤停动态是板块、不是榜单：单独拉一次，失败静默（不挡榜单本身）
+  // 伤停动态是板块、不是榜单：单独拉一次，失败不挡榜单本身，但也不能静默成「本轮没有伤停」
   useEffect(() => {
     let on = true;
     setWatch(null);
+    setWatchErr(null);
     api<{ groups: InjuryWatchGroupDTO[] }>(`${base}/tournaments/${tid}/injuries`)
       .then((d) => {
         if (on) setWatch(d.groups);
       })
-      .catch(() => {
-        if (on) setWatch([]);
+      .catch((e: unknown) => {
+        if (!on) return;
+        setWatch([]);
+        setWatchErr(e instanceof Error ? e.message : "加载失败");
       });
     return () => {
       on = false;
@@ -305,7 +309,11 @@ export function Toplists({
       data.cleanSheets.length +
       data.cardsTeams.length ===
     0;
-  const watchSection = <InjuryWatchSection groups={watch ?? []} />;
+  const watchSection = watchErr ? (
+    <p className="error-msg">伤停动态加载失败：{watchErr}</p>
+  ) : (
+    <InjuryWatchSection groups={watch ?? []} />
+  );
   // 还没打完任何比赛，但可能已经有人登记伤停了——那种情况下板块仍要显示
   if (allEmpty) {
     return (
