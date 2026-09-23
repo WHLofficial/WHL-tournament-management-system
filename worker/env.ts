@@ -19,6 +19,10 @@ export type Bindings = {
   /** 增量 33：俱乐部平台基址（如 https://club.whleague.win）。名册同步从它的 /api/squads 拉一线队快照；
    *  不配 = 同步整体跳过（本地 dev 默认不配，免得开发和测试时去够生产） */
   CLUB_API_BASE?: string;
+  /** 增量 37：球队建档双向同步的 HMAC 密钥（与俱乐部平台 TEAM_SYNC_SECRET 同值）。
+   *  出站（推建队给 club）不配 = 只记同步失败、不阻断本地建队；入站（收 club 的建队推送）
+   *  不配 = 端点 503 拒绝，写端点必须 fail-closed */
+  TEAM_SYNC_SECRET?: string;
 };
 
 export type SessionUser = {

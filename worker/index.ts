@@ -11,12 +11,14 @@ import portalRoutes from "./routes/portal";
 import interactRoutes from "./routes/interact";
 import coachRoutes from "./routes/coach";
 import mediaRoutes from "./routes/media";
+import internalRoutes from "./routes/internal";
 
 const app = new Hono<AppEnv>();
 
 // 公开读路由（公开接口 + 媒体 + 快讯表态读/写，均与登录态无关）不读登录态：
 // 跳过会话检查，登录用户每请求省一次 KV+D1 往返
-const PUBLIC_PATHS = ["/api/public/", "/api/media/", "/api/interact/reactions"];
+// /api/internal/ 是增量 37 的机器通道（HMAC 验签，调用方没有会话 cookie），同样跳过
+const PUBLIC_PATHS = ["/api/public/", "/api/media/", "/api/interact/reactions", "/api/internal/"];
 app.use("/api/*", (c, next) =>
   PUBLIC_PATHS.some((p) => c.req.path.startsWith(p)) ? next() : attachUser(c, next)
 );
@@ -33,6 +35,7 @@ app.route("/api/public", portalRoutes); // #13 头版门户：公告/快讯/周�
 app.route("/api/interact", interactRoutes); // #13 互动层：MOTM（需登录）+ 快讯表态（匿名）
 app.route("/api/coach", coachRoutes);
 app.route("/api/media", mediaRoutes);
+app.route("/api/internal", internalRoutes); // 增量 37：机器间通道（俱乐部平台推建队过来）
 
 // run_worker_first 只把 /api/* 送进 Worker，其余路径由静态资产处理
 // （未命中按 SPA 规则回退 index.html），这里只兜底 API 的未知路径。

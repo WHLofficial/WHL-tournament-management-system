@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import type { PlayerDTO, TeamDTO } from "../../../shared/types";
 import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
+import { pushError, pushTeamToClub } from "../../lib/clubSync";
+import { BULK_MAX, NAME_MAX, parseBulkLine } from "../../lib/teamBulk";
 
 const app = new Hono<AppEnv>();
 
@@ -23,53 +25,100 @@ app.get("/", async (c) => {
   return c.json({ teams });
 });
 
-// 新建球队
+// 新建球队（增量 37：显式指定游戏球队 ID，建完推给俱乐部平台建档）
 app.post("/", async (c) => {
-  const body = await c.req.json<{ name?: string }>().catch(() => null);
-  const name = body?.name?.trim();
-  if (!name || name.length > 32) {
-    return c.json({ message: "队名不能为空，且不超过 32 字" }, 400);
+  const body = await c.req.json<{ gameTeamId?: unknown; name?: unknown }>().catch(() => null);
+  const gameTeamId = Number(body?.gameTeamId);
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!Number.isInteger(gameTeamId) || gameTeamId <= 0) {
+    return c.json({ message: "游戏球队 ID 应为正整数（与游戏内球队编号一致）" }, 400);
   }
+  if (!name || name.length > NAME_MAX) {
+    return c.json({ message: `队名不能为空，且不超过 ${NAME_MAX} 字` }, 400);
+  }
+  const taken = await c.env.DB.prepare("SELECT id FROM team WHERE id = ?").bind(gameTeamId).first();
+  if (taken) return c.json({ message: `球队 ID #${gameTeamId} 已被占用` }, 409);
   try {
-    const r = await c.env.DB.prepare(
-      "INSERT INTO team (org_id, name, created_by) VALUES (1, ?, ?)"
-    )
-      .bind(name, c.get("user")!.id)
+    // 显式写 id：本仓 team.id = 游戏球队 ID = club.clubs.id，三处同号（增量 37 的前提）
+    await c.env.DB.prepare("INSERT INTO team (id, org_id, name, created_by) VALUES (?, 1, ?, ?)")
+      .bind(gameTeamId, name, c.get("user")!.id)
       .run();
-    return c.json({ team: { id: r.meta.last_row_id, name } }, 201);
   } catch {
     return c.json({ message: "同名球队已存在" }, 409);
   }
+  // 同步失败不回滚本地建队：列表里有「同步」按钮可重试，club 侧对账页也会兜底
+  const sync = await pushTeamToClub(c.env, { id: gameTeamId, name, operator: c.get("user")!.id });
+  return c.json({ team: { id: gameTeamId, name }, clubSyncError: pushError(sync) }, 201);
 });
 
-// 批量粘贴建队（多行队名）
+// 批量粘贴建队（每行「游戏球队 ID 队名」）
 app.post("/bulk", async (c) => {
-  const body = await c.req.json<{ names?: string[] }>().catch(() => null);
-  const names = [
-    ...new Set((body?.names ?? []).map((n) => n.trim()).filter(Boolean)),
-  ];
-  if (names.length === 0) return c.json({ message: "没有可用的队名" }, 400);
-  if (names.length > 64) return c.json({ message: "一次最多添加 64 支球队" }, 400);
+  const body = await c.req.json<{ lines?: unknown }>().catch(() => null);
+  const lines = (Array.isArray(body?.lines) ? body.lines.map((l) => String(l).trim()) : []).filter(Boolean);
+  if (lines.length === 0) return c.json({ message: "没有可用的行" }, 400);
+  if (lines.length > BULK_MAX) return c.json({ message: `一次最多添加 ${BULK_MAX} 支球队` }, 400);
 
-  const placeholders = names.map(() => "?").join(",");
-  const existing = await c.env.DB.prepare(
-    `SELECT name FROM team WHERE org_id = 1 AND name IN (${placeholders})`
-  )
-    .bind(...names)
-    .all<{ name: string }>();
-  const skipped = existing.results.map((r) => r.name);
-  const toCreate = names.filter((n) => !skipped.includes(n));
+  const skipped: { line: number; reason: string }[] = [];
+  const candidates: { id: number; name: string; line: number }[] = [];
+  const seenId = new Set<number>();
+  const seenName = new Set<string>();
+  lines.forEach((line, i) => {
+    const n = i + 1;
+    const p = parseBulkLine(line);
+    if ("error" in p) return void skipped.push({ line: n, reason: p.error });
+    if (seenId.has(p.id)) return void skipped.push({ line: n, reason: `本批内 ID #${p.id} 重复` });
+    if (seenName.has(p.name)) return void skipped.push({ line: n, reason: `本批内队名「${p.name}」重复` });
+    seenId.add(p.id);
+    seenName.add(p.name);
+    candidates.push({ ...p, line: n });
+  });
+
+  // 先查库里的 id 与队名占用，把注定违反主键/唯一约束的行挑出来——否则整批 batch 会一起失败
+  const ids = candidates.map((p) => p.id);
+  const names = candidates.map((p) => p.name);
+  const takenIdRows = ids.length
+    ? (await c.env.DB.prepare(`SELECT id FROM team WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<{ id: number }>()).results
+    : [];
+  const takenNameRows = names.length
+    ? (await c.env.DB.prepare(`SELECT name FROM team WHERE org_id = 1 AND name IN (${names.map(() => "?").join(",")})`).bind(...names).all<{ name: string }>()).results
+    : [];
+  const takenIds = new Set(takenIdRows.map((r) => r.id));
+  const takenNames = new Set(takenNameRows.map((r) => r.name));
+
+  const toCreate = candidates.filter((p) => {
+    if (takenIds.has(p.id)) return void skipped.push({ line: p.line, reason: `球队 ID #${p.id} 已被占用` }), false;
+    if (takenNames.has(p.name)) return void skipped.push({ line: p.line, reason: `队名「${p.name}」已存在` }), false;
+    return true;
+  });
+
   const createdBy = c.get("user")!.id;
   if (toCreate.length > 0) {
     await c.env.DB.batch(
-      toCreate.map((n) =>
-        c.env.DB.prepare(
-          "INSERT INTO team (org_id, name, created_by) VALUES (1, ?, ?)"
-        ).bind(n, createdBy)
-      )
+      toCreate.map((p) =>
+        c.env.DB.prepare("INSERT INTO team (id, org_id, name, created_by) VALUES (?, 1, ?, ?)").bind(
+          p.id,
+          p.name,
+          createdBy,
+        ),
+      ),
     );
   }
-  return c.json({ created: toCreate.length, skipped }, 201);
+  // 并行推送（串行 64 支会把这次请求拖到几十秒）；单支失败只回报，不回滚已建的队
+  const pushed = await Promise.all(
+    toCreate.map(async (p) => ({
+      id: p.id,
+      error: pushError(await pushTeamToClub(c.env, { id: p.id, name: p.name, operator: createdBy })),
+    })),
+  );
+  skipped.sort((a, b) => a.line - b.line);
+  return c.json(
+    {
+      created: toCreate.length,
+      skipped,
+      clubSyncFailed: pushed.filter((x) => x.error !== null).map((x) => ({ id: x.id, message: x.error })),
+    },
+    201,
+  );
 });
 
 // 球队详情 + 名单
@@ -95,13 +144,13 @@ app.get("/:id", async (c) => {
   return c.json({ team, players });
 });
 
-// 改队名
+// 改队名（增量 37 边界：改名不联动俱乐部平台，只在对账页显示两边不一致）
 app.patch("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const body = await c.req.json<{ name?: string }>().catch(() => null);
   const name = body?.name?.trim();
-  if (!name || name.length > 32) {
-    return c.json({ message: "队名不能为空，且不超过 32 字" }, 400);
+  if (!name || name.length > NAME_MAX) {
+    return c.json({ message: `队名不能为空，且不超过 ${NAME_MAX} 字` }, 400);
   }
   try {
     await c.env.DB.prepare("UPDATE team SET name = ? WHERE id = ?")
@@ -110,6 +159,18 @@ app.patch("/:id", async (c) => {
   } catch {
     return c.json({ message: "同名球队已存在" }, 409);
   }
+  return c.json({ ok: true });
+});
+
+// 手动重推建档（增量 37）：建队时同步失败的补救入口，幂等
+app.post("/:id/sync-club", async (c) => {
+  const id = Number(c.req.param("id"));
+  const team = await c.env.DB.prepare("SELECT id, name FROM team WHERE id = ? AND org_id = 1")
+    .bind(id)
+    .first<{ id: number; name: string }>();
+  if (!team) return c.json({ message: "球队不存在" }, 404);
+  const sync = await pushTeamToClub(c.env, { id: team.id, name: team.name, operator: c.get("user")!.id });
+  if (!sync.ok) return c.json({ message: sync.message }, 502);
   return c.json({ ok: true });
 });
 

@@ -6,6 +6,8 @@ import {
   type TournamentDTO,
 } from "../../../shared/types";
 import { defaultCrossTemplate } from "../../lib/seeding";
+import { pushError, pushTeamToClub } from "../../lib/clubSync";
+import { BULK_MAX, parseBulkLine } from "../../lib/teamBulk";
 import {
   getTiebreakers,
   normalizeTiebreakers,
@@ -587,54 +589,72 @@ app.post("/:id/entries", async (c) => {
   return c.json({ ok: true }, 201);
 });
 
-// 批量报名：粘贴队名，球队库没有的自动建队
+// 批量报名（增量 37）：每行「游戏球队 ID 队名」。
+// 队号是真身（= 本仓 team.id = 俱乐部平台 clubs.id），球队库里没有这个 ID 就按它建队
+// 并推给俱乐部平台建档；库里已有该 ID 时以库里的队名为准（行里的名字只用于新建）。
 app.post("/:id/entries/bulk", async (c) => {
   const id = Number(c.req.param("id"));
   const guard = await guardRegistration(c.env, id);
   if (guard) return c.json({ message: guard.error }, guard.status);
 
-  const body = await c.req.json<{ names?: string[] }>().catch(() => null);
-  const names = [
-    ...new Set((body?.names ?? []).map((n) => n.trim()).filter(Boolean)),
-  ];
-  if (names.length === 0) return c.json({ message: "没有可用的队名" }, 400);
-  if (names.length > 64) return c.json({ message: "一次最多报名 64 支球队" }, 400);
+  const body = await c.req.json<{ lines?: unknown }>().catch(() => null);
+  const lines = (Array.isArray(body?.lines) ? body.lines.map((l) => String(l).trim()) : []).filter(Boolean);
+  if (lines.length === 0) return c.json({ message: "没有可用的行" }, 400);
+  if (lines.length > BULK_MAX) return c.json({ message: `一次最多报名 ${BULK_MAX} 支球队` }, 400);
+
+  const skipped: { line: number; reason: string }[] = [];
+  const parsed: { id: number; name: string; line: number }[] = [];
+  const seenId = new Set<number>();
+  const seenName = new Set<string>();
+  lines.forEach((line, i) => {
+    const n = i + 1;
+    const p = parseBulkLine(line);
+    if ("error" in p) return void skipped.push({ line: n, reason: p.error });
+    if (seenId.has(p.id)) return void skipped.push({ line: n, reason: `本批内 ID #${p.id} 重复` });
+    if (seenName.has(p.name)) return void skipped.push({ line: n, reason: `本批内队名「${p.name}」重复` });
+    seenId.add(p.id);
+    seenName.add(p.name);
+    parsed.push({ ...p, line: n });
+  });
+
+  const ids = parsed.map((p) => p.id);
+  const known = ids.length
+    ? (await c.env.DB.prepare(`SELECT id, name FROM team WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<{ id: number; name: string }>()).results
+    : [];
+  const knownById = new Map(known.map((r) => [r.id, r.name]));
+
+  // 行里的名字与库里不一致：登记照做，但回报出来（改名不联动，别让人以为改掉了）
+  const nameMismatch = parsed
+    .filter((p) => knownById.has(p.id) && knownById.get(p.id) !== p.name)
+    .map((p) => ({ id: p.id, name: knownById.get(p.id)!, input: p.name }));
+
+  // 待建的队：先排掉队名已被别的球队占用的行，否则整批 batch 会因唯一约束一起失败
+  const candidates = parsed.filter((p) => !knownById.has(p.id));
+  const candNames = candidates.map((p) => p.name);
+  const takenNameRows = candNames.length
+    ? (await c.env.DB.prepare(`SELECT name FROM team WHERE org_id = 1 AND name IN (${candNames.map(() => "?").join(",")})`).bind(...candNames).all<{ name: string }>()).results
+    : [];
+  const takenNames = new Set(takenNameRows.map((r) => r.name));
+  const toCreate = candidates.filter((p) => {
+    if (takenNames.has(p.name)) return void skipped.push({ line: p.line, reason: `队名「${p.name}」已属于另一支球队` }), false;
+    return true;
+  });
 
   const createdBy = c.get("user")!.id;
-  const placeholders = names.map(() => "?").join(",");
-  const found = await c.env.DB.prepare(
-    `SELECT id, name FROM team WHERE org_id = 1 AND name IN (${placeholders})`
-  )
-    .bind(...names)
-    .all<{ id: number; name: string }>();
-  const byName = new Map(found.results.map((r) => [r.name, r.id]));
-
-  const seeded = await c.env.DB.prepare(
-    `SELECT tm.name FROM entry e JOIN team tm ON tm.id = e.team_id
-     WHERE e.tournament_id = ?`
-  )
-    .bind(id)
-    .all<{ name: string }>();
-  const entered = new Set(seeded.results.map((r) => r.name));
-
-  const createTeamStmts: D1PreparedStatement[] = [];
-  const newTeams: { name: string; index: number }[] = [];
-  names.forEach((name, index) => {
-    if (!byName.has(name)) {
-      newTeams.push({ name, index });
-      createTeamStmts.push(
-        c.env.DB.prepare(
-          "INSERT INTO team (org_id, name, created_by) VALUES (1, ?, ?)"
-        ).bind(name, createdBy)
-      );
-    }
-  });
-  if (createTeamStmts.length > 0) {
-    const results = await c.env.DB.batch(createTeamStmts);
-    results.forEach((r, i) =>
-      byName.set(newTeams[i].name, Number(r.meta.last_row_id))
+  if (toCreate.length > 0) {
+    await c.env.DB.batch(
+      toCreate.map((p) =>
+        c.env.DB.prepare("INSERT INTO team (id, org_id, name, created_by) VALUES (?, 1, ?, ?)").bind(p.id, p.name, createdBy),
+      ),
     );
   }
+
+  const seeded = await c.env.DB.prepare(
+    "SELECT team_id FROM entry WHERE tournament_id = ?"
+  )
+    .bind(id)
+    .all<{ team_id: number }>();
+  const entered = new Set(seeded.results.map((r) => r.team_id));
 
   const seedRow = await c.env.DB.prepare(
     "SELECT COALESCE(MAX(seed), 0) AS max FROM entry WHERE tournament_id = ?"
@@ -644,26 +664,37 @@ app.post("/:id/entries/bulk", async (c) => {
   let seed = seedRow!.max;
 
   const entryStmts: D1PreparedStatement[] = [];
-  const created: string[] = [];
-  for (const name of names) {
-    if (entered.has(name)) continue;
+  const created: number[] = [];
+  for (const p of parsed) {
+    if (entered.has(p.id)) continue;
+    if (!knownById.has(p.id) && !toCreate.some((t) => t.id === p.id)) continue; // 队没建成，报名也跳过
     seed += 1;
     entryStmts.push(
-      c.env.DB.prepare(
-        "INSERT INTO entry (tournament_id, team_id, seed) VALUES (?, ?, ?)"
-      ).bind(id, byName.get(name)!, seed)
+      c.env.DB.prepare("INSERT INTO entry (tournament_id, team_id, seed) VALUES (?, ?, ?)").bind(id, p.id, seed),
     );
-    created.push(name);
+    created.push(p.id);
   }
   if (entryStmts.length > 0) await c.env.DB.batch(entryStmts);
 
+  // 新建的队推给俱乐部平台建档（并行；失败只回报，不回滚已建的队与报名）
+  const pushed = await Promise.all(
+    toCreate.map(async (p) => ({
+      id: p.id,
+      error: pushError(await pushTeamToClub(c.env, { id: p.id, name: p.name, operator: createdBy })),
+    })),
+  );
+
+  skipped.sort((a, b) => a.line - b.line);
   return c.json(
     {
       createdEntries: created.length,
-      createdTeams: createTeamStmts.length,
-      skippedAlready: names.filter((n) => entered.has(n)),
+      createdTeams: toCreate.length,
+      skippedAlready: parsed.filter((p) => entered.has(p.id)).map((p) => p.id),
+      skipped,
+      nameMismatch,
+      clubSyncFailed: pushed.filter((x) => x.error !== null).map((x) => ({ id: x.id, message: x.error })),
     },
-    201
+    201,
   );
 });
 
