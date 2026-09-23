@@ -117,6 +117,12 @@ user         账号
   -- （account/credential/user_role），管理台的角色改动、解锁、重置密码、注册码、
   -- 开放注册开关全部改调 auth 管理端点（worker/lib/authAdmin.ts，X-Sign HMAC，
   -- 12 条 /api/admin/*）；本表的 role/locked/password_hash 不再被应用写入
+  -- 增量 36 起：上面「不再被写入」不再成立——本表改由账号投影补齐行。
+  -- 登录回调把 auth account 的 id/name/locked/created_at 带进来（worker/lib/accountMirror.ts，
+  -- 与建会话同批提交），cron 每小时对账再补没登录过的账号、同步改名。要投影的理由是外键：
+  -- 本库 14 列指向 user(id)（tactic.created_by、match_event.created_by、audit_log.actor_user_id…），
+  -- 缺行时新账号一写就 FOREIGN KEY constraint failed → 500（2026-09-23 事故）
+  -- 鉴权真源仍是会话里的 JWT claims；password_hash 写哨兵值，永远验不过
 
 team         球队（跨赛事复用的实体）
   id, org_id →organization, name, created_by →user
@@ -265,6 +271,7 @@ COMMIT;
 - 注册验证：凭 `signup_code`（超管生成，批量、一次/多次有效、可限时，发群里一次即可）；密码最低 8 位且含字母与数字；注册接口加 IP 限流。不接邮件服务（无域名依赖，找回密码走超管手动重置）。
 - 认证码：8 位码明码只在生成响应里出现一次，库存 `code_hash`；绑定接口限流（5 次失败锁 10 分钟，KV 计数器实现）。
 - 权限中间件：`requireSuperadmin` / `requireAdmin`（录入员）/ `requireCoach(team_id)` 三层。
+- 错误响应：未捕获异常由 `worker/index.ts` 的 `app.onError` 统一兜成 500 + `{"error":"internal","message":"服务异常，请稍后重试"}`（增量 36）。不兜的话 Hono 会回 text/plain 的 "Internal Server Error"，前端 `res.json()` 解析失败、界面只剩「请求失败（500）」，线上排查要反查库；前端 `src/api.ts` 同时把非 JSON 错误与 `TypeError`（网络断了）也归一成中文文案。
 
 | 操作 | 管理员（录入员） | 超管 |
 |---|---|---|
