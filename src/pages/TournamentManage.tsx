@@ -166,7 +166,7 @@ function EntriesTab({ detail, reload }: { detail: TournamentDetailDTO; reload: (
   const entered = useMemo(() => new Set(detail.entries.map((e) => e.teamId)), [detail.entries]);
   const available = teams.filter((tm) => !entered.has(tm.id));
 
-  function parseNames(text: string): string[] {
+  function parseLines(text: string): string[] {
     return text
       .split(/\r?\n/)
       .map((s) => s.trim())
@@ -176,15 +176,29 @@ function EntriesTab({ detail, reload }: { detail: TournamentDetailDTO; reload: (
   function bulkEnter(e: React.FormEvent) {
     e.preventDefault();
     void run(async () => {
-      const names = parseNames(paste);
-      if (names.length === 0) throw new Error("请先粘贴队名，每行一个");
+      const lines = parseLines(paste);
+      if (lines.length === 0) throw new Error("请先粘贴，每行「游戏球队 ID 队名」");
       const d = await api<{
         createdEntries: number;
         createdTeams: number;
-        skippedAlready: string[];
-      }>(`/api/admin/tournaments/${t.id}/entries/bulk`, { method: "POST", body: { names } });
+        skippedAlready: number[];
+        skipped: { line: number; reason: string }[];
+        nameMismatch: { id: number; name: string; input: string }[];
+        clubSyncFailed: { id: number; message: string }[];
+      }>(`/api/admin/tournaments/${t.id}/entries/bulk`, { method: "POST", body: { lines } });
       let m = `新增报名 ${d.createdEntries} 支，新建球队 ${d.createdTeams} 支`;
-      if (d.skippedAlready.length > 0) m += `；已在赛事中跳过：${d.skippedAlready.join("、")}`;
+      if (d.skippedAlready.length > 0) m += `；已在赛事中跳过 #${d.skippedAlready.join("、#")}`;
+      if (d.skipped.length > 0) {
+        m += `；跳过 ${d.skipped.length} 行：${d.skipped.map((s) => `第 ${s.line} 行 ${s.reason}`).join("；")}`;
+      }
+      if (d.nameMismatch.length > 0) {
+        m += `；队名与球队库不一致（登记以库里为准）：${d.nameMismatch
+          .map((x) => `#${x.id} 库里是「${x.name}」`)
+          .join("、")}`;
+      }
+      if (d.clubSyncFailed.length > 0) {
+        m += `；同步俱乐部平台失败：${d.clubSyncFailed.map((x) => `#${x.id}（${x.message}）`).join("、")}`;
+      }
       setMsg(m);
       setPaste("");
       await reload();
@@ -222,14 +236,16 @@ function EntriesTab({ detail, reload }: { detail: TournamentDetailDTO; reload: (
       )}
       <div className="card">
         <h3>批量报名</h3>
-        <p className="muted">从球队库批量报名；球队库里没有的队名会自动建队。每行一个队名。</p>
+        <p className="muted">
+          每行「游戏球队 ID 队名」；球队库里没有这个 ID 的会按它自动建队，并同步到俱乐部平台建档。
+        </p>
         <form onSubmit={bulkEnter}>
           <textarea
             className="paste-box"
             rows={6}
             value={paste}
             onChange={(e) => setPaste(e.target.value)}
-            placeholder={"红狼队\n蓝鲨队\n雷霆队"}
+            placeholder={"1 Arsenal\n2 Aston Villa\n7 Everton"}
             disabled={!editable}
           />
           <SubmitButton busy={busy}>批量报名</SubmitButton>

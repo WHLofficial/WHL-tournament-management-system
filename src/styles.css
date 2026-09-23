@@ -166,6 +166,11 @@ button.btn-ghost:hover:not(:disabled) {
   font-size: 14px;
   margin: 8px 0;
 }
+.warn-msg {
+  color: #92400e;
+  font-size: 14px;
+  margin: 8px 0;
+}
 .error {
   color: #b91c1c;
   font-size: 14px;
