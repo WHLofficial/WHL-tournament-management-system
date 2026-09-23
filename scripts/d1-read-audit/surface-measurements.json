@@ -1,0 +1,2248 @@
+{
+  "measured_at": "2026-09-23T15:43:40.049Z",
+  "note": "每个读面独立冷路径：假 KV 空、边缘缓存空；逐条语句打到生产 D1 读回 meta.rows_read",
+  "boundaries": [
+    "走 wrangler d1 execute 管理通道量物理行读，不等价于 worker 运行时通道（后者才有 RPC 与限制）",
+    "假 D1 只记录不执行：桩行值可能与真实数据不同，因此分支走的是「探针形状」而非线上百分之百同一分支",
+    "抽样读面取的是当时线上真实 id；样本场次无事件类数据时（如 admin/match-events）读量为 0 属取样偏差",
+    "冷路径：量的是缓存未命中时的读数，线上命中边缘缓存/KV 的请求不产生这些行读"
+  ],
+  "account_d1_24h": {
+    "whl": {
+      "uuid": "ec3cc695-70bc-47ab-a454-5ca62ec22dd6",
+      "name": "whl",
+      "created_at": "2026-09-03T10:44:19.130Z",
+      "num_tables": 26,
+      "running_in_region": "APAC",
+      "read_replication": {
+        "mode": "disabled"
+      },
+      "jurisdiction": null,
+      "database_size": 561152,
+      "read_queries_24h": 8205,
+      "write_queries_24h": 1458,
+      "rows_read_24h": 1428496,
+      "rows_written_24h": 2335
+    },
+    "whl-club": {
+      "uuid": "73154873-d5ae-42b0-a630-25f5ef60053d",
+      "name": "whl-club",
+      "created_at": "2026-09-14T10:17:27.551Z",
+      "num_tables": 32,
+      "running_in_region": "APAC",
+      "read_replication": {
+        "mode": "disabled"
+      },
+      "jurisdiction": null,
+      "database_size": 29102080,
+      "read_queries_24h": 7227,
+      "write_queries_24h": 78,
+      "rows_read_24h": 768098,
+      "rows_written_24h": 66703
+    },
+    "whl-auth": {
+      "uuid": "b76d1129-77ae-4844-931c-1c7b00a9b048",
+      "name": "whl-auth",
+      "created_at": "2026-09-14T10:11:45.424Z",
+      "num_tables": 21,
+      "running_in_region": "APAC",
+      "read_replication": {
+        "mode": "disabled"
+      },
+      "jurisdiction": null,
+      "database_size": 339968,
+      "read_queries_24h": 908,
+      "write_queries_24h": 197,
+      "rows_read_24h": 5733,
+      "rows_written_24h": 455
+    },
+    "whl-guess": {
+      "uuid": "8f48bd5e-5d1b-4d62-ba4f-bf9b0cdb09eb",
+      "name": "whl-guess",
+      "created_at": "2026-09-09T08:06:40.603Z",
+      "num_tables": 19,
+      "running_in_region": "APAC",
+      "read_replication": {
+        "mode": "disabled"
+      },
+      "jurisdiction": null,
+      "database_size": 262144,
+      "read_queries_24h": 997,
+      "write_queries_24h": 0,
+      "rows_read_24h": 491,
+      "rows_written_24h": 0
+    }
+  },
+  "sample_ids": {
+    "t1": 1,
+    "sid": 1,
+    "tid": 1,
+    "mid": 284,
+    "round": 22,
+    "midFin": 182,
+    "team": 1,
+    "grantMid": 16
+  },
+  "surfaces": [
+    {
+      "name": "public/feed",
+      "url": "https://probe.local/api/public/feed?limit=20",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n   s.kind AS stage_kind, s.name AS stage_name, m.round,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.walkover_side, m.note, m.status, m.finished_at FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   JOIN tournament t ON t.id = s.tournament_id\n   JOIN entry he ON he.id = m.home_entry_id\n   JOIN team ht ON ht.id = he.team_id\n   JOIN entry ae ON ae.id = m.away_entry_id\n   JOIN team at ON at.id = ae.team_id\n     WHERE t.status != 'draft' AND m.status = 'finished'\n       \n     ORDER BY m.finished_at DESC, m.id DESC LIMIT ?",
+          "args": [
+            60
+          ],
+          "db": "DB",
+          "rows_read": 487
+        },
+        {
+          "sql": "SELECT me.id, me.type, me.created_at, p.name AS player_name,\n         m.id AS match_id, t.id AS tournament_id, t.name AS tournament_name,\n         s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round\n       FROM match_event me\n       JOIN match m ON m.id = me.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       LEFT JOIN player p ON p.id = me.player_id\n       WHERE me.type IN ('red', 'red_2y') AND t.status != 'draft'\n         \n       ORDER BY me.created_at DESC, me.id DESC LIMIT 20",
+          "args": [],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT a.id, a.created_at, a.target_id, a.detail_json,\n         t.id AS tournament_id, t.name AS tournament_name,\n         ht.name AS home_team_name, at.name AS away_team_name,\n         s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round\n       FROM audit_log a\n       JOIN match m ON m.id = a.target_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       JOIN entry he ON he.id = m.home_entry_id\n       JOIN team ht ON ht.id = he.team_id\n       JOIN entry ae ON ae.id = m.away_entry_id\n       JOIN team at ON at.id = ae.team_id\n       WHERE a.action = 'match_rescore' AND t.status != 'draft'\n         \n       ORDER BY a.id DESC LIMIT 20",
+          "args": [],
+          "db": "DB",
+          "rows_read": 41
+        },
+        {
+          "sql": "SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at,\n         s.tournament_id, t.name AS tournament_name,\n         s.kind AS stage_kind, s.name AS stage_name\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL\n         AND COALESCE(m.note, '') != '轮空'\n       GROUP BY m.stage_id, m.round\n       HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END)\n         AND MAX(m.finished_at) < COALESCE(?, '9999-12-31')\n       ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT 20",
+          "args": [
+            "9999-12-31"
+          ],
+          "db": "DB",
+          "rows_read": 665
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n         s.kind AS stage_kind, s.name AS stage_name, m.round,\n         m.home_entry_id, m.away_entry_id,\n         ht.name AS home_team_name, at.name AS away_team_name,\n         ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n         m.score_home, m.score_away, m.pen_home, m.pen_away,\n         m.walkover_side, m.note, m.status, m.finished_at\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       JOIN entry he ON he.id = m.home_entry_id\n       JOIN team ht ON ht.id = he.team_id\n       JOIN entry ae ON ae.id = m.away_entry_id\n       JOIN team at ON at.id = ae.team_id\n       WHERE t.status != 'draft' AND m.status = 'finished'\n         AND m.finished_at >= ? AND m.finished_at < ?\n       ORDER BY m.finished_at DESC, m.id DESC",
+          "args": [
+            "2026-09-21",
+            "2026-09-28"
+          ],
+          "db": "DB",
+          "rows_read": 57
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id,\n             p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "SELECT stage_id, MAX(round) AS mr FROM match\n       WHERE stage_id IN (?) GROUP BY stage_id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n   s.kind AS stage_kind, s.name AS stage_name, m.round,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.walkover_side, m.note, m.status, m.finished_at FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   JOIN tournament t ON t.id = s.tournament_id\n   JOIN entry he ON he.id = m.home_entry_id\n   JOIN team ht ON ht.id = he.team_id\n   JOIN entry ae ON ae.id = m.away_entry_id\n   JOIN team at ON at.id = ae.team_id\n       WHERE s.tournament_id = ? AND m.status = 'finished' AND COALESCE(m.note, '') != '轮空'\n       ORDER BY m.finished_at ASC, m.id ASC",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 289
+        },
+        {
+          "sql": "SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,\n              s.played, s.won, s.drawn, s.lost,\n              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted\n       FROM standing s\n       JOIN entry e ON e.id = s.entry_id\n       JOIN team t ON t.id = e.team_id\n       WHERE s.stage_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 37
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id,\n             p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side\n       FROM match WHERE stage_id = ? AND status = 'finished'\n         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT config_json FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT stage_id, MAX(round) AS mr FROM match\n       WHERE stage_id IN (?) GROUP BY stage_id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT stage_id, MAX(round) AS mr FROM match\n       WHERE stage_id IN (?) GROUP BY stage_id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n   s.kind AS stage_kind, s.name AS stage_name, m.round,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.walkover_side, m.note, m.status, m.finished_at FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   JOIN tournament t ON t.id = s.tournament_id\n   JOIN entry he ON he.id = m.home_entry_id\n   JOIN team ht ON ht.id = he.team_id\n   JOIN entry ae ON ae.id = m.away_entry_id\n   JOIN team at ON at.id = ae.team_id\n       WHERE m.stage_id = ? AND m.round = ? AND m.status = 'finished'\n       ORDER BY m.finished_at ASC, m.id ASC",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 101
+        },
+        {
+          "sql": "\n  SELECT me.id AS event_id, i.id AS injury_id,\n         me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name,\n         me.type, i.injury_name,\n         m.id AS match_id, m.stage_id, m.round, m.finished_at,\n         s.tournament_id, tt.name AS tournament_name,\n         (SELECT COUNT(*) FROM injury_miss im\n            JOIN match m2 ON m2.id = im.match_id\n           WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches\n  FROM match_event me\n  JOIN match m ON m.id = me.match_id\n  JOIN stage s ON s.id = m.stage_id\n  JOIN tournament tt ON tt.id = s.tournament_id\n  JOIN entry e ON e.id = me.entry_id\n  JOIN team t ON t.id = e.team_id\n  JOIN player p ON p.id = me.player_id\n  LEFT JOIN injury i ON i.event_id = me.id\n  WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND m.stage_id = ? AND m.round = ? ORDER BY m.finished_at, me.id",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 63
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id,\n             p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "\n  SELECT me.id AS event_id, i.id AS injury_id,\n         me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name,\n         me.type, i.injury_name,\n         m.id AS match_id, m.stage_id, m.round, m.finished_at,\n         s.tournament_id, tt.name AS tournament_name,\n         (SELECT COUNT(*) FROM injury_miss im\n            JOIN match m2 ON m2.id = im.match_id\n           WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches\n  FROM match_event me\n  JOIN match m ON m.id = me.match_id\n  JOIN stage s ON s.id = m.stage_id\n  JOIN tournament tt ON tt.id = s.tournament_id\n  JOIN entry e ON e.id = me.entry_id\n  JOIN team t ON t.id = e.team_id\n  JOIN player p ON p.id = me.player_id\n  LEFT JOIN injury i ON i.event_id = me.id\n  WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND m.finished_at >= ? AND m.finished_at < ? ORDER BY m.finished_at, me.id",
+          "args": [
+            "2026-09-21",
+            "2026-09-28"
+          ],
+          "db": "DB",
+          "rows_read": 89
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 2392,
+      "duration_ms": 72920
+    },
+    {
+      "name": "public/toplists",
+      "url": "https://probe.local/api/public/tournaments/1/toplists",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT me.match_id, me.player_id, me.assist_player_id, me.type,\n         p.name AS player_name, ap.name AS assist_name,\n         t.id AS team_id, t.name AS team_name\n       FROM match_event me\n       JOIN match m ON m.id = me.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN entry e ON e.id = me.entry_id\n       JOIN team t ON t.id = e.team_id\n       LEFT JOIN player p ON p.id = me.player_id\n       LEFT JOIN player ap ON ap.id = me.assist_player_id\n       WHERE s.tournament_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 748
+        },
+        {
+          "sql": "SELECT m.id, m.round, m.score_home, m.score_away,\n         he.team_id AS home_team_id, ht.name AS home_team_name,\n         ae.team_id AS away_team_id, at.name AS away_team_name,\n         s.kind AS stage_kind, s.sort_order AS stage_order\n       \n  FROM match m\n  JOIN stage s ON s.id = m.stage_id\n  JOIN entry he ON he.id = m.home_entry_id\n  JOIN team ht ON ht.id = he.team_id\n  JOIN entry ae ON ae.id = m.away_entry_id\n  JOIN team at ON at.id = ae.team_id\n  WHERE s.tournament_id = ? AND m.status = 'finished'\n    AND m.score_home IS NOT NULL AND m.score_away IS NOT NULL\n       ORDER BY m.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 289
+        },
+        {
+          "sql": "SELECT config_json FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,\n                    me.type AS event_type, me.minute AS event_minute,\n                    p.name AS player_name, t.name AS team_name,\n                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,\n                    fm.round AS from_round, fs.kind AS from_stage_kind\n             FROM injury i\n             JOIN match_event me ON me.id = i.event_id\n             JOIN player p ON p.id = i.player_id\n             JOIN team t ON t.id = i.team_id\n             JOIN match fm ON fm.id = me.match_id\n             JOIN stage fs ON fs.id = fm.stage_id\n             JOIN tournament ft ON ft.id = fs.tournament_id",
+          "args": [],
+          "db": "DB",
+          "rows_read": 196
+        },
+        {
+          "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,\n              m.round, s.kind AS stage_kind, m.status\n       FROM injury_miss im\n       JOIN match m ON m.id = im.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [],
+          "db": "DB",
+          "rows_read": 240
+        },
+        {
+          "sql": "SELECT m.id, m.home_entry_id, m.away_entry_id, m.status, m.note, m.walkover_side,\n                s.sort_order AS stage_order, m.round, m.slot, m.leg\n         FROM match m\n         JOIN stage s ON s.id = m.stage_id\n         WHERE s.tournament_id = ?\n         ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 267
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.entry_id, me.player_id, me.type, me.created_at,\n                p.name AS player_name, t.id AS team_id, t.name AS team_name\n         FROM match_event me\n         JOIN match m ON m.id = me.match_id\n         JOIN stage s ON s.id = m.stage_id\n         JOIN entry e ON e.id = me.entry_id\n         JOIN team t ON t.id = e.team_id\n         JOIN player p ON p.id = me.player_id\n         WHERE s.tournament_id = ? AND me.player_id IS NOT NULL\n           AND me.type IN ('yellow', 'red', 'red_2y')\n         ORDER BY me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 207
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1949,
+      "duration_ms": 31144
+    },
+    {
+      "name": "public/stats",
+      "url": "https://probe.local/api/public/tournaments/1/stats",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT m.status, COUNT(*) AS n FROM match m\n         JOIN stage s ON s.id = m.stage_id\n         WHERE s.tournament_id = ? GROUP BY m.status",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 267
+        },
+        {
+          "sql": "SELECT me.type, COUNT(*) AS n \n  FROM match_event me\n  JOIN match m ON m.id = me.match_id\n  JOIN stage s ON s.id = m.stage_id\n  WHERE s.tournament_id = ? GROUP BY me.type",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 420
+        },
+        {
+          "sql": "SELECT m.id, m.round, m.score_home, m.score_away,\n         he.team_id AS home_team_id, ht.name AS home_team_name,\n         ae.team_id AS away_team_id, at.name AS away_team_name,\n         s.kind AS stage_kind, s.sort_order AS stage_order\n       \n  FROM match m\n  JOIN stage s ON s.id = m.stage_id\n  JOIN entry he ON he.id = m.home_entry_id\n  JOIN team ht ON ht.id = he.team_id\n  JOIN entry ae ON ae.id = m.away_entry_id\n  JOIN team at ON at.id = ae.team_id\n  WHERE s.tournament_id = ? AND m.status = 'finished'\n    AND m.score_home IS NOT NULL AND m.score_away IS NOT NULL\n       ORDER BY m.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 289
+        },
+        {
+          "sql": "SELECT me.match_id, COUNT(*) AS n \n  FROM match_event me\n  JOIN match m ON m.id = me.match_id\n  JOIN stage s ON s.id = m.stage_id\n  WHERE s.tournament_id = ?\n         AND me.type IN ('injury_minor', 'injury_major')\n         GROUP BY me.match_id ORDER BY n DESC, me.match_id ASC LIMIT 1",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 116
+        },
+        {
+          "sql": "SELECT\n           SUM(CASE WHEN me.type = 'yellow'\n                     AND NOT EXISTS (SELECT 1 FROM match_event r\n                                     WHERE r.match_id = me.match_id\n                                       AND r.player_id = me.player_id\n                                       AND r.type = 'red_2y')\n                    THEN 1 ELSE 0 END) AS yellows,\n           SUM(CASE WHEN me.type IN ('red', 'red_2y') THEN 1 ELSE 0 END) AS reds\n         FROM match_event me\n         JOIN match m ON m.id = me.match_id\n         JOIN stage s ON s.id = m.stage_id\n         WHERE s.tournament_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 432
+        },
+        {
+          "sql": "SELECT m.round, m.score_home, m.score_away,\n           ht.name AS home_team_name, at.name AS away_team_name,\n           s.kind AS stage_kind, s.sort_order AS stage_order\n         FROM match m\n         JOIN stage s ON s.id = m.stage_id\n         JOIN entry he ON he.id = m.home_entry_id\n         JOIN team ht ON ht.id = he.team_id\n         JOIN entry ae ON ae.id = m.away_entry_id\n         JOIN team at ON at.id = ae.team_id\n         WHERE m.id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 6
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1531,
+      "duration_ms": 27666
+    },
+    {
+      "name": "public/match-report",
+      "url": "https://probe.local/api/public/matches/182/report",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n   s.kind AS stage_kind, s.name AS stage_name, m.round,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.walkover_side, m.note, m.status, m.finished_at FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   JOIN tournament t ON t.id = s.tournament_id\n   JOIN entry he ON he.id = m.home_entry_id\n   JOIN team ht ON ht.id = he.team_id\n   JOIN entry ae ON ae.id = m.away_entry_id\n   JOIN team at ON at.id = ae.team_id WHERE m.id = ?",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 7
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id,\n             p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "SELECT stage_id, MAX(round) AS mr FROM match\n       WHERE stage_id IN (?) GROUP BY stage_id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,\n              s.played, s.won, s.drawn, s.lost,\n              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted\n       FROM standing s\n       JOIN entry e ON e.id = s.entry_id\n       JOIN team t ON t.id = e.team_id\n       WHERE s.stage_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 37
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n   s.kind AS stage_kind, s.name AS stage_name, m.round,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.walkover_side, m.note, m.status, m.finished_at FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   JOIN tournament t ON t.id = s.tournament_id\n   JOIN entry he ON he.id = m.home_entry_id\n   JOIN team ht ON ht.id = he.team_id\n   JOIN entry ae ON ae.id = m.away_entry_id\n   JOIN team at ON at.id = ae.team_id\n       WHERE s.tournament_id = ? AND m.status = 'finished' AND COALESCE(m.note, '') != '轮空'\n       ORDER BY m.finished_at ASC, m.id ASC",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 289
+        },
+        {
+          "sql": "SELECT me.player_id, p.name, tm.name AS team_name, COUNT(*) AS goals,\n              SUM(CASE WHEN me.type = 'pen_goal' THEN 1 ELSE 0 END) AS pen_goals\n       FROM match_event me\n       JOIN match m ON m.id = me.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN player p ON p.id = me.player_id\n       JOIN entry e ON e.id = me.entry_id\n       JOIN team tm ON tm.id = e.team_id\n       WHERE s.tournament_id = ? AND me.type IN ('goal', 'pen_goal') AND me.player_id IS NOT NULL\n       GROUP BY me.player_id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 794
+        },
+        {
+          "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side\n       FROM match WHERE stage_id = ? AND status = 'finished'\n         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1402,
+      "duration_ms": 62215
+    },
+    {
+      "name": "admin/injury-candidates",
+      "url": "https://probe.local/api/admin/injuries/candidates?teamId=1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:47.712Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name,\n              m.round, s.kind AS stage_kind, m.status,\n              eh.id AS home_team_id, eh.name AS home_team_name,\n              ea.id AS away_team_id, ea.name AS away_team_name\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       JOIN entry e1 ON e1.id = m.home_entry_id\n       JOIN team eh ON eh.id = e1.team_id\n       LEFT JOIN entry e2 ON e2.id = m.away_entry_id\n       LEFT JOIN team ea ON ea.id = e2.team_id\n       WHERE e1.team_id = ? OR e2.team_id = ?\n       ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1342
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1342,
+      "duration_ms": 7184
+    },
+    {
+      "name": "public/upcoming",
+      "url": "https://probe.local/api/public/upcoming",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status,\n       m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round,\n       ht.name AS home_team_name, at.name AS away_team_name\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     JOIN tournament t ON t.id = s.tournament_id\n     JOIN entry he ON he.id = m.home_entry_id\n     JOIN team ht ON ht.id = he.team_id\n     JOIN entry ae ON ae.id = m.away_entry_id\n     JOIN team at ON at.id = ae.team_id\n     WHERE t.status != 'draft' AND m.status = 'pending'\n       AND (m.note IS NULL OR m.note != '轮空')\n     ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END,\n       t.id, s.sort_order, m.round, m.slot\n     LIMIT 8",
+          "args": [],
+          "db": "DB",
+          "rows_read": 1192
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1192,
+      "duration_ms": 3833
+    },
+    {
+      "name": "coach/me-status",
+      "url": "https://probe.local/api/coach/me/status",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:37:49.225Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT t.id AS tournament_id, t.name, t.config_json\n       FROM entry e JOIN tournament t ON t.id = e.tournament_id\n       WHERE e.team_id = ? AND t.status != 'draft'\n       ORDER BY t.created_at DESC, t.id DESC",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 7
+        },
+        {
+          "sql": "SELECT t.id AS tournament_id\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       LEFT JOIN entry he ON he.id = m.home_entry_id\n       LEFT JOIN entry ae ON ae.id = m.away_entry_id\n       WHERE m.status = 'pending' AND t.status != 'draft'\n         AND (m.note IS NULL OR m.note != '轮空')\n         AND (he.team_id = ? OR ae.team_id = ?)\n       ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 755
+        },
+        {
+          "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,\n                    me.type AS event_type, me.minute AS event_minute,\n                    p.name AS player_name, t.name AS team_name,\n                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,\n                    fm.round AS from_round, fs.kind AS from_stage_kind\n             FROM injury i\n             JOIN match_event me ON me.id = i.event_id\n             JOIN player p ON p.id = i.player_id\n             JOIN team t ON t.id = i.team_id\n             JOIN match fm ON fm.id = me.match_id\n             JOIN stage fs ON fs.id = fm.stage_id\n             JOIN tournament ft ON ft.id = fs.tournament_id\n             WHERE i.team_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 8
+        },
+        {
+          "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,\n              m.round, s.kind AS stage_kind, m.status\n       FROM injury_miss im\n       JOIN injury i ON i.id = im.injury_id\n       JOIN match m ON m.id = im.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       WHERE i.team_id IN (?)\n       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 18
+        },
+        {
+          "sql": "SELECT m.id, m.home_entry_id, m.away_entry_id, m.status, m.note, m.walkover_side,\n                s.sort_order AS stage_order, m.round, m.slot, m.leg\n         FROM match m\n         JOIN stage s ON s.id = m.stage_id\n         WHERE s.tournament_id = ? AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)\n             OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))\n         ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [
+            1,
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 142
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.entry_id, me.player_id, me.type, me.created_at,\n                p.name AS player_name, t.id AS team_id, t.name AS team_name\n         FROM match_event me\n         JOIN match m ON m.id = me.match_id\n         JOIN stage s ON s.id = m.stage_id\n         JOIN entry e ON e.id = me.entry_id\n         JOIN team t ON t.id = e.team_id\n         JOIN player p ON p.id = me.player_id\n         WHERE s.tournament_id = ? AND me.player_id IS NOT NULL\n           AND me.type IN ('yellow', 'red', 'red_2y') AND p.team_id = ?\n         ORDER BY me.id",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 88
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1020,
+      "duration_ms": 29874
+    },
+    {
+      "name": "public/tournament-summary",
+      "url": "https://probe.local/api/public/tournaments/1/matches/summary",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind,\n   s.name AS stage_name, s.sort_order AS stage_order\n       FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   LEFT JOIN entry he ON he.id = m.home_entry_id\n   LEFT JOIN team ht ON ht.id = he.team_id\n   LEFT JOIN entry ae ON ae.id = m.away_entry_id\n   LEFT JOIN team at ON at.id = ae.team_id\n       WHERE s.tournament_id = ? AND m.status = 'finished'\n       ORDER BY m.finished_at DESC, m.id DESC\n       LIMIT 4",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 58
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind,\n   s.name AS stage_name, s.sort_order AS stage_order\n       FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   LEFT JOIN entry he ON he.id = m.home_entry_id\n   LEFT JOIN team ht ON ht.id = he.team_id\n   LEFT JOIN entry ae ON ae.id = m.away_entry_id\n   LEFT JOIN team at ON at.id = ae.team_id\n       WHERE s.tournament_id = ? AND m.status = 'pending'\n         AND he.id IS NOT NULL AND ae.id IS NOT NULL\n       ORDER BY s.sort_order, m.round, m.slot\n       LIMIT 4",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 808
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,\n             p.name AS player_name, ap.name AS assist_player_name\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 876,
+      "duration_ms": 17048
+    },
+    {
+      "name": "admin/tournament-matches",
+      "url": "https://probe.local/api/admin/tournaments/1/matches",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:24.430Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg,\n       m.home_entry_id, m.away_entry_id,\n       ht.name AS home_team_name, at.name AS away_team_name,\n       ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n       m.score_home, m.score_away, m.pen_home, m.pen_away,\n       m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind,\n       th.team_id IS NOT NULL AS home_sub, ta.team_id IS NOT NULL AS away_sub\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     LEFT JOIN entry he ON he.id = m.home_entry_id\n     LEFT JOIN team ht ON ht.id = he.team_id\n     LEFT JOIN entry ae ON ae.id = m.away_entry_id\n     LEFT JOIN team at ON at.id = ae.team_id\n     LEFT JOIN tactic_submission th ON th.match_id = m.id AND th.team_id = he.team_id\n     LEFT JOIN tactic_submission ta ON ta.match_id = m.id AND ta.team_id = ae.team_id\n     WHERE s.tournament_id = ?\n     ORDER BY s.sort_order, m.round, m.slot, m.leg",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 800
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 800,
+      "duration_ms": 7047
+    },
+    {
+      "name": "coach/me-matches",
+      "url": "https://probe.local/api/coach/me/matches?tournamentId=1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:37:35.309Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT m.id, m.round, m.leg, m.note,\n       t.id AS tournament_id, t.name AS tournament_name,\n       s.name AS stage_name, s.kind AS stage_kind,\n       he.team_id AS home_tid, ae.team_id AS away_tid,\n       ht.name AS home_team_name, at.name AS away_team_name,\n       ts.id AS sub_id, g.id AS grant_id\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     JOIN tournament t ON t.id = s.tournament_id\n     LEFT JOIN entry he ON he.id = m.home_entry_id\n     LEFT JOIN entry ae ON ae.id = m.away_entry_id\n     LEFT JOIN team ht ON ht.id = he.team_id\n     LEFT JOIN team at ON at.id = ae.team_id\n     LEFT JOIN tactic_submission ts ON ts.match_id = m.id AND ts.team_id = ?\n     LEFT JOIN lineup_proxy_grant g ON g.id = (SELECT MIN(g2.id) FROM lineup_proxy_grant g2\n       WHERE g2.match_id = m.id AND g2.team_id = ? AND g2.revoked_at IS NULL)\n     WHERE m.status = 'pending' AND t.status != 'draft'\n       AND (m.note IS NULL OR m.note != '轮空')\n       AND (he.team_id = ? OR ae.team_id = ?)\n     ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot",
+          "args": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 785
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 787,
+      "duration_ms": 13906
+    },
+    {
+      "name": "admin/teams",
+      "url": "https://probe.local/api/admin/teams",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:39:51.505Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.id, t.name, t.logo_key,\n       (SELECT COUNT(*) FROM player p WHERE p.team_id = t.id) AS player_count,\n       (SELECT COUNT(*) FROM entry e WHERE e.team_id = t.id) AS entry_count\n     FROM team t WHERE t.org_id = 1 ORDER BY t.name",
+          "args": [],
+          "db": "DB",
+          "rows_read": 668
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 668,
+      "duration_ms": 6583
+    },
+    {
+      "name": "cron-roster-sync",
+      "url": "(cron)",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id FROM team",
+          "args": [],
+          "db": "DB",
+          "rows_read": 20
+        },
+        {
+          "sql": "SELECT id, team_id, name, number FROM player",
+          "args": [],
+          "db": "DB",
+          "rows_read": 570
+        }
+      ],
+      "skipped_writes": [
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)",
+        "DELETE FROM player WHERE id = ?"
+      ],
+      "skipped_write_count": 31,
+      "total_rows_read": 590,
+      "duration_ms": 9068
+    },
+    {
+      "name": "admin/injuries",
+      "url": "https://probe.local/api/admin/injuries",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:24.308Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,\n                me.type AS event_type, me.minute AS event_minute,\n                p.name AS player_name, tm.name AS team_name,\n                fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,\n                fm.round AS from_round, fs.kind AS from_stage_kind\n         FROM injury i\n         JOIN match_event me ON me.id = i.event_id\n         JOIN player p ON p.id = i.player_id\n         JOIN team tm ON tm.id = i.team_id\n         JOIN match fm ON fm.id = me.match_id\n         JOIN stage fs ON fs.id = fm.stage_id\n         JOIN tournament ft ON ft.id = fs.tournament_id\n         ORDER BY i.created_at DESC, i.id DESC",
+          "args": [],
+          "db": "DB",
+          "rows_read": 224
+        },
+        {
+          "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,\n              m.round, s.kind AS stage_kind, m.status\n       FROM injury_miss im\n       JOIN match m ON m.id = im.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [],
+          "db": "DB",
+          "rows_read": 240
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 464,
+      "duration_ms": 13215
+    },
+    {
+      "name": "public/injuries",
+      "url": "https://probe.local/api/public/tournaments/1/injuries",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,\n                    me.type AS event_type, me.minute AS event_minute,\n                    p.name AS player_name, t.name AS team_name,\n                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,\n                    fm.round AS from_round, fs.kind AS from_stage_kind\n             FROM injury i\n             JOIN match_event me ON me.id = i.event_id\n             JOIN player p ON p.id = i.player_id\n             JOIN team t ON t.id = i.team_id\n             JOIN match fm ON fm.id = me.match_id\n             JOIN stage fs ON fs.id = fm.stage_id\n             JOIN tournament ft ON ft.id = fs.tournament_id",
+          "args": [],
+          "db": "DB",
+          "rows_read": 196
+        },
+        {
+          "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,\n              m.round, s.kind AS stage_kind, m.status\n       FROM injury_miss im\n       JOIN match m ON m.id = im.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [],
+          "db": "DB",
+          "rows_read": 240
+        },
+        {
+          "sql": "SELECT DISTINCT t.id, t.name, t.logo_key\n         FROM entry e JOIN team t ON t.id = e.team_id\n         WHERE e.tournament_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 25
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 462,
+      "duration_ms": 16543
+    },
+    {
+      "name": "public/round",
+      "url": "https://probe.local/api/public/tournaments/1/round/1/22",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT name, status FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT kind, name FROM stage WHERE id = ? AND tournament_id = ?",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT COUNT(*) AS n FROM match\n       WHERE stage_id = ? AND round = ?\n         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL\n         AND COALESCE(note, '') != '轮空'",
+          "args": [
+            1,
+            22
+          ],
+          "db": "DB",
+          "rows_read": 7
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n   s.kind AS stage_kind, s.name AS stage_name, m.round,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.walkover_side, m.note, m.status, m.finished_at FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   JOIN tournament t ON t.id = s.tournament_id\n   JOIN entry he ON he.id = m.home_entry_id\n   JOIN team ht ON ht.id = he.team_id\n   JOIN entry ae ON ae.id = m.away_entry_id\n   JOIN team at ON at.id = ae.team_id\n       WHERE m.stage_id = ? AND m.round = ? AND m.status = 'finished'\n       ORDER BY m.finished_at ASC, m.id ASC",
+          "args": [
+            1,
+            22
+          ],
+          "db": "DB",
+          "rows_read": 72
+        },
+        {
+          "sql": "SELECT stage_id, MAX(round) AS mr FROM match\n       WHERE stage_id IN (?) GROUP BY stage_id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id,\n             p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,\n              s.played, s.won, s.drawn, s.lost,\n              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted\n       FROM standing s\n       JOIN entry e ON e.id = s.entry_id\n       JOIN team t ON t.id = e.team_id\n       WHERE s.stage_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 37
+        },
+        {
+          "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side\n       FROM match WHERE stage_id = ? AND status = 'finished'\n         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "\n  SELECT me.id AS event_id, i.id AS injury_id,\n         me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name,\n         me.type, i.injury_name,\n         m.id AS match_id, m.stage_id, m.round, m.finished_at,\n         s.tournament_id, tt.name AS tournament_name,\n         (SELECT COUNT(*) FROM injury_miss im\n            JOIN match m2 ON m2.id = im.match_id\n           WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches\n  FROM match_event me\n  JOIN match m ON m.id = me.match_id\n  JOIN stage s ON s.id = m.stage_id\n  JOIN tournament tt ON tt.id = s.tournament_id\n  JOIN entry e ON e.id = me.entry_id\n  JOIN team t ON t.id = e.team_id\n  JOIN player p ON p.id = me.player_id\n  LEFT JOIN injury i ON i.event_id = me.id\n  WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND m.stage_id = ? AND m.round = ? ORDER BY m.finished_at, me.id",
+          "args": [
+            1,
+            22
+          ],
+          "db": "DB",
+          "rows_read": 63
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 456,
+      "duration_ms": 38287
+    },
+    {
+      "name": "admin/tournament",
+      "url": "https://probe.local/api/admin/tournaments/1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:40:36.820Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key, t.config_json,\n       (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count\n     FROM tournament t WHERE t.id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 14
+        },
+        {
+          "sql": "SELECT id, kind, sort_order, name, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT g.id, g.stage_id, g.name, g.sort_order FROM \"group\" g\n       JOIN stage s ON s.id = g.stage_id WHERE s.tournament_id = ?\n       ORDER BY s.sort_order, g.sort_order",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 11
+        },
+        {
+          "sql": "SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key,\n         (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count\n       FROM entry e JOIN team tm ON tm.id = e.team_id\n       WHERE e.tournament_id = ? ORDER BY e.seed",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 391
+        },
+        {
+          "sql": "SELECT config_json FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 420,
+      "duration_ms": 24002
+    },
+    {
+      "name": "public/tournament",
+      "url": "https://probe.local/api/public/tournaments/1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,\n       (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count\n     FROM tournament t WHERE t.id = ? AND t.status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 14
+        },
+        {
+          "sql": "SELECT id, kind, sort_order, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT g.id, g.stage_id, g.name, g.sort_order FROM \"group\" g\n       JOIN stage s ON s.id = g.stage_id WHERE s.tournament_id = ?\n       ORDER BY s.sort_order, g.sort_order",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 11
+        },
+        {
+          "sql": "SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key,\n         (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count\n       FROM entry e JOIN team tm ON tm.id = e.team_id\n       WHERE e.tournament_id = ? ORDER BY e.seed",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 391
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 419,
+      "duration_ms": 13484
+    },
+    {
+      "name": "coach/proxy-board",
+      "url": "https://probe.local/api/coach/proxy/284/board",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:38:51.866Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT a.id AS account_id, a.name, t.tour_team_id, t.name AS team_name\n     FROM account a\n     LEFT JOIN team_binding b ON b.account_id = a.id\n     LEFT JOIN team t ON t.id = b.team_id\n     ORDER BY (t.name IS NULL), t.name, a.name",
+          "args": [],
+          "db": "AUTH_DB",
+          "rows_read": 58
+        },
+        {
+          "sql": "SELECT \n  g.id, g.match_id, g.team_id, g.grantee_user_id, g.granted_by, g.revoked_at, g.created_at,\n  m.status AS match_status, m.round, m.leg,\n  t.id AS tournament_id, t.name AS tournament_name,\n  s.name AS stage_name, s.kind AS stage_kind,\n  tt.name AS team_name,\n  he.team_id AS home_tid, ae.team_id AS away_tid,\n  ht.name AS home_team_name, at.name AS away_team_name,\n  ts.id AS sub_id, ts.created_by AS sub_by\nFROM lineup_proxy_grant g\nJOIN match m ON m.id = g.match_id\nJOIN stage s ON s.id = m.stage_id\nJOIN tournament t ON t.id = s.tournament_id\nLEFT JOIN entry he ON he.id = m.home_entry_id\nLEFT JOIN entry ae ON ae.id = m.away_entry_id\nLEFT JOIN team ht ON ht.id = he.team_id\nLEFT JOIN team at ON at.id = ae.team_id\nLEFT JOIN team tt ON tt.id = g.team_id\nLEFT JOIN tactic_submission ts ON ts.match_id = g.match_id AND ts.team_id = g.team_id WHERE g.match_id = ? AND g.grantee_user_id = ?\n         AND g.revoked_at IS NULL AND m.status = 'pending'",
+          "args": [
+            284,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT id, name, number FROM player WHERE team_id = ?\n       ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 61
+        },
+        {
+          "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,\n                    me.type AS event_type, me.minute AS event_minute,\n                    p.name AS player_name, t.name AS team_name,\n                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,\n                    fm.round AS from_round, fs.kind AS from_stage_kind\n             FROM injury i\n             JOIN match_event me ON me.id = i.event_id\n             JOIN player p ON p.id = i.player_id\n             JOIN team t ON t.id = i.team_id\n             JOIN match fm ON fm.id = me.match_id\n             JOIN stage fs ON fs.id = fm.stage_id\n             JOIN tournament ft ON ft.id = fs.tournament_id\n             WHERE i.team_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 8
+        },
+        {
+          "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,\n              m.round, s.kind AS stage_kind, m.status\n       FROM injury_miss im\n       JOIN injury i ON i.id = im.injury_id\n       JOIN match m ON m.id = im.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       WHERE i.team_id IN (?)\n       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 18
+        },
+        {
+          "sql": "SELECT m.status, t.status AS tournament_status,\n         he.team_id AS home_tid, ae.team_id AS away_tid\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       LEFT JOIN entry he ON he.id = m.home_entry_id\n       LEFT JOIN entry ae ON ae.id = m.away_entry_id\n       WHERE m.id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 5
+        },
+        {
+          "sql": "SELECT config_json FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT ts.id, ts.team_id, ts.form, ts.slots_json, ts.assign_json, ts.created_at,\n         u.name AS submitted_by, te.name AS team_name, ts.proxy_grant_id\n       FROM tactic_submission ts\n       LEFT JOIN user u ON u.id = ts.created_by\n       LEFT JOIN team te ON te.id = ts.team_id\n       WHERE ts.match_id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.id, m.home_entry_id, m.away_entry_id, m.status, m.note, m.walkover_side,\n                s.sort_order AS stage_order, m.round, m.slot, m.leg\n         FROM match m\n         JOIN stage s ON s.id = m.stage_id\n         WHERE s.tournament_id = ? AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)\n             OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))\n         ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [
+            1,
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 142
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.entry_id, me.player_id, me.type, me.created_at,\n                p.name AS player_name, t.id AS team_id, t.name AS team_name\n         FROM match_event me\n         JOIN match m ON m.id = me.match_id\n         JOIN stage s ON s.id = m.stage_id\n         JOIN entry e ON e.id = me.entry_id\n         JOIN team t ON t.id = e.team_id\n         JOIN player p ON p.id = me.player_id\n         WHERE s.tournament_id = ? AND me.player_id IS NOT NULL\n           AND me.type IN ('yellow', 'red', 'red_2y') AND p.team_id = ?\n         ORDER BY me.id",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 88
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 384,
+      "duration_ms": 41510
+    },
+    {
+      "name": "admin/injury-events",
+      "url": "https://probe.local/api/admin/injuries/events?teamId=1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:37.525Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT me.id AS event_id, me.match_id, me.type AS event_type, me.minute,\n              t2.id AS tournament_id, t2.name AS tournament_name,\n              s.kind AS stage_kind, m.round, m.status AS match_status, m.finished_at,\n              t.id AS team_id, t.name AS team_name,\n              p.id AS player_id, p.name AS player_name,\n              CASE WHEN e1.team_id = t.id THEN ea.name ELSE eh.name END AS opponent_name\n       FROM match_event me\n       JOIN match m ON m.id = me.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       JOIN entry e1 ON e1.id = m.home_entry_id\n       JOIN team eh ON eh.id = e1.team_id\n       LEFT JOIN entry e2 ON e2.id = m.away_entry_id\n       LEFT JOIN team ea ON ea.id = e2.team_id\n       JOIN entry e ON e.id = me.entry_id\n       JOIN team t ON t.id = e.team_id\n       LEFT JOIN player p ON p.id = me.player_id\n       LEFT JOIN injury i ON i.event_id = me.id\n       WHERE me.type IN ('injury_minor', 'injury_major') AND i.id IS NULL\n       ORDER BY m.finished_at DESC, me.id DESC",
+          "args": [],
+          "db": "DB",
+          "rows_read": 341
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 341,
+      "duration_ms": 10184
+    },
+    {
+      "name": "public/standings",
+      "url": "https://probe.local/api/public/tournaments/1/standings",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id, config_json FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT id, kind, name, sort_order FROM stage\n         WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT config_json FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,\n              s.played, s.won, s.drawn, s.lost,\n              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted\n       FROM standing s\n       JOIN entry e ON e.id = s.entry_id\n       JOIN team t ON t.id = e.team_id\n       WHERE s.stage_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 37
+        },
+        {
+          "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side\n       FROM match WHERE stage_id = ? AND status = 'finished'\n         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 175,
+      "duration_ms": 18280
+    },
+    {
+      "name": "admin/tournament-standings",
+      "url": "https://probe.local/api/admin/tournaments/1/standings",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:00.831Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT id, kind, name, sort_order FROM stage\n         WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT config_json FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,\n              s.played, s.won, s.drawn, s.lost,\n              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted\n       FROM standing s\n       JOIN entry e ON e.id = s.entry_id\n       JOIN team t ON t.id = e.team_id\n       WHERE s.stage_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 37
+        },
+        {
+          "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side\n       FROM match WHERE stage_id = ? AND status = 'finished'\n         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT config_json FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 175,
+      "duration_ms": 23591
+    },
+    {
+      "name": "public/tournament-rounds",
+      "url": "https://probe.local/api/public/tournaments/1/matches/rounds",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT s.id AS stage_id, s.name AS stage_name, s.kind AS stage_kind, s.sort_order AS stage_order,\n       m.round AS round,\n       COUNT(*) AS count,\n       SUM(m.status = 'live') AS live,\n       SUM(m.status = 'finished') AS finished,\n       SUM(m.status = 'pending') AS pending\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     WHERE s.tournament_id = ?\n     GROUP BY s.id, m.round\n     ORDER BY s.sort_order, m.round",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 157
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 158,
+      "duration_ms": 8715
+    },
+    {
+      "name": "public/weekly",
+      "url": "https://probe.local/api/public/weekly",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,\n         s.kind AS stage_kind, s.name AS stage_name, m.round,\n         m.home_entry_id, m.away_entry_id,\n         ht.name AS home_team_name, at.name AS away_team_name,\n         ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n         m.score_home, m.score_away, m.pen_home, m.pen_away,\n         m.walkover_side, m.note, m.status, m.finished_at\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       JOIN entry he ON he.id = m.home_entry_id\n       JOIN team ht ON ht.id = he.team_id\n       JOIN entry ae ON ae.id = m.away_entry_id\n       JOIN team at ON at.id = ae.team_id\n       WHERE t.status != 'draft' AND m.status = 'finished'\n         AND m.finished_at >= ? AND m.finished_at < ?\n       ORDER BY m.finished_at DESC, m.id DESC",
+          "args": [
+            "2026-09-21",
+            "2026-09-28"
+          ],
+          "db": "DB",
+          "rows_read": 57
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id,\n             p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "\n  SELECT me.id AS event_id, i.id AS injury_id,\n         me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name,\n         me.type, i.injury_name,\n         m.id AS match_id, m.stage_id, m.round, m.finished_at,\n         s.tournament_id, tt.name AS tournament_name,\n         (SELECT COUNT(*) FROM injury_miss im\n            JOIN match m2 ON m2.id = im.match_id\n           WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches\n  FROM match_event me\n  JOIN match m ON m.id = me.match_id\n  JOIN stage s ON s.id = m.stage_id\n  JOIN tournament tt ON tt.id = s.tournament_id\n  JOIN entry e ON e.id = me.entry_id\n  JOIN team t ON t.id = e.team_id\n  JOIN player p ON p.id = me.player_id\n  LEFT JOIN injury i ON i.event_id = me.id\n  WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND m.finished_at >= ? AND m.finished_at < ? ORDER BY m.finished_at, me.id",
+          "args": [
+            "2026-09-21",
+            "2026-09-28"
+          ],
+          "db": "DB",
+          "rows_read": 89
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 155,
+      "duration_ms": 11225
+    },
+    {
+      "name": "admin/proxy-grants",
+      "url": "https://probe.local/api/admin/proxy-grants",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:54.897Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT a.id AS account_id, a.name, t.tour_team_id, t.name AS team_name\n     FROM account a\n     LEFT JOIN team_binding b ON b.account_id = a.id\n     LEFT JOIN team t ON t.id = b.team_id\n     ORDER BY (t.name IS NULL), t.name, a.name",
+          "args": [],
+          "db": "AUTH_DB",
+          "rows_read": 58
+        },
+        {
+          "sql": "SELECT \n  g.id, g.match_id, g.team_id, g.grantee_user_id, g.granted_by, g.revoked_at, g.created_at,\n  m.status AS match_status, m.round, m.leg,\n  t.id AS tournament_id, t.name AS tournament_name,\n  s.name AS stage_name, s.kind AS stage_kind,\n  tt.name AS team_name,\n  he.team_id AS home_tid, ae.team_id AS away_tid,\n  ht.name AS home_team_name, at.name AS away_team_name,\n  ts.id AS sub_id, ts.created_by AS sub_by\nFROM lineup_proxy_grant g\nJOIN match m ON m.id = g.match_id\nJOIN stage s ON s.id = m.stage_id\nJOIN tournament t ON t.id = s.tournament_id\nLEFT JOIN entry he ON he.id = m.home_entry_id\nLEFT JOIN entry ae ON ae.id = m.away_entry_id\nLEFT JOIN team ht ON ht.id = he.team_id\nLEFT JOIN team at ON at.id = ae.team_id\nLEFT JOIN team tt ON tt.id = g.team_id\nLEFT JOIN tactic_submission ts ON ts.match_id = g.match_id AND ts.team_id = g.team_id ORDER BY g.created_at DESC, g.id DESC LIMIT 200",
+          "args": [],
+          "db": "DB",
+          "rows_read": 42
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 100,
+      "duration_ms": 10659
+    },
+    {
+      "name": "public/recent",
+      "url": "https://probe.local/api/public/recent",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT t.id AS tournament_id, t.name AS tournament_name,\n       m.id AS match_id, s.kind AS stage_kind, m.round,\n       m.home_entry_id, m.away_entry_id,\n       ht.name AS home_team_name, at.name AS away_team_name,\n       m.score_home, m.score_away, m.finished_at\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     JOIN tournament t ON t.id = s.tournament_id\n     JOIN entry he ON he.id = m.home_entry_id\n     JOIN team ht ON ht.id = he.team_id\n     JOIN entry ae ON ae.id = m.away_entry_id\n     JOIN team at ON at.id = ae.team_id\n     WHERE t.status != 'draft' AND m.status = 'finished'\n       AND m.score_home IS NOT NULL AND m.score_away IS NOT NULL\n     ORDER BY m.finished_at DESC, m.id DESC\n     LIMIT 10",
+          "args": [],
+          "db": "DB",
+          "rows_read": 87
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,\n             p.name AS player_name, ap.name AS assist_player_name\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 96,
+      "duration_ms": 5408
+    },
+    {
+      "name": "coach/me-team",
+      "url": "https://probe.local/api/coach/me/team",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:37:06.159Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT id, name FROM team WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT id, name, number FROM player WHERE team_id = ?\n       ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 61
+        },
+        {
+          "sql": "SELECT b.account_id, a.name, b.bound_at FROM team_binding b\n     JOIN team t ON t.id = b.team_id JOIN account a ON a.id = b.account_id\n     WHERE t.tour_team_id = ? ORDER BY b.bound_at",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 5
+        },
+        {
+          "sql": "SELECT e.id, t.name AS tournament_name, t.status, g.name AS group_name, e.seed\n       FROM entry e\n       JOIN tournament t ON t.id = e.tournament_id\n       LEFT JOIN \"group\" g ON g.id = e.group_id\n       WHERE e.team_id = ? ORDER BY t.created_at DESC",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 8
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 77,
+      "duration_ms": 29141
+    },
+    {
+      "name": "admin/team",
+      "url": "https://probe.local/api/admin/teams/1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:39:58.093Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT id, name, logo_key FROM team WHERE id = ? AND org_id = 1",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 61
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 62,
+      "duration_ms": 10766
+    },
+    {
+      "name": "coach/proxy-sessions",
+      "url": "https://probe.local/api/coach/proxy/sessions",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:38:37.223Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT a.id AS account_id, a.name, t.tour_team_id, t.name AS team_name\n     FROM account a\n     LEFT JOIN team_binding b ON b.account_id = a.id\n     LEFT JOIN team t ON t.id = b.team_id\n     ORDER BY (t.name IS NULL), t.name, a.name",
+          "args": [],
+          "db": "AUTH_DB",
+          "rows_read": 58
+        },
+        {
+          "sql": "SELECT \n  g.id, g.match_id, g.team_id, g.grantee_user_id, g.granted_by, g.revoked_at, g.created_at,\n  m.status AS match_status, m.round, m.leg,\n  t.id AS tournament_id, t.name AS tournament_name,\n  s.name AS stage_name, s.kind AS stage_kind,\n  tt.name AS team_name,\n  he.team_id AS home_tid, ae.team_id AS away_tid,\n  ht.name AS home_team_name, at.name AS away_team_name,\n  ts.id AS sub_id, ts.created_by AS sub_by\nFROM lineup_proxy_grant g\nJOIN match m ON m.id = g.match_id\nJOIN stage s ON s.id = m.stage_id\nJOIN tournament t ON t.id = s.tournament_id\nLEFT JOIN entry he ON he.id = m.home_entry_id\nLEFT JOIN entry ae ON ae.id = m.away_entry_id\nLEFT JOIN team ht ON ht.id = he.team_id\nLEFT JOIN team at ON at.id = ae.team_id\nLEFT JOIN team tt ON tt.id = g.team_id\nLEFT JOIN tactic_submission ts ON ts.match_id = g.match_id AND ts.team_id = g.team_id WHERE g.grantee_user_id = ?\n         AND g.revoked_at IS NULL AND m.status = 'pending'\n       ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 59,
+      "duration_ms": 14637
+    },
+    {
+      "name": "admin/rosters-context",
+      "url": "https://probe.local/api/admin/proxy-grants/context",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:11.648Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT a.id AS account_id, a.name, t.tour_team_id, t.name AS team_name\n     FROM account a\n     LEFT JOIN team_binding b ON b.account_id = a.id\n     LEFT JOIN team t ON t.id = b.team_id\n     ORDER BY (t.name IS NULL), t.name, a.name",
+          "args": [],
+          "db": "AUTH_DB",
+          "rows_read": 58
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 58,
+      "duration_ms": 8666
+    },
+    {
+      "name": "public/match",
+      "url": "https://probe.local/api/public/tournaments/1/matches/284",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg,\n       m.home_entry_id, m.away_entry_id,\n       he.team_id AS home_team_id, ae.team_id AS away_team_id,\n       ht.name AS home_team_name, at.name AS away_team_name,\n       ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n       m.score_home, m.score_away, m.pen_home, m.pen_away,\n       m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     LEFT JOIN entry he ON he.id = m.home_entry_id\n     LEFT JOIN team ht ON ht.id = he.team_id\n     LEFT JOIN entry ae ON ae.id = m.away_entry_id\n     LEFT JOIN team at ON at.id = ae.team_id\n     WHERE s.tournament_id = ? AND m.id = ?",
+          "args": [
+            1,
+            284
+          ],
+          "db": "DB",
+          "rows_read": 6
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,\n             p.name AS player_name, ap.name AS assist_player_name\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "SELECT COUNT(*) AS n FROM audit_log\n         WHERE target_type = 'match' AND target_id = ? AND action = 'match_rescore'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 8
+        },
+        {
+          "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,\n                me.type AS event_type, me.minute AS event_minute,\n                p.name AS player_name,\n                fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,\n                fm.round AS from_round, fs.kind AS from_stage_kind\n         FROM injury i\n         JOIN match_event me ON me.id = i.event_id\n         JOIN player p ON p.id = i.player_id\n         JOIN match fm ON fm.id = me.match_id\n         JOIN stage fs ON fs.id = fm.stage_id\n         JOIN tournament ft ON ft.id = fs.tournament_id\n         WHERE i.team_id IN (?,?)",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 8
+        },
+        {
+          "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,\n              m.round, s.kind AS stage_kind, m.status\n       FROM injury_miss im\n       JOIN injury i ON i.id = im.injury_id\n       JOIN match m ON m.id = im.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t2 ON t2.id = s.tournament_id\n       WHERE i.team_id IN (?,?)\n       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 19
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 51,
+      "duration_ms": 24044
+    },
+    {
+      "name": "public/tournaments",
+      "url": "https://probe.local/api/public/tournaments",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,\n       (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count\n     FROM tournament t\n     WHERE t.status != 'draft'\n     ORDER BY CASE t.status WHEN 'running' THEN 0 WHEN 'registering' THEN 1 ELSE 2 END,\n       t.created_at DESC",
+          "args": [],
+          "db": "DB",
+          "rows_read": 48
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 48,
+      "duration_ms": 2872
+    },
+    {
+      "name": "public/tournament-matches",
+      "url": "https://probe.local/api/public/tournaments/1/matches?stageId=1&round=22",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg,\n   m.home_entry_id, m.away_entry_id,\n   ht.name AS home_team_name, at.name AS away_team_name,\n   ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,\n   m.score_home, m.score_away, m.pen_home, m.pen_away,\n   m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind,\n   s.name AS stage_name, s.sort_order AS stage_order\n     FROM match m\n   JOIN stage s ON s.id = m.stage_id\n   LEFT JOIN entry he ON he.id = m.home_entry_id\n   LEFT JOIN team ht ON ht.id = he.team_id\n   LEFT JOIN entry ae ON ae.id = m.away_entry_id\n   LEFT JOIN team at ON at.id = ae.team_id\n     WHERE s.tournament_id = ? AND m.stage_id = ? AND m.round = ?\n     ORDER BY s.sort_order, m.round, m.slot, m.leg",
+          "args": [
+            1,
+            1,
+            22
+          ],
+          "db": "DB",
+          "rows_read": 38
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,\n             p.name AS player_name, ap.name AS assist_player_name\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 48,
+      "duration_ms": 8952
+    },
+    {
+      "name": "admin/tournaments",
+      "url": "https://probe.local/api/admin/tournaments",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:40:26.744Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,\n       (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count\n     FROM tournament t ORDER BY t.created_at DESC",
+          "args": [],
+          "db": "DB",
+          "rows_read": 48
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 48,
+      "duration_ms": 9995
+    },
+    {
+      "name": "cron-account-mirror",
+      "url": "(cron)",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id, name, locked, created_at FROM account ORDER BY id",
+          "args": [],
+          "db": "AUTH_DB",
+          "rows_read": 17
+        },
+        {
+          "sql": "SELECT id, name FROM user",
+          "args": [],
+          "db": "DB",
+          "rows_read": 17
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 34,
+      "duration_ms": 6994
+    },
+    {
+      "name": "public/live",
+      "url": "https://probe.local/api/public/live",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT t.id AS tournament_id, t.name AS tournament_name,\n       m.id AS match_id, s.kind AS stage_kind, m.round,\n       he.id AS home_entry_id, ae.id AS away_entry_id,\n       ht.name AS home_team_name, at.name AS away_team_name\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     JOIN tournament t ON t.id = s.tournament_id\n     JOIN entry he ON he.id = m.home_entry_id\n     JOIN team ht ON ht.id = he.team_id\n     JOIN entry ae ON ae.id = m.away_entry_id\n     JOIN team at ON at.id = ae.team_id\n     WHERE t.status != 'draft' AND m.status = 'live'\n     ORDER BY t.id, s.sort_order, m.round, m.slot",
+          "args": [],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id,\n             p.name AS player_name, ap.name AS assist_player_name\n           FROM match_event me\n           LEFT JOIN player p ON p.id = me.player_id\n           LEFT JOIN player ap ON ap.id = me.assist_player_id\n           WHERE me.match_id IN (?)\n           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 9
+        },
+        {
+          "sql": "SELECT me.match_id, me.entry_id, me.type, COUNT(*) AS n\n       FROM match_event me\n       JOIN match m ON m.id = me.match_id\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE m.status = 'live' AND t.status != 'draft'\n       GROUP BY me.match_id, me.entry_id, me.type",
+          "args": [],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 11,
+      "duration_ms": 9206
+    },
+    {
+      "name": "public/match-h2h",
+      "url": "https://probe.local/api/public/tournaments/1/matches/284/h2h",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT m.id, m.note, m.stage_id, m.home_entry_id, m.away_entry_id, s.kind AS stage_kind,\n       he.team_id AS home_tid, ae.team_id AS away_tid,\n       ht.name AS home_name, at.name AS away_name,\n       ht.logo_key AS home_logo, at.logo_key AS away_logo\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'\n     LEFT JOIN entry he ON he.id = m.home_entry_id\n     LEFT JOIN team ht ON ht.id = he.team_id\n     LEFT JOIN entry ae ON ae.id = m.away_entry_id\n     LEFT JOIN team at ON at.id = ae.team_id\n     WHERE s.tournament_id = ? AND m.id = ?",
+          "args": [
+            1,
+            284
+          ],
+          "db": "DB",
+          "rows_read": 7
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 7,
+      "duration_ms": 5187
+    },
+    {
+      "name": "public/match-lineup-stats",
+      "url": "https://probe.local/api/public/tournaments/1/matches/284/lineup-stats",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT m.id, m.note, he.team_id AS home_tid, ae.team_id AS away_tid,\n       ht.name AS home_name, at.name AS away_name\n     FROM match m\n     JOIN stage s ON s.id = m.stage_id\n     JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'\n     LEFT JOIN entry he ON he.id = m.home_entry_id\n     LEFT JOIN team ht ON ht.id = he.team_id\n     LEFT JOIN entry ae ON ae.id = m.away_entry_id\n     LEFT JOIN team at ON at.id = ae.team_id\n     WHERE s.tournament_id = ? AND m.id = ?",
+          "args": [
+            1,
+            284
+          ],
+          "db": "DB",
+          "rows_read": 7
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 7,
+      "duration_ms": 4753
+    },
+    {
+      "name": "coach/match-lineup",
+      "url": "https://probe.local/api/coach/matches/284/lineup",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:38:19.111Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT m.status, t.status AS tournament_status,\n         he.team_id AS home_tid, ae.team_id AS away_tid\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       LEFT JOIN entry he ON he.id = m.home_entry_id\n       LEFT JOIN entry ae ON ae.id = m.away_entry_id\n       WHERE m.id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 5
+        },
+        {
+          "sql": "SELECT ts.id, ts.team_id, ts.form, ts.slots_json, ts.assign_json, ts.created_at,\n         u.name AS submitted_by, te.name AS team_name, ts.proxy_grant_id\n       FROM tactic_submission ts\n       LEFT JOIN user u ON u.id = ts.created_by\n       LEFT JOIN team te ON te.id = ts.team_id\n       WHERE ts.match_id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 7,
+      "duration_ms": 18103
+    },
+    {
+      "name": "coach/tactics",
+      "url": "https://probe.local/api/coach/tactics",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:39:33.382Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT id, code, form, buildup, line_height, note, roster_json, assign_json, created_at\n     FROM tactic WHERE team_id = ? ORDER BY created_at DESC, id DESC LIMIT 20",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 5
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 7,
+      "duration_ms": 12113
+    },
+    {
+      "name": "public/match-lineup",
+      "url": "https://probe.local/api/public/matches/284/lineup",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT m.status, t.status AS tournament_status,\n         he.team_id AS home_tid, ae.team_id AS away_tid\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       LEFT JOIN entry he ON he.id = m.home_entry_id\n       LEFT JOIN entry ae ON ae.id = m.away_entry_id\n       WHERE m.id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 5
+        },
+        {
+          "sql": "SELECT ts.id, ts.team_id, ts.form, ts.slots_json, ts.assign_json, ts.created_at,\n         u.name AS submitted_by, te.name AS team_name, ts.proxy_grant_id\n       FROM tactic_submission ts\n       LEFT JOIN user u ON u.id = ts.created_by\n       LEFT JOIN team te ON te.id = ts.team_id\n       WHERE ts.match_id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 5,
+      "duration_ms": 5390
+    },
+    {
+      "name": "admin/team-members",
+      "url": "https://probe.local/api/admin/teams/1/members",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:40:08.863Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT b.account_id, a.name, b.bound_at FROM team_binding b\n     JOIN team t ON t.id = b.team_id JOIN account a ON a.id = b.account_id\n     WHERE t.tour_team_id = ? ORDER BY b.bound_at",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 5
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 5,
+      "duration_ms": 9507
+    },
+    {
+      "name": "admin/match-lineup",
+      "url": "https://probe.local/api/admin/matches/284/lineup",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:38.577Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.status, t.status AS tournament_status,\n         he.team_id AS home_tid, ae.team_id AS away_tid\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       LEFT JOIN entry he ON he.id = m.home_entry_id\n       LEFT JOIN entry ae ON ae.id = m.away_entry_id\n       WHERE m.id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 5
+        },
+        {
+          "sql": "SELECT team_id, code FROM tactic_submission WHERE match_id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT ts.id, ts.team_id, ts.form, ts.slots_json, ts.assign_json, ts.created_at,\n         u.name AS submitted_by, te.name AS team_name, ts.proxy_grant_id\n       FROM tactic_submission ts\n       LEFT JOIN user u ON u.id = ts.created_by\n       LEFT JOIN team te ON te.id = ts.team_id\n       WHERE ts.match_id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 5,
+      "duration_ms": 13276
+    },
+    {
+      "name": "public/announcement",
+      "url": "https://probe.local/api/public/announcement",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id, title, body, updated_at FROM announcement WHERE active = 1 ORDER BY updated_at DESC, id DESC LIMIT 1",
+          "args": [],
+          "db": "DB",
+          "rows_read": 2
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 2,
+      "duration_ms": 5887
+    },
+    {
+      "name": "interact/reactions",
+      "url": "https://probe.local/api/interact/reactions?ids=match:284,match:182",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT item_id, emoji, cnt FROM reaction WHERE item_id IN (?,?)",
+          "args": [
+            "match:284",
+            "match:182"
+          ],
+          "db": "DB",
+          "rows_read": 2
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 2,
+      "duration_ms": 3817
+    },
+    {
+      "name": "interact/motm",
+      "url": "https://probe.local/api/interact/matches/284/motm",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:36:52.280Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT mv.player_id AS playerId, p.name AS playerName, COUNT(*) AS cnt\n     FROM motm_vote mv JOIN player p ON p.id = mv.player_id\n     WHERE mv.match_id = ?\n     GROUP BY mv.player_id\n     ORDER BY cnt DESC, p.name ASC",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT player_id FROM motm_vote WHERE match_id = ? AND user_id = ?",
+          "args": [
+            284,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 2,
+      "duration_ms": 13860
+    },
+    {
+      "name": "admin/team-codes",
+      "url": "https://probe.local/api/admin/teams/1/auth-codes",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:40:18.371Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT id, expires_at, used_by, used_at, created_at FROM team_bind_code\n     WHERE team_id = (SELECT id FROM team WHERE tour_team_id = ?) ORDER BY created_at DESC LIMIT 20",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 2,
+      "duration_ms": 8362
+    },
+    {
+      "name": "admin/announcements",
+      "url": "https://probe.local/api/admin/announcements",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:15.011Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT id, title, body, active, created_at, updated_at\n     FROM announcement ORDER BY active DESC, updated_at DESC, id DESC LIMIT 100",
+          "args": [],
+          "db": "DB",
+          "rows_read": 2
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 2,
+      "duration_ms": 9294
+    },
+    {
+      "name": "internal/team-upsert",
+      "url": "https://probe.local/api/internal/team-upsert",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT id, name FROM team WHERE id = ?",
+          "args": [
+            999999
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1,
+      "duration_ms": 3668
+    },
+    {
+      "name": "admin/org-settings",
+      "url": "https://probe.local/api/admin/org-settings",
+      "status": 502,
+      "note": "转发认证中心，本库只有会话查询",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:39:45.507Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 0,
+      "duration_ms": 4925
+    },
+    {
+      "name": "admin/match-events",
+      "url": "https://probe.local/api/admin/matches/284/events",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:31.482Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT e.id, e.entry_id, e.player_id, e.assist_player_id, e.type, e.minute, e.created_at\n     FROM match_event e WHERE e.match_id = ? ORDER BY e.id",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 0,
+      "duration_ms": 7094
+    },
+    {
+      "name": "admin/accounts",
+      "url": "https://probe.local/api/admin/accounts",
+      "status": 502,
+      "note": "转发认证中心，本库只有会话查询",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:51.854Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 0,
+      "duration_ms": 4097
+    },
+    {
+      "name": "admin/accounts-catalog",
+      "url": "https://probe.local/api/admin/accounts/catalog",
+      "status": 502,
+      "note": "转发认证中心，本库只有会话查询",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:02.180Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 0,
+      "duration_ms": 4025
+    },
+    {
+      "name": "admin/audit",
+      "url": "https://probe.local/api/admin/audit?limit=50",
+      "status": 502,
+      "note": "转发认证中心，本库只有会话查询",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:10.258Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 0,
+      "duration_ms": 3213
+    },
+    {
+      "name": "admin/signup-codes",
+      "url": "https://probe.local/api/admin/signup-codes",
+      "status": 502,
+      "note": "转发认证中心，本库只有会话查询",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:05.557Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 0,
+      "duration_ms": 5288
+    },
+    {
+      "name": "health",
+      "url": "https://probe.local/api/health",
+      "status": 200,
+      "statements": [],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 0,
+      "duration_ms": 0
+    }
+  ],
+  "grand_total_rows_read": 18904
+}

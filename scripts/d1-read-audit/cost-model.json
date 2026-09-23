@@ -1,0 +1,180 @@
+{
+  "measured_at": "2026-09-23T15:27:18.748Z",
+  "ladder": [
+    {
+      "label": "match 主键点查 8 行",
+      "sql": "SELECT id FROM match WHERE id IN (14,21,22,23,24,25,26,27)",
+      "returned_rows": 8,
+      "command_rows_read": 16,
+      "file_rows_read": 2,
+      "plan": [
+        "SEARCH match USING INTEGER PRIMARY KEY (rowid=?)"
+      ]
+    },
+    {
+      "label": "match 索引等值 + LIMIT 8（只取 id）",
+      "sql": "SELECT id FROM match WHERE status = 'pending' LIMIT 8",
+      "returned_rows": 8,
+      "command_rows_read": 8,
+      "file_rows_read": 1,
+      "plan": [
+        "SEARCH match USING COVERING INDEX idx_match_status (status=?)"
+      ]
+    },
+    {
+      "label": "match 索引等值（只取 id，149 行）",
+      "sql": "SELECT id FROM match WHERE status = 'pending'",
+      "returned_rows": 149,
+      "command_rows_read": 149,
+      "file_rows_read": 1,
+      "plan": [
+        "SEARCH match USING COVERING INDEX idx_match_status (status=?)"
+      ]
+    },
+    {
+      "label": "match 索引等值（取 round，149 行）",
+      "sql": "SELECT id, round FROM match WHERE status = 'pending'",
+      "returned_rows": 149,
+      "command_rows_read": 149,
+      "file_rows_read": 1,
+      "plan": [
+        "SEARCH match USING INDEX idx_match_status (status=?)"
+      ]
+    },
+    {
+      "label": "match 覆盖索引 COUNT(*)（149）",
+      "sql": "SELECT COUNT(*) AS n FROM match WHERE status = 'pending'",
+      "returned_rows": 1,
+      "command_rows_read": 149,
+      "file_rows_read": 149,
+      "plan": [
+        "SEARCH match USING COVERING INDEX idx_match_status (status=?)"
+      ]
+    },
+    {
+      "label": "match 索引等值 finished（只取 id，69 行）",
+      "sql": "SELECT id FROM match WHERE status = 'finished'",
+      "returned_rows": 69,
+      "command_rows_read": 70,
+      "file_rows_read": 1,
+      "plan": [
+        "SEARCH match USING COVERING INDEX idx_match_status (status=?)"
+      ]
+    },
+    {
+      "label": "match 覆盖索引 COUNT(*)（69）",
+      "sql": "SELECT COUNT(*) AS n FROM match WHERE status = 'finished'",
+      "returned_rows": 1,
+      "command_rows_read": 70,
+      "file_rows_read": 70,
+      "plan": [
+        "SEARCH match USING COVERING INDEX idx_match_status (status=?)"
+      ]
+    },
+    {
+      "label": "match 整表（只取 id，218 行）",
+      "sql": "SELECT id FROM match",
+      "returned_rows": 218,
+      "command_rows_read": 218,
+      "file_rows_read": 1,
+      "plan": [
+        "SCAN match USING COVERING INDEX idx_match_away"
+      ]
+    },
+    {
+      "label": "match 整表 COUNT(*)（218）",
+      "sql": "SELECT COUNT(*) AS n FROM match",
+      "returned_rows": 1,
+      "command_rows_read": 218,
+      "file_rows_read": 218,
+      "plan": [
+        "SCAN match USING COVERING INDEX idx_match_away"
+      ]
+    },
+    {
+      "label": "player 索引等值（只取 id）",
+      "sql": "SELECT id FROM player WHERE team_id = 1",
+      "returned_rows": 30,
+      "command_rows_read": 31,
+      "file_rows_read": 1,
+      "plan": [
+        "SEARCH player USING COVERING INDEX idx_player_team (team_id=?)"
+      ]
+    },
+    {
+      "label": "player 索引等值（取 name）",
+      "sql": "SELECT id, name FROM player WHERE team_id = 1",
+      "returned_rows": 30,
+      "command_rows_read": 31,
+      "file_rows_read": 1,
+      "plan": [
+        "SEARCH player USING INDEX idx_player_team (team_id=?)"
+      ]
+    },
+    {
+      "label": "player 覆盖索引 COUNT(*)",
+      "sql": "SELECT COUNT(*) AS n FROM player WHERE team_id = 1",
+      "returned_rows": 1,
+      "command_rows_read": 31,
+      "file_rows_read": 31,
+      "plan": [
+        "SEARCH player USING COVERING INDEX idx_player_team (team_id=?)"
+      ]
+    },
+    {
+      "label": "player 整表 COUNT(*)",
+      "sql": "SELECT COUNT(*) AS n FROM player",
+      "returned_rows": 1,
+      "command_rows_read": 570,
+      "file_rows_read": 570,
+      "plan": [
+        "SCAN player USING COVERING INDEX idx_player_team"
+      ]
+    },
+    {
+      "label": "entry 主键点查 8 行",
+      "sql": "SELECT id FROM entry WHERE id IN (1,2,3,4,5,6,7,8)",
+      "returned_rows": 8,
+      "command_rows_read": 16,
+      "file_rows_read": 2,
+      "plan": [
+        "SEARCH entry USING INTEGER PRIMARY KEY (rowid=?)"
+      ]
+    },
+    {
+      "label": "entry 索引等值（只取 id）",
+      "sql": "SELECT id FROM entry WHERE tournament_id = 1",
+      "returned_rows": 12,
+      "command_rows_read": 13,
+      "file_rows_read": 1,
+      "plan": [
+        "SEARCH entry USING COVERING INDEX idx_entry_tournament (tournament_id=?)"
+      ]
+    },
+    {
+      "label": "主键点查 8 行 + 1 表 join",
+      "sql": "SELECT m.id, he.id AS he FROM match m JOIN entry he ON he.id = m.home_entry_id WHERE m.id IN (14,21,22,23,24,25,26,27)",
+      "returned_rows": 8,
+      "command_rows_read": 24,
+      "file_rows_read": 3,
+      "plan": [
+        "SEARCH m USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH he USING INTEGER PRIMARY KEY (rowid=?)"
+      ]
+    },
+    {
+      "label": "主键点查 8 行 + 4 表 join",
+      "sql": "SELECT m.id, he.id AS he, ht.id AS ht, ae.id AS ae, at.id AS at FROM match m JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE m.id IN (14,21,22,23,24,25,26,27)",
+      "returned_rows": 8,
+      "command_rows_read": 48,
+      "file_rows_read": 6,
+      "plan": [
+        "SEARCH m USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH he USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH ht USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH ae USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH at USING INTEGER PRIMARY KEY (rowid=?)"
+      ]
+    }
+  ]
+}

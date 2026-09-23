@@ -1,0 +1,733 @@
+{
+  "measured_at": "2026-09-23T15:44:30.399Z",
+  "method": "假 D1 抓写端点的 SQL → 只留 SELECT → 逐条打生产库读回 meta.rows_read（--command 通道）",
+  "boundaries": [
+    "假 D1 只记录不执行：写语句绝不落库，本文件的行读只含各写端点发出的 SELECT",
+    "桩行值与真实数据不同，走的是「探针形状」；写端点因前置守卫不同需要覆盖桩行关键列（hints）",
+    "冷路径：KV 与边缘缓存都冷",
+    "样本 id 取自当时线上（见上面 [样本 id] 行）"
+  ],
+  "sample_ids": {
+    "tournament": 1,
+    "stage": 1,
+    "match": 284,
+    "match_finished": 182,
+    "team": 1,
+    "injury": 1
+  },
+  "surfaces": [
+    {
+      "name": "admin/match-start",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/matches/284/start",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:40:51.764Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.*, s.kind AS stage_kind, s.tournament_id, t.status AS tournament_status\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE m.id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 3
+        }
+      ],
+      "skipped_writes": [
+        "UPDATE match SET status = 'live' WHERE id = ?",
+        "INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json) VALUES…"
+      ],
+      "skipped_write_count": 2,
+      "total_rows_read": 3,
+      "duration_ms": 9055
+    },
+    {
+      "name": "admin/match-finish",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/matches/182/finish",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:00.830Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.*, s.kind AS stage_kind, s.tournament_id, t.status AS tournament_status\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE m.id = ?",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT kind FROM stage WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT e.id, e.group_id, e.points_deducted FROM entry e\n             WHERE e.tournament_id = (SELECT tournament_id FROM stage WHERE id = ?)",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 14
+        },
+        {
+          "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side\n       FROM match WHERE stage_id = ? AND status = 'finished'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND status != 'finished'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        }
+      ],
+      "skipped_writes": [
+        "UPDATE match SET score_home = ?, score_away = ?, pen_home = ?, pen_away = ?, status = 'fi…",
+        "DELETE FROM standing WHERE stage_id = ?",
+        "INSERT INTO standing (stage_id, group_id, entry_id, played, won, drawn, lost, pts, gf, ga…",
+        "INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json) VALUES…"
+      ],
+      "skipped_write_count": 4,
+      "total_rows_read": 284,
+      "duration_ms": 26122
+    },
+    {
+      "name": "admin/match-finish-walkover",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/matches/182/finish",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:26.960Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.*, s.kind AS stage_kind, s.tournament_id, t.status AS tournament_status\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE m.id = ?",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT kind FROM stage WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT e.id, e.group_id, e.points_deducted FROM entry e\n             WHERE e.tournament_id = (SELECT tournament_id FROM stage WHERE id = ?)",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 14
+        },
+        {
+          "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side\n       FROM match WHERE stage_id = ? AND status = 'finished'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        },
+        {
+          "sql": "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND status != 'finished'",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 133
+        }
+      ],
+      "skipped_writes": [
+        "UPDATE match SET score_home = ?, score_away = ?, pen_home = ?, pen_away = ?, status = 'fi…",
+        "DELETE FROM standing WHERE stage_id = ?",
+        "INSERT INTO standing (stage_id, group_id, entry_id, played, won, drawn, lost, pts, gf, ga…",
+        "INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json) VALUES…"
+      ],
+      "skipped_write_count": 4,
+      "total_rows_read": 284,
+      "duration_ms": 23184
+    },
+    {
+      "name": "admin/match-event-post",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/matches/182/events",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:41:50.147Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.*, s.kind AS stage_kind, s.tournament_id, t.status AS tournament_status\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE m.id = ?",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT p.id FROM player p\n             JOIN entry e ON e.team_id = p.team_id\n             WHERE e.id = ? AND p.id IN (?)",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT entry_id,\n        SUM(CASE WHEN type IN ('goal', 'pen_goal') THEN 1 ELSE 0 END) AS scored,\n        SUM(CASE WHEN type = 'own_goal' THEN 1 ELSE 0 END) AS og\n FROM match_event\n WHERE match_id = ? GROUP BY entry_id",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [
+        "INSERT INTO match_event (match_id, entry_id, player_id, assist_player_id, type, minute, c…",
+        "INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json) VALUES…"
+      ],
+      "skipped_write_count": 2,
+      "total_rows_read": 5,
+      "duration_ms": 13159
+    },
+    {
+      "name": "admin/match-event-put",
+      "method": "PUT",
+      "url": "https://probe.local/api/admin/matches/182/events/1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:03.309Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.*, s.kind AS stage_kind, s.tournament_id, t.status AS tournament_status\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE m.id = ?",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT id, entry_id, player_id, assist_player_id, type, minute FROM match_event WHERE id = ? AND match_id = ?",
+          "args": [
+            1,
+            182
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT p.id FROM player p\n             JOIN entry e ON e.team_id = p.team_id\n             WHERE e.id = ? AND p.id IN (?)",
+          "args": [
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT SUM(CASE WHEN type IN ('red', 'red_2y') THEN 1 ELSE 0 END) AS reds,\n                    SUM(CASE WHEN type = 'yellow' THEN 1 ELSE 0 END) AS yellows\n             FROM match_event WHERE match_id = ? AND player_id = ? AND id != ?",
+          "args": [
+            182,
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT entry_id,\n        SUM(CASE WHEN type IN ('goal', 'pen_goal') THEN 1 ELSE 0 END) AS scored,\n        SUM(CASE WHEN type = 'own_goal' THEN 1 ELSE 0 END) AS og\n FROM match_event\n WHERE match_id = ? GROUP BY entry_id",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [
+        "UPDATE match_event SET entry_id = ?, player_id = ?, assist_player_id = ?, type = ?, minut…",
+        "INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json) VALUES…"
+      ],
+      "skipped_write_count": 2,
+      "total_rows_read": 6,
+      "duration_ms": 23844
+    },
+    {
+      "name": "admin/match-event-delete",
+      "method": "DELETE",
+      "url": "https://probe.local/api/admin/matches/182/events/1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:27.155Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT m.*, s.kind AS stage_kind, s.tournament_id, t.status AS tournament_status\n       FROM match m\n       JOIN stage s ON s.id = m.stage_id\n       JOIN tournament t ON t.id = s.tournament_id\n       WHERE m.id = ?",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT id, entry_id, player_id, type, minute FROM match_event WHERE id = ? AND match_id = ?",
+          "args": [
+            1,
+            182
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT entry_id,\n        SUM(CASE WHEN type IN ('goal', 'pen_goal') THEN 1 ELSE 0 END) AS scored,\n        SUM(CASE WHEN type = 'own_goal' THEN 1 ELSE 0 END) AS og\n FROM match_event\n WHERE match_id = ? GROUP BY entry_id",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [
+        "DELETE FROM match_event WHERE id = ?",
+        "INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json) VALUES…"
+      ],
+      "skipped_write_count": 2,
+      "total_rows_read": 5,
+      "duration_ms": 17256
+    },
+    {
+      "name": "admin/injury-post",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/injuries",
+      "status": 409,
+      "note": "桩行的 injury 行恒存在 ⇒ 在「该事件已建过登记」的 409 处停下，量到的是前置读",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:44.426Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT me.id, me.entry_id, me.player_id, me.type, me.match_id,\n            e.team_id, m.stage_id, s.tournament_id\n     FROM match_event me\n     JOIN entry e ON e.id = me.entry_id\n     JOIN match m ON m.id = me.match_id\n     JOIN stage s ON s.id = m.stage_id\n     WHERE me.id = ? AND me.type IN ('injury_minor', 'injury_major')",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT id FROM injury WHERE event_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1,
+      "duration_ms": 10109
+    },
+    {
+      "name": "admin/injury-put",
+      "method": "PUT",
+      "url": "https://probe.local/api/admin/injuries/1",
+      "status": 400,
+      "note": "同上，桩行让它在守卫处停下",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:42:54.537Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT i.id, i.team_id, i.event_id, i.injury_name, me.type AS event_type, me.match_id\n     FROM injury i\n     JOIN match_event me ON me.id = i.event_id\n     WHERE i.id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT m.id FROM match m\n       JOIN entry e1 ON e1.id = m.home_entry_id\n       LEFT JOIN entry e2 ON e2.id = m.away_entry_id\n       WHERE m.id IN (?)\n         AND (e1.team_id = ? OR e2.team_id = ?)",
+          "args": [
+            182,
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 3
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 5,
+      "duration_ms": 12351
+    },
+    {
+      "name": "admin/injury-delete",
+      "method": "DELETE",
+      "url": "https://probe.local/api/admin/injuries/1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:06.890Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT i.id, i.event_id, i.player_id, me.match_id\n     FROM injury i JOIN match_event me ON me.id = i.event_id WHERE i.id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 2
+        }
+      ],
+      "skipped_writes": [
+        "DELETE FROM injury WHERE id = ?",
+        "INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json) VALUES…"
+      ],
+      "skipped_write_count": 2,
+      "total_rows_read": 2,
+      "duration_ms": 8115
+    },
+    {
+      "name": "admin/tournament-transition",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/tournaments/1/transition",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:15.007Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT status FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [
+        "UPDATE tournament SET status = ? WHERE id = ?"
+      ],
+      "skipped_write_count": 1,
+      "total_rows_read": 1,
+      "duration_ms": 7863
+    },
+    {
+      "name": "admin/team-post",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/teams",
+      "status": 409,
+      "note": "桩行的「id 是否被占用」恒为真 ⇒ 409 停下，量到的是前置读",
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:22.872Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT id FROM team WHERE id = ?",
+          "args": [
+            999999
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 1,
+      "duration_ms": 8057
+    },
+    {
+      "name": "admin/team-patch",
+      "method": "PATCH",
+      "url": "https://probe.local/api/admin/teams/1",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:30.932Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        }
+      ],
+      "skipped_writes": [
+        "UPDATE team SET name = ? WHERE id = ?"
+      ],
+      "skipped_write_count": 1,
+      "total_rows_read": 0,
+      "duration_ms": 3777
+    },
+    {
+      "name": "admin/entries-bulk",
+      "method": "POST",
+      "url": "https://probe.local/api/admin/tournaments/1/entries/bulk",
+      "status": 201,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:34.710Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT status FROM tournament WHERE id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT id, name FROM team WHERE id IN (?)",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT team_id FROM entry WHERE tournament_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 13
+        },
+        {
+          "sql": "SELECT COALESCE(MAX(seed), 0) AS max FROM entry WHERE tournament_id = ?",
+          "args": [
+            1
+          ],
+          "db": "DB",
+          "rows_read": 13
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 28,
+      "duration_ms": 17357
+    },
+    {
+      "name": "coach/lineup-put",
+      "method": "PUT",
+      "url": "https://probe.local/api/coach/matches/284/lineup",
+      "status": 400,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:43:52.071Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        },
+        {
+          "sql": "SELECT m.status, he.team_id AS home_tid, ae.team_id AS away_tid\n     FROM match m\n     LEFT JOIN entry he ON he.id = m.home_entry_id\n     LEFT JOIN entry ae ON ae.id = m.away_entry_id\n     WHERE m.id = ?",
+          "args": [
+            284
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT \n  g.id, g.match_id, g.team_id, g.grantee_user_id, g.granted_by, g.revoked_at, g.created_at,\n  m.status AS match_status, m.round, m.leg,\n  t.id AS tournament_id, t.name AS tournament_name,\n  s.name AS stage_name, s.kind AS stage_kind,\n  tt.name AS team_name,\n  he.team_id AS home_tid, ae.team_id AS away_tid,\n  ht.name AS home_team_name, at.name AS away_team_name,\n  ts.id AS sub_id, ts.created_by AS sub_by\nFROM lineup_proxy_grant g\nJOIN match m ON m.id = g.match_id\nJOIN stage s ON s.id = m.stage_id\nJOIN tournament t ON t.id = s.tournament_id\nLEFT JOIN entry he ON he.id = m.home_entry_id\nLEFT JOIN entry ae ON ae.id = m.away_entry_id\nLEFT JOIN team ht ON ht.id = he.team_id\nLEFT JOIN team at ON at.id = ae.team_id\nLEFT JOIN team tt ON tt.id = g.team_id\nLEFT JOIN tactic_submission ts ON ts.match_id = g.match_id AND ts.team_id = g.team_id WHERE g.match_id = ? AND g.team_id = ?\n         AND g.revoked_at IS NULL AND m.status = 'pending'",
+          "args": [
+            284,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 3
+        },
+        {
+          "sql": "SELECT COUNT(*) AS n FROM player WHERE team_id = ? AND id IN (?,?,?,?,?,?,?,?,?,?,?)",
+          "args": [
+            1,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "db": "DB",
+          "rows_read": 11
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 19,
+      "duration_ms": 18843
+    },
+    {
+      "name": "coach/tactics-post",
+      "method": "POST",
+      "url": "https://probe.local/api/coach/tactics",
+      "status": 400,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:44:10.920Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+          "args": [
+            1
+          ],
+          "db": "AUTH_DB",
+          "rows_read": 2
+        }
+      ],
+      "skipped_writes": [],
+      "skipped_write_count": 0,
+      "total_rows_read": 2,
+      "duration_ms": 7503
+    },
+    {
+      "name": "interact/motm-post",
+      "method": "POST",
+      "url": "https://probe.local/api/interact/matches/182/motm",
+      "status": 200,
+      "statements": [
+        {
+          "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+          "args": [
+            "92e2a3caaa3bec34d48004c7da4036f21c00828f51788c7650b9ee4ba5ef63d5",
+            "2026-09-23T15:44:18.428Z"
+          ],
+          "db": "DB",
+          "rows_read": 0
+        },
+        {
+          "sql": "SELECT id, status, home_entry_id, away_entry_id FROM match WHERE id = ?",
+          "args": [
+            182
+          ],
+          "db": "DB",
+          "rows_read": 1
+        },
+        {
+          "sql": "SELECT p.id FROM player p\n     JOIN entry e ON e.team_id = p.team_id\n     WHERE p.id = ? AND e.id IN (?, ?)",
+          "args": [
+            1,
+            1,
+            1
+          ],
+          "db": "DB",
+          "rows_read": 1
+        }
+      ],
+      "skipped_writes": [
+        "INSERT INTO motm_vote (match_id, user_id, player_id, updated_at) VALUES (?, ?, ?, strftim…"
+      ],
+      "skipped_write_count": 1,
+      "total_rows_read": 2,
+      "duration_ms": 11969
+    }
+  ],
+  "grand_total_rows_read": 648
+}

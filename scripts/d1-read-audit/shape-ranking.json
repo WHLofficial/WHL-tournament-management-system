@@ -1,0 +1,1526 @@
+{
+  "measured_at": "2026-09-23T15:43:40.049Z",
+  "source": "scripts/d1-read-audit/surface-measurements.json",
+  "totals": {
+    "surfaces": 55,
+    "statements": 189,
+    "rows_read": 18904
+  },
+  "tables": [
+    {
+      "table": "match",
+      "rows_read": 10826,
+      "statements": 45,
+      "share": 0.5727
+    },
+    {
+      "table": "match_event",
+      "rows_read": 3337,
+      "statements": 23,
+      "share": 0.1765
+    },
+    {
+      "table": "player",
+      "rows_read": 2203,
+      "statements": 7,
+      "share": 0.1165
+    },
+    {
+      "table": "injury_miss",
+      "rows_read": 1079,
+      "statements": 10,
+      "share": 0.0571
+    },
+    {
+      "table": "injury",
+      "rows_read": 640,
+      "statements": 6,
+      "share": 0.0339
+    },
+    {
+      "table": "account",
+      "rows_read": 249,
+      "statements": 5,
+      "share": 0.0132
+    },
+    {
+      "table": "standing",
+      "rows_read": 185,
+      "statements": 5,
+      "share": 0.0098
+    },
+    {
+      "table": "entry",
+      "rows_read": 164,
+      "statements": 7,
+      "share": 0.0087
+    },
+    {
+      "table": "audit_log",
+      "rows_read": 49,
+      "statements": 2,
+      "share": 0.0026
+    },
+    {
+      "table": "lineup_proxy_grant",
+      "rows_read": 46,
+      "statements": 3,
+      "share": 0.0024
+    },
+    {
+      "table": "stage",
+      "rows_read": 35,
+      "statements": 7,
+      "share": 0.0019
+    },
+    {
+      "table": "team",
+      "rows_read": 23,
+      "statements": 4,
+      "share": 0.0012
+    },
+    {
+      "table": "team_binding",
+      "rows_read": 20,
+      "statements": 7,
+      "share": 0.0011
+    },
+    {
+      "table": "user",
+      "rows_read": 17,
+      "statements": 1,
+      "share": 0.0009
+    },
+    {
+      "table": "tournament",
+      "rows_read": 16,
+      "statements": 16,
+      "share": 0.0008
+    },
+    {
+      "table": "tactic",
+      "rows_read": 5,
+      "statements": 1,
+      "share": 0.0003
+    },
+    {
+      "table": "announcement",
+      "rows_read": 4,
+      "statements": 2,
+      "share": 0.0002
+    },
+    {
+      "table": "reaction",
+      "rows_read": 2,
+      "statements": 1,
+      "share": 0.0001
+    },
+    {
+      "table": "motm_vote",
+      "rows_read": 2,
+      "statements": 2,
+      "share": 0.0001
+    },
+    {
+      "table": "team_bind_code",
+      "rows_read": 2,
+      "statements": 1,
+      "share": 0.0001
+    },
+    {
+      "table": "oidc_session",
+      "rows_read": 0,
+      "statements": 29,
+      "share": 0
+    },
+    {
+      "table": "tactic_submission",
+      "rows_read": 0,
+      "statements": 5,
+      "share": 0
+    }
+  ],
+  "shapes": [
+    {
+      "sql": "SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name, m.round, s.kind AS stage_kind, m.status, eh.id AS home_team_id, eh.name AS home_team_name, ea.id AS away_team_id, ea.name AS away_team_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id JOIN entry e1 ON e1.id = m.home_entry_id JOIN team eh ON eh.id = e1.team_id LEFT JOIN entry e2 ON e2.id = m.away_entry_id LEFT JOIN team ea ON ea.id = e2.team_id WHERE e1.team_id = ? OR e2.team_id = ? ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id",
+      "table": "match",
+      "rows_read": 1342,
+      "calls": 1,
+      "surfaces": [
+        "admin/injury-candidates"
+      ],
+      "share": 0.071
+    },
+    {
+      "sql": "SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status, m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round, ht.name AS home_team_name, at.name AS away_team_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE t.status != 'draft' AND m.status = 'pending' AND (m.note IS NULL OR m.note != '轮空') ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.id, s.sort_order, m.round, m.slot LIMIT 8",
+      "table": "match",
+      "rows_read": 1192,
+      "calls": 1,
+      "surfaces": [
+        "public/upcoming"
+      ],
+      "share": 0.0631
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind, s.name AS stage_name, s.sort_order AS stage_order FROM match m JOIN stage s ON s.id = m.stage_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.status = 'pending' AND he.id IS NOT NULL AND ae.id IS NOT NULL ORDER BY s.sort_order, m.round, m.slot LIMIT 4",
+      "table": "match",
+      "rows_read": 808,
+      "calls": 1,
+      "surfaces": [
+        "public/tournament-summary"
+      ],
+      "share": 0.0427
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind, th.team_id IS NOT NULL AS home_sub, ta.team_id IS NOT NULL AS away_sub FROM match m JOIN stage s ON s.id = m.stage_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id LEFT JOIN tactic_submission th ON th.match_id = m.id AND th.team_id = he.team_id LEFT JOIN tactic_submission ta ON ta.match_id = m.id AND ta.team_id = ae.team_id WHERE s.tournament_id = ? ORDER BY s.sort_order, m.round, m.slot, m.leg",
+      "table": "match",
+      "rows_read": 800,
+      "calls": 1,
+      "surfaces": [
+        "admin/tournament-matches"
+      ],
+      "share": 0.0423
+    },
+    {
+      "sql": "SELECT me.player_id, p.name, tm.name AS team_name, COUNT(*) AS goals, SUM(CASE WHEN me.type = 'pen_goal' THEN 1 ELSE 0 END) AS pen_goals FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN player p ON p.id = me.player_id JOIN entry e ON e.id = me.entry_id JOIN team tm ON tm.id = e.team_id WHERE s.tournament_id = ? AND me.type IN ('goal', 'pen_goal') AND me.player_id IS NOT NULL GROUP BY me.player_id",
+      "table": "match_event",
+      "rows_read": 794,
+      "calls": 1,
+      "surfaces": [
+        "public/match-report"
+      ],
+      "share": 0.042
+    },
+    {
+      "sql": "SELECT m.id, m.round, m.leg, m.note, t.id AS tournament_id, t.name AS tournament_name, s.name AS stage_name, s.kind AS stage_kind, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_team_name, at.name AS away_team_name, ts.id AS sub_id, g.id AS grant_id FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN team at ON at.id = ae.team_id LEFT JOIN tactic_submission ts ON ts.match_id = m.id AND ts.team_id = ? LEFT JOIN lineup_proxy_grant g ON g.id = (SELECT MIN(g2.id) FROM lineup_proxy_grant g2 WHERE g2.match_id = m.id AND g2.team_id = ? AND g2.revoked_at IS NULL) WHERE m.status = 'pending' AND t.status != 'draft' AND (m.note IS NULL OR m.note != '轮空') AND (he.team_id = ? OR ae.team_id = ?) ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot",
+      "table": "match",
+      "rows_read": 785,
+      "calls": 1,
+      "surfaces": [
+        "coach/me-matches"
+      ],
+      "share": 0.0415
+    },
+    {
+      "sql": "SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key, (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count FROM entry e JOIN team tm ON tm.id = e.team_id WHERE e.tournament_id = ? ORDER BY e.seed",
+      "table": "player",
+      "rows_read": 782,
+      "calls": 2,
+      "surfaces": [
+        "admin/tournament",
+        "public/tournament"
+      ],
+      "share": 0.0414
+    },
+    {
+      "sql": "SELECT t.id AS tournament_id FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id WHERE m.status = 'pending' AND t.status != 'draft' AND (m.note IS NULL OR m.note != '轮空') AND (he.team_id = ? OR ae.team_id = ?) ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1",
+      "table": "match",
+      "rows_read": 755,
+      "calls": 1,
+      "surfaces": [
+        "coach/me-status"
+      ],
+      "share": 0.0399
+    },
+    {
+      "sql": "SELECT me.match_id, me.player_id, me.assist_player_id, me.type, p.name AS player_name, ap.name AS assist_name, t.id AS team_id, t.name AS team_name FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id LEFT JOIN player p ON p.id = me.player_id LEFT JOIN player ap ON ap.id = me.assist_player_id WHERE s.tournament_id = ?",
+      "table": "match_event",
+      "rows_read": 748,
+      "calls": 1,
+      "surfaces": [
+        "public/toplists"
+      ],
+      "share": 0.0396
+    },
+    {
+      "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name, m.round, s.kind AS stage_kind, m.status FROM injury_miss im JOIN match m ON m.id = im.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+      "table": "injury_miss",
+      "rows_read": 720,
+      "calls": 3,
+      "surfaces": [
+        "public/toplists",
+        "admin/injuries",
+        "public/injuries"
+      ],
+      "share": 0.0381
+    },
+    {
+      "sql": "SELECT t.id, t.name, t.logo_key, (SELECT COUNT(*) FROM player p WHERE p.team_id = t.id) AS player_count, (SELECT COUNT(*) FROM entry e WHERE e.team_id = t.id) AS entry_count FROM team t WHERE t.org_id = 1 ORDER BY t.name",
+      "table": "player",
+      "rows_read": 668,
+      "calls": 1,
+      "surfaces": [
+        "admin/teams"
+      ],
+      "share": 0.0353
+    },
+    {
+      "sql": "SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL AND COALESCE(m.note, '') != '轮空' GROUP BY m.stage_id, m.round HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END) AND MAX(m.finished_at) < COALESCE(?, '9999-12-31') ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT 20",
+      "table": "match",
+      "rows_read": 665,
+      "calls": 1,
+      "surfaces": [
+        "public/feed"
+      ],
+      "share": 0.0352
+    },
+    {
+      "sql": "SELECT stage_id, MAX(round) AS mr FROM match WHERE stage_id IN (?) GROUP BY stage_id",
+      "table": "match",
+      "rows_read": 665,
+      "calls": 5,
+      "surfaces": [
+        "public/feed",
+        "public/match-report",
+        "public/round"
+      ],
+      "share": 0.0352
+    },
+    {
+      "sql": "SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side FROM match WHERE stage_id = ? AND status = 'finished' AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'",
+      "table": "match",
+      "rows_read": 665,
+      "calls": 5,
+      "surfaces": [
+        "public/feed",
+        "public/match-report",
+        "public/round",
+        "public/standings",
+        "admin/tournament-standings"
+      ],
+      "share": 0.0352
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name, m.round, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.walkover_side, m.note, m.status, m.finished_at FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.status = 'finished' AND COALESCE(m.note, '') != '轮空' ORDER BY m.finished_at ASC, m.id ASC",
+      "table": "match",
+      "rows_read": 578,
+      "calls": 2,
+      "surfaces": [
+        "public/feed",
+        "public/match-report"
+      ],
+      "share": 0.0306
+    },
+    {
+      "sql": "SELECT m.id, m.round, m.score_home, m.score_away, he.team_id AS home_team_id, ht.name AS home_team_name, ae.team_id AS away_team_id, at.name AS away_team_name, s.kind AS stage_kind, s.sort_order AS stage_order FROM match m JOIN stage s ON s.id = m.stage_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.status = 'finished' AND m.score_home IS NOT NULL AND m.score_away IS NOT NULL ORDER BY m.id",
+      "table": "match",
+      "rows_read": 578,
+      "calls": 2,
+      "surfaces": [
+        "public/toplists",
+        "public/stats"
+      ],
+      "share": 0.0306
+    },
+    {
+      "sql": "SELECT id, team_id, name, number FROM player",
+      "table": "player",
+      "rows_read": 570,
+      "calls": 1,
+      "surfaces": [
+        "cron-roster-sync"
+      ],
+      "share": 0.0302
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name, m.round, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.walkover_side, m.note, m.status, m.finished_at FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE t.status != 'draft' AND m.status = 'finished' ORDER BY m.finished_at DESC, m.id DESC LIMIT ?",
+      "table": "match",
+      "rows_read": 487,
+      "calls": 1,
+      "surfaces": [
+        "public/feed"
+      ],
+      "share": 0.0258
+    },
+    {
+      "sql": "SELECT SUM(CASE WHEN me.type = 'yellow' AND NOT EXISTS (SELECT 1 FROM match_event r WHERE r.match_id = me.match_id AND r.player_id = me.player_id AND r.type = 'red_2y') THEN 1 ELSE 0 END) AS yellows, SUM(CASE WHEN me.type IN ('red', 'red_2y') THEN 1 ELSE 0 END) AS reds FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = ?",
+      "table": "match_event",
+      "rows_read": 432,
+      "calls": 1,
+      "surfaces": [
+        "public/stats"
+      ],
+      "share": 0.0229
+    },
+    {
+      "sql": "SELECT me.type, COUNT(*) AS n FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = ? GROUP BY me.type",
+      "table": "match_event",
+      "rows_read": 420,
+      "calls": 1,
+      "surfaces": [
+        "public/stats"
+      ],
+      "share": 0.0222
+    },
+    {
+      "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at, me.type AS event_type, me.minute AS event_minute, p.name AS player_name, t.name AS team_name, fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name, fm.round AS from_round, fs.kind AS from_stage_kind FROM injury i JOIN match_event me ON me.id = i.event_id JOIN player p ON p.id = i.player_id JOIN team t ON t.id = i.team_id JOIN match fm ON fm.id = me.match_id JOIN stage fs ON fs.id = fm.stage_id JOIN tournament ft ON ft.id = fs.tournament_id",
+      "table": "injury",
+      "rows_read": 392,
+      "calls": 2,
+      "surfaces": [
+        "public/toplists",
+        "public/injuries"
+      ],
+      "share": 0.0207
+    },
+    {
+      "sql": "SELECT me.id AS event_id, me.match_id, me.type AS event_type, me.minute, t2.id AS tournament_id, t2.name AS tournament_name, s.kind AS stage_kind, m.round, m.status AS match_status, m.finished_at, t.id AS team_id, t.name AS team_name, p.id AS player_id, p.name AS player_name, CASE WHEN e1.team_id = t.id THEN ea.name ELSE eh.name END AS opponent_name FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id JOIN entry e1 ON e1.id = m.home_entry_id JOIN team eh ON eh.id = e1.team_id LEFT JOIN entry e2 ON e2.id = m.away_entry_id LEFT JOIN team ea ON ea.id = e2.team_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id LEFT JOIN player p ON p.id = me.player_id LEFT JOIN injury i ON i.event_id = me.id WHERE me.type IN ('injury_minor', 'injury_major') AND i.id IS NULL ORDER BY m.finished_at DESC, me.id DESC",
+      "table": "match_event",
+      "rows_read": 341,
+      "calls": 1,
+      "surfaces": [
+        "admin/injury-events"
+      ],
+      "share": 0.018
+    },
+    {
+      "sql": "SELECT m.id, m.home_entry_id, m.away_entry_id, m.status, m.note, m.walkover_side, s.sort_order AS stage_order, m.round, m.slot, m.leg FROM match m JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = ? AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?) OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?)) ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+      "table": "match",
+      "rows_read": 284,
+      "calls": 2,
+      "surfaces": [
+        "coach/me-status",
+        "coach/proxy-board"
+      ],
+      "share": 0.015
+    },
+    {
+      "sql": "SELECT m.id, m.home_entry_id, m.away_entry_id, m.status, m.note, m.walkover_side, s.sort_order AS stage_order, m.round, m.slot, m.leg FROM match m JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = ? ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+      "table": "match",
+      "rows_read": 267,
+      "calls": 1,
+      "surfaces": [
+        "public/toplists"
+      ],
+      "share": 0.0141
+    },
+    {
+      "sql": "SELECT m.status, COUNT(*) AS n FROM match m JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = ? GROUP BY m.status",
+      "table": "match",
+      "rows_read": 267,
+      "calls": 1,
+      "surfaces": [
+        "public/stats"
+      ],
+      "share": 0.0141
+    },
+    {
+      "sql": "SELECT a.id AS account_id, a.name, t.tour_team_id, t.name AS team_name FROM account a LEFT JOIN team_binding b ON b.account_id = a.id LEFT JOIN team t ON t.id = b.team_id ORDER BY (t.name IS NULL), t.name, a.name",
+      "table": "account",
+      "rows_read": 232,
+      "calls": 4,
+      "surfaces": [
+        "coach/proxy-board",
+        "admin/proxy-grants",
+        "coach/proxy-sessions",
+        "admin/rosters-context"
+      ],
+      "share": 0.0123
+    },
+    {
+      "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at, me.type AS event_type, me.minute AS event_minute, p.name AS player_name, tm.name AS team_name, fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name, fm.round AS from_round, fs.kind AS from_stage_kind FROM injury i JOIN match_event me ON me.id = i.event_id JOIN player p ON p.id = i.player_id JOIN team tm ON tm.id = i.team_id JOIN match fm ON fm.id = me.match_id JOIN stage fs ON fs.id = fm.stage_id JOIN tournament ft ON ft.id = fs.tournament_id ORDER BY i.created_at DESC, i.id DESC",
+      "table": "injury",
+      "rows_read": 224,
+      "calls": 1,
+      "surfaces": [
+        "admin/injuries"
+      ],
+      "share": 0.0118
+    },
+    {
+      "sql": "SELECT me.id, me.match_id, me.entry_id, me.player_id, me.type, me.created_at, p.name AS player_name, t.id AS team_id, t.name AS team_name FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id JOIN player p ON p.id = me.player_id WHERE s.tournament_id = ? AND me.player_id IS NOT NULL AND me.type IN ('yellow', 'red', 'red_2y') ORDER BY me.id",
+      "table": "match_event",
+      "rows_read": 207,
+      "calls": 1,
+      "surfaces": [
+        "public/toplists"
+      ],
+      "share": 0.011
+    },
+    {
+      "sql": "SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key, s.played, s.won, s.drawn, s.lost, s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted FROM standing s JOIN entry e ON e.id = s.entry_id JOIN team t ON t.id = e.team_id WHERE s.stage_id = ?",
+      "table": "standing",
+      "rows_read": 185,
+      "calls": 5,
+      "surfaces": [
+        "public/feed",
+        "public/match-report",
+        "public/round",
+        "public/standings",
+        "admin/tournament-standings"
+      ],
+      "share": 0.0098
+    },
+    {
+      "sql": "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id",
+      "table": "player",
+      "rows_read": 183,
+      "calls": 3,
+      "surfaces": [
+        "coach/proxy-board",
+        "coach/me-team",
+        "admin/team"
+      ],
+      "share": 0.0097
+    },
+    {
+      "sql": "SELECT me.id AS event_id, i.id AS injury_id, me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name, me.type, i.injury_name, m.id AS match_id, m.stage_id, m.round, m.finished_at, s.tournament_id, tt.name AS tournament_name, (SELECT COUNT(*) FROM injury_miss im JOIN match m2 ON m2.id = im.match_id WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament tt ON tt.id = s.tournament_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id JOIN player p ON p.id = me.player_id LEFT JOIN injury i ON i.event_id = me.id WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND m.finished_at >= ? AND m.finished_at < ? ORDER BY m.finished_at, me.id",
+      "table": "injury_miss",
+      "rows_read": 178,
+      "calls": 2,
+      "surfaces": [
+        "public/feed",
+        "public/weekly"
+      ],
+      "share": 0.0094
+    },
+    {
+      "sql": "SELECT me.id, me.match_id, me.entry_id, me.player_id, me.type, me.created_at, p.name AS player_name, t.id AS team_id, t.name AS team_name FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id JOIN player p ON p.id = me.player_id WHERE s.tournament_id = ? AND me.player_id IS NOT NULL AND me.type IN ('yellow', 'red', 'red_2y') AND p.team_id = ? ORDER BY me.id",
+      "table": "match_event",
+      "rows_read": 176,
+      "calls": 2,
+      "surfaces": [
+        "coach/me-status",
+        "coach/proxy-board"
+      ],
+      "share": 0.0093
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name, m.round, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.walkover_side, m.note, m.status, m.finished_at FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE m.stage_id = ? AND m.round = ? AND m.status = 'finished' ORDER BY m.finished_at ASC, m.id ASC",
+      "table": "match",
+      "rows_read": 173,
+      "calls": 2,
+      "surfaces": [
+        "public/feed",
+        "public/round"
+      ],
+      "share": 0.0092
+    },
+    {
+      "sql": "SELECT s.id AS stage_id, s.name AS stage_name, s.kind AS stage_kind, s.sort_order AS stage_order, m.round AS round, COUNT(*) AS count, SUM(m.status = 'live') AS live, SUM(m.status = 'finished') AS finished, SUM(m.status = 'pending') AS pending FROM match m JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = ? GROUP BY s.id, m.round ORDER BY s.sort_order, m.round",
+      "table": "match",
+      "rows_read": 157,
+      "calls": 1,
+      "surfaces": [
+        "public/tournament-rounds"
+      ],
+      "share": 0.0083
+    },
+    {
+      "sql": "SELECT me.id AS event_id, i.id AS injury_id, me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name, me.type, i.injury_name, m.id AS match_id, m.stage_id, m.round, m.finished_at, s.tournament_id, tt.name AS tournament_name, (SELECT COUNT(*) FROM injury_miss im JOIN match m2 ON m2.id = im.match_id WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament tt ON tt.id = s.tournament_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id JOIN player p ON p.id = me.player_id LEFT JOIN injury i ON i.event_id = me.id WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND m.stage_id = ? AND m.round = ? ORDER BY m.finished_at, me.id",
+      "table": "injury_miss",
+      "rows_read": 126,
+      "calls": 2,
+      "surfaces": [
+        "public/feed",
+        "public/round"
+      ],
+      "share": 0.0067
+    },
+    {
+      "sql": "SELECT me.match_id, COUNT(*) AS n FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = ? AND me.type IN ('injury_minor', 'injury_major') GROUP BY me.match_id ORDER BY n DESC, me.match_id ASC LIMIT 1",
+      "table": "match_event",
+      "rows_read": 116,
+      "calls": 1,
+      "surfaces": [
+        "public/stats"
+      ],
+      "share": 0.0061
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name, m.round, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.walkover_side, m.note, m.status, m.finished_at FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE t.status != 'draft' AND m.status = 'finished' AND m.finished_at >= ? AND m.finished_at < ? ORDER BY m.finished_at DESC, m.id DESC",
+      "table": "match",
+      "rows_read": 114,
+      "calls": 2,
+      "surfaces": [
+        "public/feed",
+        "public/weekly"
+      ],
+      "share": 0.006
+    },
+    {
+      "sql": "SELECT t.id AS tournament_id, t.name AS tournament_name, m.id AS match_id, s.kind AS stage_kind, m.round, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, m.score_home, m.score_away, m.finished_at FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE t.status != 'draft' AND m.status = 'finished' AND m.score_home IS NOT NULL AND m.score_away IS NOT NULL ORDER BY m.finished_at DESC, m.id DESC LIMIT 10",
+      "table": "match",
+      "rows_read": 87,
+      "calls": 1,
+      "surfaces": [
+        "public/recent"
+      ],
+      "share": 0.0046
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind, s.name AS stage_name, s.sort_order AS stage_order FROM match m JOIN stage s ON s.id = m.stage_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.status = 'finished' ORDER BY m.finished_at DESC, m.id DESC LIMIT 4",
+      "table": "match",
+      "rows_read": 58,
+      "calls": 1,
+      "surfaces": [
+        "public/tournament-summary"
+      ],
+      "share": 0.0031
+    },
+    {
+      "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, me.player_id, p.name AS player_name, ap.id AS assist_player_id, ap.name AS assist_name, me.created_at FROM match_event me LEFT JOIN player p ON p.id = me.player_id LEFT JOIN player ap ON ap.id = me.assist_player_id WHERE me.match_id IN (?) ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+      "table": "match_event",
+      "rows_read": 54,
+      "calls": 6,
+      "surfaces": [
+        "public/feed",
+        "public/match-report",
+        "public/round",
+        "public/weekly"
+      ],
+      "share": 0.0029
+    },
+    {
+      "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key, (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count FROM tournament t WHERE t.status != 'draft' ORDER BY CASE t.status WHEN 'running' THEN 0 WHEN 'registering' THEN 1 ELSE 2 END, t.created_at DESC",
+      "table": "entry",
+      "rows_read": 48,
+      "calls": 1,
+      "surfaces": [
+        "public/tournaments"
+      ],
+      "share": 0.0025
+    },
+    {
+      "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key, (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count FROM tournament t ORDER BY t.created_at DESC",
+      "table": "entry",
+      "rows_read": 48,
+      "calls": 1,
+      "surfaces": [
+        "admin/tournaments"
+      ],
+      "share": 0.0025
+    },
+    {
+      "sql": "SELECT me.id, me.match_id, me.type, me.minute, me.entry_id, p.name AS player_name, ap.name AS assist_player_name FROM match_event me LEFT JOIN player p ON p.id = me.player_id LEFT JOIN player ap ON ap.id = me.assist_player_id WHERE me.match_id IN (?) ORDER BY me.match_id, COALESCE(me.minute, -1), me.id",
+      "table": "match_event",
+      "rows_read": 45,
+      "calls": 5,
+      "surfaces": [
+        "public/tournament-summary",
+        "public/recent",
+        "public/match",
+        "public/tournament-matches",
+        "public/live"
+      ],
+      "share": 0.0024
+    },
+    {
+      "sql": "SELECT g.id, g.match_id, g.team_id, g.grantee_user_id, g.granted_by, g.revoked_at, g.created_at, m.status AS match_status, m.round, m.leg, t.id AS tournament_id, t.name AS tournament_name, s.name AS stage_name, s.kind AS stage_kind, tt.name AS team_name, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_team_name, at.name AS away_team_name, ts.id AS sub_id, ts.created_by AS sub_by FROM lineup_proxy_grant g JOIN match m ON m.id = g.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN team at ON at.id = ae.team_id LEFT JOIN team tt ON tt.id = g.team_id LEFT JOIN tactic_submission ts ON ts.match_id = g.match_id AND ts.team_id = g.team_id ORDER BY g.created_at DESC, g.id DESC LIMIT 200",
+      "table": "lineup_proxy_grant",
+      "rows_read": 42,
+      "calls": 1,
+      "surfaces": [
+        "admin/proxy-grants"
+      ],
+      "share": 0.0022
+    },
+    {
+      "sql": "SELECT a.id, a.created_at, a.target_id, a.detail_json, t.id AS tournament_id, t.name AS tournament_name, ht.name AS home_team_name, at.name AS away_team_name, s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round FROM audit_log a JOIN match m ON m.id = a.target_id JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE a.action = 'match_rescore' AND t.status != 'draft' ORDER BY a.id DESC LIMIT 20",
+      "table": "audit_log",
+      "rows_read": 41,
+      "calls": 1,
+      "surfaces": [
+        "public/feed"
+      ],
+      "share": 0.0022
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind, s.name AS stage_name, s.sort_order AS stage_order FROM match m JOIN stage s ON s.id = m.stage_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.stage_id = ? AND m.round = ? ORDER BY s.sort_order, m.round, m.slot, m.leg",
+      "table": "match",
+      "rows_read": 38,
+      "calls": 1,
+      "surfaces": [
+        "public/tournament-matches"
+      ],
+      "share": 0.002
+    },
+    {
+      "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name, m.round, s.kind AS stage_kind, m.status FROM injury_miss im JOIN injury i ON i.id = im.injury_id JOIN match m ON m.id = im.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id WHERE i.team_id IN (?) ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+      "table": "injury_miss",
+      "rows_read": 36,
+      "calls": 2,
+      "surfaces": [
+        "coach/me-status",
+        "coach/proxy-board"
+      ],
+      "share": 0.0019
+    },
+    {
+      "sql": "SELECT DISTINCT t.id, t.name, t.logo_key FROM entry e JOIN team t ON t.id = e.team_id WHERE e.tournament_id = ?",
+      "table": "entry",
+      "rows_read": 25,
+      "calls": 1,
+      "surfaces": [
+        "public/injuries"
+      ],
+      "share": 0.0013
+    },
+    {
+      "sql": "SELECT g.id, g.stage_id, g.name, g.sort_order FROM \"group\" g JOIN stage s ON s.id = g.stage_id WHERE s.tournament_id = ? ORDER BY s.sort_order, g.sort_order",
+      "table": "stage",
+      "rows_read": 22,
+      "calls": 2,
+      "surfaces": [
+        "admin/tournament",
+        "public/tournament"
+      ],
+      "share": 0.0012
+    },
+    {
+      "sql": "SELECT id FROM team",
+      "table": "team",
+      "rows_read": 20,
+      "calls": 1,
+      "surfaces": [
+        "cron-roster-sync"
+      ],
+      "share": 0.0011
+    },
+    {
+      "sql": "SELECT m.status, t.status AS tournament_status, he.team_id AS home_tid, ae.team_id AS away_tid FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id WHERE m.id = ?",
+      "table": "match",
+      "rows_read": 20,
+      "calls": 4,
+      "surfaces": [
+        "coach/proxy-board",
+        "coach/match-lineup",
+        "public/match-lineup",
+        "admin/match-lineup"
+      ],
+      "share": 0.0011
+    },
+    {
+      "sql": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name, m.round, s.kind AS stage_kind, m.status FROM injury_miss im JOIN injury i ON i.id = im.injury_id JOIN match m ON m.id = im.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id WHERE i.team_id IN (?,?) ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+      "table": "injury_miss",
+      "rows_read": 19,
+      "calls": 1,
+      "surfaces": [
+        "public/match"
+      ],
+      "share": 0.001
+    },
+    {
+      "sql": "SELECT id, name, locked, created_at FROM account ORDER BY id",
+      "table": "account",
+      "rows_read": 17,
+      "calls": 1,
+      "surfaces": [
+        "cron-account-mirror"
+      ],
+      "share": 0.0009
+    },
+    {
+      "sql": "SELECT id, name FROM user",
+      "table": "user",
+      "rows_read": 17,
+      "calls": 1,
+      "surfaces": [
+        "cron-account-mirror"
+      ],
+      "share": 0.0009
+    },
+    {
+      "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at, me.type AS event_type, me.minute AS event_minute, p.name AS player_name, t.name AS team_name, fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name, fm.round AS from_round, fs.kind AS from_stage_kind FROM injury i JOIN match_event me ON me.id = i.event_id JOIN player p ON p.id = i.player_id JOIN team t ON t.id = i.team_id JOIN match fm ON fm.id = me.match_id JOIN stage fs ON fs.id = fm.stage_id JOIN tournament ft ON ft.id = fs.tournament_id WHERE i.team_id = ?",
+      "table": "injury",
+      "rows_read": 16,
+      "calls": 2,
+      "surfaces": [
+        "coach/me-status",
+        "coach/proxy-board"
+      ],
+      "share": 0.0008
+    },
+    {
+      "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key, t.config_json, (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count FROM tournament t WHERE t.id = ?",
+      "table": "entry",
+      "rows_read": 14,
+      "calls": 1,
+      "surfaces": [
+        "admin/tournament"
+      ],
+      "share": 0.0007
+    },
+    {
+      "sql": "SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key, (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count FROM tournament t WHERE t.id = ? AND t.status != 'draft'",
+      "table": "entry",
+      "rows_read": 14,
+      "calls": 1,
+      "surfaces": [
+        "public/tournament"
+      ],
+      "share": 0.0007
+    },
+    {
+      "sql": "SELECT t.tour_team_id AS team_id FROM team_binding b JOIN team t ON t.id = b.team_id WHERE b.account_id = ?",
+      "table": "team_binding",
+      "rows_read": 10,
+      "calls": 5,
+      "surfaces": [
+        "coach/me-status",
+        "coach/me-matches",
+        "coach/me-team",
+        "coach/match-lineup",
+        "coach/tactics"
+      ],
+      "share": 0.0005
+    },
+    {
+      "sql": "SELECT b.account_id, a.name, b.bound_at FROM team_binding b JOIN team t ON t.id = b.team_id JOIN account a ON a.id = b.account_id WHERE t.tour_team_id = ? ORDER BY b.bound_at",
+      "table": "team_binding",
+      "rows_read": 10,
+      "calls": 2,
+      "surfaces": [
+        "coach/me-team",
+        "admin/team-members"
+      ],
+      "share": 0.0005
+    },
+    {
+      "sql": "SELECT e.id, t.name AS tournament_name, t.status, g.name AS group_name, e.seed FROM entry e JOIN tournament t ON t.id = e.tournament_id LEFT JOIN \"group\" g ON g.id = e.group_id WHERE e.team_id = ? ORDER BY t.created_at DESC",
+      "table": "entry",
+      "rows_read": 8,
+      "calls": 1,
+      "surfaces": [
+        "coach/me-team"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT COUNT(*) AS n FROM audit_log WHERE target_type = 'match' AND target_id = ? AND action = 'match_rescore'",
+      "table": "audit_log",
+      "rows_read": 8,
+      "calls": 1,
+      "surfaces": [
+        "public/match"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at, me.type AS event_type, me.minute AS event_minute, p.name AS player_name, fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name, fm.round AS from_round, fs.kind AS from_stage_kind FROM injury i JOIN match_event me ON me.id = i.event_id JOIN player p ON p.id = i.player_id JOIN match fm ON fm.id = me.match_id JOIN stage fs ON fs.id = fm.stage_id JOIN tournament ft ON ft.id = fs.tournament_id WHERE i.team_id IN (?,?)",
+      "table": "injury",
+      "rows_read": 8,
+      "calls": 1,
+      "surfaces": [
+        "public/match"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT config_json FROM tournament WHERE id = ?",
+      "table": "tournament",
+      "rows_read": 7,
+      "calls": 7,
+      "surfaces": [
+        "public/feed",
+        "public/toplists",
+        "admin/tournament",
+        "coach/proxy-board",
+        "public/standings",
+        "admin/tournament-standings"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name, m.round, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.walkover_side, m.note, m.status, m.finished_at FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE m.id = ?",
+      "table": "match",
+      "rows_read": 7,
+      "calls": 1,
+      "surfaces": [
+        "public/match-report"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT t.id AS tournament_id, t.name, t.config_json FROM entry e JOIN tournament t ON t.id = e.tournament_id WHERE e.team_id = ? AND t.status != 'draft' ORDER BY t.created_at DESC, t.id DESC",
+      "table": "entry",
+      "rows_read": 7,
+      "calls": 1,
+      "surfaces": [
+        "coach/me-status"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND round = ? AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'",
+      "table": "match",
+      "rows_read": 7,
+      "calls": 1,
+      "surfaces": [
+        "public/round"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT m.id, m.note, m.stage_id, m.home_entry_id, m.away_entry_id, s.kind AS stage_kind, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_name, at.name AS away_name, ht.logo_key AS home_logo, at.logo_key AS away_logo FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft' LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.id = ?",
+      "table": "match",
+      "rows_read": 7,
+      "calls": 1,
+      "surfaces": [
+        "public/match-h2h"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT m.id, m.note, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_name, at.name AS away_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft' LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.id = ?",
+      "table": "match",
+      "rows_read": 7,
+      "calls": 1,
+      "surfaces": [
+        "public/match-lineup-stats"
+      ],
+      "share": 0.0004
+    },
+    {
+      "sql": "SELECT m.round, m.score_home, m.score_away, ht.name AS home_team_name, at.name AS away_team_name, s.kind AS stage_kind, s.sort_order AS stage_order FROM match m JOIN stage s ON s.id = m.stage_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE m.id = ?",
+      "table": "match",
+      "rows_read": 6,
+      "calls": 1,
+      "surfaces": [
+        "public/stats"
+      ],
+      "share": 0.0003
+    },
+    {
+      "sql": "SELECT id, kind, name, sort_order FROM stage WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order",
+      "table": "stage",
+      "rows_read": 6,
+      "calls": 2,
+      "surfaces": [
+        "public/standings",
+        "admin/tournament-standings"
+      ],
+      "share": 0.0003
+    },
+    {
+      "sql": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, he.team_id AS home_team_id, ae.team_id AS away_team_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind FROM match m JOIN stage s ON s.id = m.stage_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = ? AND m.id = ?",
+      "table": "match",
+      "rows_read": 6,
+      "calls": 1,
+      "surfaces": [
+        "public/match"
+      ],
+      "share": 0.0003
+    },
+    {
+      "sql": "SELECT id, code, form, buildup, line_height, note, roster_json, assign_json, created_at FROM tactic WHERE team_id = ? ORDER BY created_at DESC, id DESC LIMIT 20",
+      "table": "tactic",
+      "rows_read": 5,
+      "calls": 1,
+      "surfaces": [
+        "coach/tactics"
+      ],
+      "share": 0.0003
+    },
+    {
+      "sql": "SELECT COUNT(*) AS n FROM tournament WHERE id = ? AND status != 'draft'",
+      "table": "tournament",
+      "rows_read": 4,
+      "calls": 4,
+      "surfaces": [
+        "public/tournament-summary",
+        "public/tournament-rounds",
+        "public/match",
+        "public/tournament-matches"
+      ],
+      "share": 0.0002
+    },
+    {
+      "sql": "SELECT me.id, me.type, me.created_at, p.name AS player_name, m.id AS match_id, t.id AS tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name, s.id AS stage_id, m.round FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN player p ON p.id = me.player_id WHERE me.type IN ('red', 'red_2y') AND t.status != 'draft' ORDER BY me.created_at DESC, me.id DESC LIMIT 20",
+      "table": "match_event",
+      "rows_read": 3,
+      "calls": 1,
+      "surfaces": [
+        "public/feed"
+      ],
+      "share": 0.0002
+    },
+    {
+      "sql": "SELECT id FROM tournament WHERE id = ? AND status != 'draft'",
+      "table": "tournament",
+      "rows_read": 3,
+      "calls": 3,
+      "surfaces": [
+        "public/toplists",
+        "public/stats",
+        "public/injuries"
+      ],
+      "share": 0.0002
+    },
+    {
+      "sql": "SELECT id, kind, sort_order, name, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order",
+      "table": "stage",
+      "rows_read": 3,
+      "calls": 1,
+      "surfaces": [
+        "admin/tournament"
+      ],
+      "share": 0.0002
+    },
+    {
+      "sql": "SELECT id, kind, sort_order, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order",
+      "table": "stage",
+      "rows_read": 3,
+      "calls": 1,
+      "surfaces": [
+        "public/tournament"
+      ],
+      "share": 0.0002
+    },
+    {
+      "sql": "SELECT g.id, g.match_id, g.team_id, g.grantee_user_id, g.granted_by, g.revoked_at, g.created_at, m.status AS match_status, m.round, m.leg, t.id AS tournament_id, t.name AS tournament_name, s.name AS stage_name, s.kind AS stage_kind, tt.name AS team_name, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_team_name, at.name AS away_team_name, ts.id AS sub_id, ts.created_by AS sub_by FROM lineup_proxy_grant g JOIN match m ON m.id = g.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN team at ON at.id = ae.team_id LEFT JOIN team tt ON tt.id = g.team_id LEFT JOIN tactic_submission ts ON ts.match_id = g.match_id AND ts.team_id = g.team_id WHERE g.match_id = ? AND g.grantee_user_id = ? AND g.revoked_at IS NULL AND m.status = 'pending'",
+      "table": "lineup_proxy_grant",
+      "rows_read": 3,
+      "calls": 1,
+      "surfaces": [
+        "coach/proxy-board"
+      ],
+      "share": 0.0002
+    },
+    {
+      "sql": "SELECT id, name FROM team WHERE id = ?",
+      "table": "team",
+      "rows_read": 2,
+      "calls": 2,
+      "surfaces": [
+        "coach/me-team",
+        "internal/team-upsert"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT id, title, body, updated_at FROM announcement WHERE active = 1 ORDER BY updated_at DESC, id DESC LIMIT 1",
+      "table": "announcement",
+      "rows_read": 2,
+      "calls": 1,
+      "surfaces": [
+        "public/announcement"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT item_id, emoji, cnt FROM reaction WHERE item_id IN (?,?)",
+      "table": "reaction",
+      "rows_read": 2,
+      "calls": 1,
+      "surfaces": [
+        "interact/reactions"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT mv.player_id AS playerId, p.name AS playerName, COUNT(*) AS cnt FROM motm_vote mv JOIN player p ON p.id = mv.player_id WHERE mv.match_id = ? GROUP BY mv.player_id ORDER BY cnt DESC, p.name ASC",
+      "table": "motm_vote",
+      "rows_read": 2,
+      "calls": 1,
+      "surfaces": [
+        "interact/motm"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT id, expires_at, used_by, used_at, created_at FROM team_bind_code WHERE team_id = (SELECT id FROM team WHERE tour_team_id = ?) ORDER BY created_at DESC LIMIT 20",
+      "table": "team_bind_code",
+      "rows_read": 2,
+      "calls": 1,
+      "surfaces": [
+        "admin/team-codes"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT id, title, body, active, created_at, updated_at FROM announcement ORDER BY active DESC, updated_at DESC, id DESC LIMIT 100",
+      "table": "announcement",
+      "rows_read": 2,
+      "calls": 1,
+      "surfaces": [
+        "admin/announcements"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT name, status FROM tournament WHERE id = ?",
+      "table": "tournament",
+      "rows_read": 1,
+      "calls": 1,
+      "surfaces": [
+        "public/round"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT kind, name FROM stage WHERE id = ? AND tournament_id = ?",
+      "table": "stage",
+      "rows_read": 1,
+      "calls": 1,
+      "surfaces": [
+        "public/round"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT id, config_json FROM tournament WHERE id = ? AND status != 'draft'",
+      "table": "tournament",
+      "rows_read": 1,
+      "calls": 1,
+      "surfaces": [
+        "public/standings"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT id, name, logo_key FROM team WHERE id = ? AND org_id = 1",
+      "table": "team",
+      "rows_read": 1,
+      "calls": 1,
+      "surfaces": [
+        "admin/team"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT g.id, g.match_id, g.team_id, g.grantee_user_id, g.granted_by, g.revoked_at, g.created_at, m.status AS match_status, m.round, m.leg, t.id AS tournament_id, t.name AS tournament_name, s.name AS stage_name, s.kind AS stage_kind, tt.name AS team_name, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_team_name, at.name AS away_team_name, ts.id AS sub_id, ts.created_by AS sub_by FROM lineup_proxy_grant g JOIN match m ON m.id = g.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN team at ON at.id = ae.team_id LEFT JOIN team tt ON tt.id = g.team_id LEFT JOIN tactic_submission ts ON ts.match_id = g.match_id AND ts.team_id = g.team_id WHERE g.grantee_user_id = ? AND g.revoked_at IS NULL AND m.status = 'pending' ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot",
+      "table": "lineup_proxy_grant",
+      "rows_read": 1,
+      "calls": 1,
+      "surfaces": [
+        "coach/proxy-sessions"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT t.id AS tournament_id, t.name AS tournament_name, m.id AS match_id, s.kind AS stage_kind, m.round, he.id AS home_entry_id, ae.id AS away_entry_id, ht.name AS home_team_name, at.name AS away_team_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE t.status != 'draft' AND m.status = 'live' ORDER BY t.id, s.sort_order, m.round, m.slot",
+      "table": "match",
+      "rows_read": 1,
+      "calls": 1,
+      "surfaces": [
+        "public/live"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT me.match_id, me.entry_id, me.type, COUNT(*) AS n FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE m.status = 'live' AND t.status != 'draft' GROUP BY me.match_id, me.entry_id, me.type",
+      "table": "match_event",
+      "rows_read": 1,
+      "calls": 1,
+      "surfaces": [
+        "public/live"
+      ],
+      "share": 0.0001
+    },
+    {
+      "sql": "SELECT sub, claims FROM oidc_session WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+      "table": "oidc_session",
+      "rows_read": 0,
+      "calls": 29,
+      "surfaces": [
+        "admin/injury-candidates",
+        "coach/me-status",
+        "admin/tournament-matches",
+        "coach/me-matches",
+        "admin/teams",
+        "admin/injuries",
+        "admin/tournament",
+        "coach/proxy-board",
+        "admin/injury-events",
+        "admin/tournament-standings",
+        "admin/proxy-grants",
+        "coach/me-team",
+        "admin/team",
+        "coach/proxy-sessions",
+        "admin/rosters-context",
+        "admin/tournaments",
+        "coach/match-lineup",
+        "coach/tactics",
+        "admin/team-members",
+        "admin/match-lineup",
+        "interact/motm",
+        "admin/team-codes",
+        "admin/announcements",
+        "admin/org-settings",
+        "admin/match-events",
+        "admin/accounts",
+        "admin/accounts-catalog",
+        "admin/audit",
+        "admin/signup-codes"
+      ],
+      "share": 0
+    },
+    {
+      "sql": "SELECT ts.id, ts.team_id, ts.form, ts.slots_json, ts.assign_json, ts.created_at, u.name AS submitted_by, te.name AS team_name, ts.proxy_grant_id FROM tactic_submission ts LEFT JOIN user u ON u.id = ts.created_by LEFT JOIN team te ON te.id = ts.team_id WHERE ts.match_id = ?",
+      "table": "tactic_submission",
+      "rows_read": 0,
+      "calls": 4,
+      "surfaces": [
+        "coach/proxy-board",
+        "coach/match-lineup",
+        "public/match-lineup",
+        "admin/match-lineup"
+      ],
+      "share": 0
+    },
+    {
+      "sql": "SELECT team_id, code FROM tactic_submission WHERE match_id = ?",
+      "table": "tactic_submission",
+      "rows_read": 0,
+      "calls": 1,
+      "surfaces": [
+        "admin/match-lineup"
+      ],
+      "share": 0
+    },
+    {
+      "sql": "SELECT player_id FROM motm_vote WHERE match_id = ? AND user_id = ?",
+      "table": "motm_vote",
+      "rows_read": 0,
+      "calls": 1,
+      "surfaces": [
+        "interact/motm"
+      ],
+      "share": 0
+    },
+    {
+      "sql": "SELECT e.id, e.entry_id, e.player_id, e.assist_player_id, e.type, e.minute, e.created_at FROM match_event e WHERE e.match_id = ? ORDER BY e.id",
+      "table": "match_event",
+      "rows_read": 0,
+      "calls": 1,
+      "surfaces": [
+        "admin/match-events"
+      ],
+      "share": 0
+    }
+  ],
+  "surfaces_ranked": [
+    {
+      "name": "public/feed",
+      "total": 2392,
+      "top_table": "match",
+      "top_table_rows": 2131
+    },
+    {
+      "name": "public/toplists",
+      "total": 1949,
+      "top_table": "match_event",
+      "top_table_rows": 955
+    },
+    {
+      "name": "public/stats",
+      "total": 1531,
+      "top_table": "match_event",
+      "top_table_rows": 968
+    },
+    {
+      "name": "public/match-report",
+      "total": 1402,
+      "top_table": "match_event",
+      "top_table_rows": 803
+    },
+    {
+      "name": "admin/injury-candidates",
+      "total": 1342,
+      "top_table": "match",
+      "top_table_rows": 1342
+    },
+    {
+      "name": "public/upcoming",
+      "total": 1192,
+      "top_table": "match",
+      "top_table_rows": 1192
+    },
+    {
+      "name": "coach/me-status",
+      "total": 1020,
+      "top_table": "match",
+      "top_table_rows": 897
+    },
+    {
+      "name": "public/tournament-summary",
+      "total": 876,
+      "top_table": "match",
+      "top_table_rows": 866
+    },
+    {
+      "name": "admin/tournament-matches",
+      "total": 800,
+      "top_table": "match",
+      "top_table_rows": 800
+    },
+    {
+      "name": "coach/me-matches",
+      "total": 787,
+      "top_table": "match",
+      "top_table_rows": 785
+    },
+    {
+      "name": "admin/teams",
+      "total": 668,
+      "top_table": "player",
+      "top_table_rows": 668
+    },
+    {
+      "name": "cron-roster-sync",
+      "total": 590,
+      "top_table": "player",
+      "top_table_rows": 570
+    },
+    {
+      "name": "admin/injuries",
+      "total": 464,
+      "top_table": "injury_miss",
+      "top_table_rows": 240
+    },
+    {
+      "name": "public/injuries",
+      "total": 462,
+      "top_table": "injury_miss",
+      "top_table_rows": 240
+    },
+    {
+      "name": "public/round",
+      "total": 456,
+      "top_table": "match",
+      "top_table_rows": 345
+    },
+    {
+      "name": "admin/tournament",
+      "total": 420,
+      "top_table": "player",
+      "top_table_rows": 391
+    },
+    {
+      "name": "public/tournament",
+      "total": 419,
+      "top_table": "player",
+      "top_table_rows": 391
+    },
+    {
+      "name": "coach/proxy-board",
+      "total": 384,
+      "top_table": "match",
+      "top_table_rows": 147
+    },
+    {
+      "name": "admin/injury-events",
+      "total": 341,
+      "top_table": "match_event",
+      "top_table_rows": 341
+    },
+    {
+      "name": "public/standings",
+      "total": 175,
+      "top_table": "match",
+      "top_table_rows": 133
+    },
+    {
+      "name": "admin/tournament-standings",
+      "total": 175,
+      "top_table": "match",
+      "top_table_rows": 133
+    },
+    {
+      "name": "public/tournament-rounds",
+      "total": 158,
+      "top_table": "match",
+      "top_table_rows": 157
+    },
+    {
+      "name": "public/weekly",
+      "total": 155,
+      "top_table": "injury_miss",
+      "top_table_rows": 89
+    },
+    {
+      "name": "admin/proxy-grants",
+      "total": 100,
+      "top_table": "account",
+      "top_table_rows": 58
+    },
+    {
+      "name": "public/recent",
+      "total": 96,
+      "top_table": "match",
+      "top_table_rows": 87
+    },
+    {
+      "name": "coach/me-team",
+      "total": 77,
+      "top_table": "player",
+      "top_table_rows": 61
+    },
+    {
+      "name": "admin/team",
+      "total": 62,
+      "top_table": "player",
+      "top_table_rows": 61
+    },
+    {
+      "name": "coach/proxy-sessions",
+      "total": 59,
+      "top_table": "account",
+      "top_table_rows": 58
+    },
+    {
+      "name": "admin/rosters-context",
+      "total": 58,
+      "top_table": "account",
+      "top_table_rows": 58
+    },
+    {
+      "name": "public/match",
+      "total": 51,
+      "top_table": "injury_miss",
+      "top_table_rows": 19
+    },
+    {
+      "name": "public/tournaments",
+      "total": 48,
+      "top_table": "entry",
+      "top_table_rows": 48
+    },
+    {
+      "name": "public/tournament-matches",
+      "total": 48,
+      "top_table": "match",
+      "top_table_rows": 38
+    },
+    {
+      "name": "admin/tournaments",
+      "total": 48,
+      "top_table": "entry",
+      "top_table_rows": 48
+    },
+    {
+      "name": "cron-account-mirror",
+      "total": 34,
+      "top_table": "account",
+      "top_table_rows": 17
+    },
+    {
+      "name": "public/live",
+      "total": 11,
+      "top_table": "match_event",
+      "top_table_rows": 10
+    },
+    {
+      "name": "public/match-h2h",
+      "total": 7,
+      "top_table": "match",
+      "top_table_rows": 7
+    },
+    {
+      "name": "public/match-lineup-stats",
+      "total": 7,
+      "top_table": "match",
+      "top_table_rows": 7
+    },
+    {
+      "name": "coach/match-lineup",
+      "total": 7,
+      "top_table": "match",
+      "top_table_rows": 5
+    },
+    {
+      "name": "coach/tactics",
+      "total": 7,
+      "top_table": "tactic",
+      "top_table_rows": 5
+    },
+    {
+      "name": "public/match-lineup",
+      "total": 5,
+      "top_table": "match",
+      "top_table_rows": 5
+    },
+    {
+      "name": "admin/team-members",
+      "total": 5,
+      "top_table": "team_binding",
+      "top_table_rows": 5
+    },
+    {
+      "name": "admin/match-lineup",
+      "total": 5,
+      "top_table": "match",
+      "top_table_rows": 5
+    },
+    {
+      "name": "public/announcement",
+      "total": 2,
+      "top_table": "announcement",
+      "top_table_rows": 2
+    },
+    {
+      "name": "interact/reactions",
+      "total": 2,
+      "top_table": "reaction",
+      "top_table_rows": 2
+    },
+    {
+      "name": "interact/motm",
+      "total": 2,
+      "top_table": "motm_vote",
+      "top_table_rows": 2
+    },
+    {
+      "name": "admin/team-codes",
+      "total": 2,
+      "top_table": "team_bind_code",
+      "top_table_rows": 2
+    },
+    {
+      "name": "admin/announcements",
+      "total": 2,
+      "top_table": "announcement",
+      "top_table_rows": 2
+    },
+    {
+      "name": "internal/team-upsert",
+      "total": 1,
+      "top_table": "team",
+      "top_table_rows": 1
+    },
+    {
+      "name": "admin/org-settings",
+      "total": 0,
+      "top_table": "oidc_session",
+      "top_table_rows": 0
+    },
+    {
+      "name": "admin/match-events",
+      "total": 0,
+      "top_table": "oidc_session",
+      "top_table_rows": 0
+    },
+    {
+      "name": "admin/accounts",
+      "total": 0,
+      "top_table": "oidc_session",
+      "top_table_rows": 0
+    },
+    {
+      "name": "admin/accounts-catalog",
+      "total": 0,
+      "top_table": "oidc_session",
+      "top_table_rows": 0
+    },
+    {
+      "name": "admin/audit",
+      "total": 0,
+      "top_table": "oidc_session",
+      "top_table_rows": 0
+    },
+    {
+      "name": "admin/signup-codes",
+      "total": 0,
+      "top_table": "oidc_session",
+      "top_table_rows": 0
+    },
+    {
+      "name": "health",
+      "total": 0,
+      "top_table": "(none)",
+      "top_table_rows": 0
+    }
+  ],
+  "repeated_shapes": 31
+}

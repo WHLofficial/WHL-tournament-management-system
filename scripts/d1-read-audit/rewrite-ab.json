@@ -1,0 +1,195 @@
+{
+  "measured_at": "2026-09-23T15:24:21.798Z",
+  "pairs": [
+    {
+      "name": "伤停候选（最贵单形状 1326 行）",
+      "why": "admin/injury-candidates。A 用 JOIN 出的 team_id 做 OR 条件 ⇒ 无索引可用、全表 218 场 ×7 表；B 改成对 match 自身的 home/away_entry_id 用 IN 子查询（shape #16 的省法）",
+      "a": "SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name, m.round, s.kind AS stage_kind, m.status, eh.id AS home_team_id, eh.name AS home_team_name, ea.id AS away_team_id, ea.name AS away_team_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id JOIN entry e1 ON e1.id = m.home_entry_id JOIN team eh ON eh.id = e1.team_id LEFT JOIN entry e2 ON e2.id = m.away_entry_id LEFT JOIN team ea ON ea.id = e2.team_id WHERE e1.team_id = 1 OR e2.team_id = 1 ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id",
+      "b": "SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name, m.round, s.kind AS stage_kind, m.status, eh.id AS home_team_id, eh.name AS home_team_name, ea.id AS away_team_id, ea.name AS away_team_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id LEFT JOIN entry e1 ON e1.id = m.home_entry_id LEFT JOIN team eh ON eh.id = e1.team_id LEFT JOIN entry e2 ON e2.id = m.away_entry_id LEFT JOIN team ea ON ea.id = e2.team_id WHERE m.home_entry_id IN (SELECT id FROM entry WHERE team_id = 1) OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = 1) ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id",
+      "a_rows_read": 1326,
+      "b_rows_read": 140,
+      "a_plan": [
+        "SCAN m USING INDEX idx_match_stage",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH t2 USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH e1 USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH eh USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH e2 USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "SEARCH ea USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "b_plan": [
+        "MULTI-INDEX OR",
+        "INDEX 1",
+        "LIST SUBQUERY 1",
+        "SEARCH entry USING COVERING INDEX idx_entry_team (team_id=?)",
+        "SEARCH m USING INDEX idx_match_home (home_entry_id=?)",
+        "INDEX 2",
+        "LIST SUBQUERY 2",
+        "SEARCH entry USING COVERING INDEX idx_entry_team (team_id=?)",
+        "SEARCH m USING INDEX idx_match_away (away_entry_id=?)",
+        "LIST SUBQUERY 1",
+        "SEARCH entry USING COVERING INDEX idx_entry_team (team_id=?)",
+        "CREATE BLOOM FILTER",
+        "LIST SUBQUERY 2",
+        "SEARCH entry USING COVERING INDEX idx_entry_team (team_id=?)",
+        "CREATE BLOOM FILTER",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH t2 USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH e1 USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "SEARCH eh USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "SEARCH e2 USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "SEARCH ea USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "delta_pct": -89.4
+    },
+    {
+      "name": "待赛列表两段式（public/upcoming 1185 行，只回 8 行）",
+      "why": "A 七表 join 全部 149 场 pending 后才 LIMIT 8；B 先只取 id（三表），名字另取 8 行。B 的实际总成本 ≈ B + 8×4 行名字查询",
+      "a": "SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status, m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round, ht.name AS home_team_name, at.name AS away_team_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE t.status != 'draft' AND m.status = 'pending' AND (m.note IS NULL OR m.note != '轮空') ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.id, s.sort_order, m.round, m.slot LIMIT 8",
+      "b": "SELECT m.id AS match_id, t.id AS tournament_id, t.status AS tournament_status, s.kind AS stage_kind, s.sort_order AS stage_order, m.round FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE t.status != 'draft' AND m.status = 'pending' AND (m.note IS NULL OR m.note != '轮空') ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.id, s.sort_order, m.round, m.slot LIMIT 8",
+      "a_rows_read": 1185,
+      "b_rows_read": 589,
+      "a_plan": [
+        "SEARCH m USING INDEX idx_match_status (status=?)",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH t USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH he USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH ht USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH ae USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH at USING INTEGER PRIMARY KEY (rowid=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "b_plan": [
+        "SEARCH m USING INDEX idx_match_status (status=?)",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH t USING INTEGER PRIMARY KEY (rowid=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "delta_pct": -50.3
+    },
+    {
+      "name": "赛事页待赛场次两段式（public/tournament-summary 805 行，只回 4 行）",
+      "why": "A 六表 join 该赛事全部 pending 后才 LIMIT 4；B 先只取 id（两表）",
+      "a": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, ht.name AS home_team_name, at.name AS away_team_name, ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key, m.score_home, m.score_away, m.pen_home, m.pen_away, m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind, s.name AS stage_name, s.sort_order AS stage_order FROM match m JOIN stage s ON s.id = m.stage_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team at ON at.id = ae.team_id WHERE s.tournament_id = 1 AND m.status = 'pending' AND he.id IS NOT NULL AND ae.id IS NOT NULL ORDER BY s.sort_order, m.round, m.slot LIMIT 4",
+      "b": "SELECT m.id, m.stage_id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, s.kind AS stage_kind, s.name AS stage_name, s.sort_order AS stage_order FROM match m JOIN stage s ON s.id = m.stage_id WHERE s.tournament_id = 1 AND m.status = 'pending' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL ORDER BY s.sort_order, m.round, m.slot LIMIT 4",
+      "a_rows_read": 805,
+      "b_rows_read": 397,
+      "a_plan": [
+        "SEARCH m USING INDEX idx_match_status (status=?)",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH he USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "SEARCH ht USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "SEARCH ae USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "SEARCH at USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "b_plan": [
+        "SEARCH m USING INDEX idx_match_status (status=?)",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "delta_pct": -50.7
+    },
+    {
+      "name": "参赛队 + 队内人数（760 行 ×2 个读面）",
+      "why": "A 逐 entry 相关子查询数人数；B 改成 player 全表分组后 LEFT JOIN。赛事只 12 支队时谁更便宜，用读数定",
+      "a": "SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key, (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count FROM entry e JOIN team tm ON tm.id = e.team_id WHERE e.tournament_id = 1 ORDER BY e.seed",
+      "b": "SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key, COALESCE(x.n, 0) AS player_count FROM entry e JOIN team tm ON tm.id = e.team_id LEFT JOIN (SELECT team_id, COUNT(*) AS n FROM player GROUP BY team_id) x ON x.team_id = e.team_id WHERE e.tournament_id = 1 ORDER BY e.seed",
+      "a_rows_read": 380,
+      "b_rows_read": 639,
+      "a_plan": [
+        "SEARCH e USING INDEX idx_entry_tournament (tournament_id=?)",
+        "SEARCH tm USING INTEGER PRIMARY KEY (rowid=?)",
+        "CORRELATED SCALAR SUBQUERY 1",
+        "SEARCH p USING COVERING INDEX idx_player_team (team_id=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "b_plan": [
+        "MATERIALIZE x",
+        "SCAN player USING COVERING INDEX idx_player_team",
+        "SEARCH e USING INDEX idx_entry_tournament (tournament_id=?)",
+        "SEARCH tm USING INTEGER PRIMARY KEY (rowid=?)",
+        "BLOOM FILTER ON x (team_id=?)",
+        "SEARCH x USING AUTOMATIC COVERING INDEX (team_id=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "delta_pct": 68.2
+    },
+    {
+      "name": "各阶段最后完赛轮次（655 行，1 处 SCAN）",
+      "why": "A 现状 GROUP BY stage_id,round 走 idx_match_stage 全索引扫描；B 用 status='finished' 驱动 idx_match_status（B 少了赛事名 join，名字按 ≤20 行另取）",
+      "a": "SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL AND COALESCE(m.note, '') != '轮空' GROUP BY m.stage_id, m.round HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END) AND MAX(m.finished_at) < COALESCE('9999-12-31', '9999-12-31') ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT 20",
+      "b": "SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at FROM match m WHERE m.status = 'finished' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL AND COALESCE(m.note, '') != '轮空' GROUP BY m.stage_id, m.round ORDER BY last_at DESC LIMIT 20",
+      "a_rows_read": 655,
+      "b_rows_read": 140,
+      "a_plan": [
+        "SCAN m USING INDEX idx_match_stage",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH t USING INTEGER PRIMARY KEY (rowid=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "b_plan": [
+        "SEARCH m USING INDEX idx_match_status (status=?)",
+        "USE TEMP B-TREE FOR GROUP BY",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "delta_pct": -78.6
+    },
+    {
+      "name": "成本模型探针：同一张表、LIMIT 4，排序键决定代价",
+      "why": "验证「LIMIT 不是免费」：按索引序取 4 行 vs 按未索引列排序取 4 行",
+      "a": "SELECT id, finished_at FROM match WHERE status = 'finished' ORDER BY finished_at DESC LIMIT 4",
+      "b": "SELECT id, finished_at FROM match WHERE status = 'finished' ORDER BY round DESC LIMIT 4",
+      "a_rows_read": 1,
+      "b_rows_read": 136,
+      "a_plan": [
+        "SEARCH match USING COVERING INDEX idx_match_status (status=?)"
+      ],
+      "b_plan": [
+        "SEARCH match USING INDEX idx_match_status (status=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "delta_pct": 13500
+    },
+    {
+      "name": "成本模型探针：JOIN 一张 48 行表并排序要多少读",
+      "why": "量清 injury_miss 展开 579 行的来源：纯扫描 48 行 vs 四表 join 后排序",
+      "a": "SELECT COUNT(*) AS n FROM injury_miss",
+      "b": "SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name, m.round, s.kind AS stage_kind, m.status FROM injury_miss im JOIN match m ON m.id = im.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament t2 ON t2.id = s.tournament_id ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id",
+      "a_rows_read": 48,
+      "b_rows_read": 193,
+      "a_plan": [
+        "SCAN injury_miss USING COVERING INDEX idx_injury_miss_match"
+      ],
+      "b_plan": [
+        "SCAN im USING COVERING INDEX sqlite_autoindex_injury_miss_1",
+        "SEARCH m USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH t2 USING INTEGER PRIMARY KEY (rowid=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "delta_pct": 302.1
+    },
+    {
+      "name": "成本模型探针：两段式第二段的真实价格（8 场比赛取队名）",
+      "why": "上面两条「两段式」候选都少了名字，这里量补名字到底要多少行：按主键取 8 场 × 4 表",
+      "a": "SELECT COUNT(*) AS n FROM match WHERE status = 'pending'",
+      "b": "SELECT m.id, ht.name AS home_team_name, at.name AS away_team_name FROM match m JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE m.id IN (14, 21, 22, 23, 24, 25, 26, 27)",
+      "a_rows_read": 149,
+      "b_rows_read": 6,
+      "a_plan": [
+        "SEARCH match USING COVERING INDEX idx_match_status (status=?)"
+      ],
+      "b_plan": [
+        "SEARCH m USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH he USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH ht USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH ae USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH at USING INTEGER PRIMARY KEY (rowid=?)"
+      ],
+      "delta_pct": -96
+    }
+  ]
+}

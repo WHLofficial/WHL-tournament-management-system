@@ -1,0 +1,461 @@
+# D1 读消耗量化报告（增量 38 · 步骤 1–4）
+
+> 量化基线：2026-09-23（UTC 15:43 采样）。**本文件只做量化，不含任何治理改动**——治理范围待确认后另开步骤。
+> 复测命令见 §10；原始数据在同目录 `surface-measurements.json`（55 读面）、`write-path-measurements.json`（16 写面）、
+> `shape-ranking.json`（形状归并）、`rewrite-ab.json`（A/B 改写对照）、`cost-model.json`（双通道成本阶梯）。
+
+---
+
+## 0. 结论摘要
+
+1. **问题不在数据量，在「请求量 × 每请求扫描」。** 本仓近 24h 读 **1,428,496 行 / 8,205 条读查询 = 174 行/查询**，
+   而全库只有约 1,745 行数据 ⇒ 平均每行每天被读约 **820 次**。库只有 561KB、26 张表。
+2. **额度是按账号算的，本仓是账号内最大读者。** 同一 Cloudflare 账号下 4 个 D1 库近 24h 合计约 **220 万行读**，
+   占免费档 500 万/日的 **44%**；本仓占其中 **65%**，库却是四个里第二小的。姊妹仓库俱乐部平台
+   （`whl-club`）2026-09-21 已因超限报 `Your account has exceeded D1's free tier daily row read limit`
+   （当天 4,350,235 行读）——同一天本仓也在从同一个池子里舀水。
+3. **按 club 的「单次 ≥10,000 行才治理」阈值，本仓达标读面 0 个。** 55 个读面单次冷路径合计 18,904 行，
+   最贵的 `public/feed` 单次 2,392 行。⇒ 不能照搬 club 的阈值判定，本仓的浪费是「普遍偏贵 × 高频重算」。
+4. **读量高度集中：`match` + `match_event` 两张表占 75%**（10,826 + 3,337 行），再加 `player` 11.7%
+   ⇒ 三张表 86.6%。治理目标就是这三张。
+5. **公开页轮询是日常读量的主源。** 首页 `Home.tsx:152` 每 30s 轮询一次、一次打 6 个端点
+   （`tournaments` / `upcoming` / `live` / `announcement` / `feed` / `reactions`），其中 `upcoming`（1,192 行）
+   与 `feed`（2,392 行）是全部读面里最贵的两笔；`PublicTournament.tsx:163` 与 `PublicMatchDetail.tsx:122` 同样 30s 轮询。
+6. **缓存把「访客数」和「D1 读数」解耦了，但没降低每个窗口的重算单价。** `pubCache` 保证每个 TTL 窗口
+   至多重算一次（与访客数无关，这是好设计），可单价太高：把 21 个公开面按「每个 TTL 窗口都有请求」相加，
+   上限约 **1,049 万行/日**，是账号 500 万池的 **2.1 倍**。当前实到 143 万（= 上限的 13.6%），
+   没炸只是因为流量有间歇——**这是结构性风险，不是余量充足**。
+7. **写端点的读不是主因，但单笔不便宜。** 16 个写面单次合计仅 648 行；最贵的 `POST /matches/:id/finish`
+   单笔 **284 行**（其中两次阶段扫描各 133 行：一次取已完赛明细、一次只为数未完赛）。一个 132 场的比赛日全部报分
+   约 3.8 万行 ⇒ 管理端操作相比公开页轮询是小头。
+8. **两条反直觉的实测结论**（都不能靠推理得到，必须靠读数）：
+   - 「给参赛队列表加队内人数」的候选改写**更贵 +68%**（380 → 639 行，因为要全表扫 `player`）；
+   - 同表同 `LIMIT 4`，`ORDER BY finished_at DESC` 只读 **1 行**，`ORDER BY round DESC` 读 **136 行**
+     ⇒ **排序键决定 136 倍差距，`LIMIT` 本身不省读**。
+
+---
+
+## 1. 方法
+
+**核心手法（借 club 平台经验）：不手抄 SQL，而是直调真实路由抓下它实际发出的 SQL，再打生产库读回真实行数。**
+
+1. `import app from "../../worker/index"`，用 Hono 的 `app.request(url, init, env, ctx)` 直调真实 handler；
+   `env` 是**假 D1**（`makeCaptureDb`）：`prepare/bind` 只把 `{sql, args}` 记进 sink，执行时回桩行、不碰真库。
+2. 参数内联（`inlineParams`，手写扫描器跳过字符串字面量内部；`%` 拼成 `char(37)` 防 Windows cmd.exe 展开），
+   把带参 SQL 变成可独立执行的字面量 SQL。
+3. `selectOnly` 只放行 `SELECT` / 纯读 `WITH`——GET 里也可能藏写（club 的 `/api/market/*` 就先跑结算）。
+4. 逐条打生产：`npx wrangler d1 execute whl --remote --json --command "<SQL>"`，读回 `meta.rows_read`
+   （管理通道，配额触顶期间照样能跑；测出的是 SQL 读多少行的物理事实）。
+5. 鉴权靠假会话：cookie `__Host-tour_session=probe-token`，假 D1 对 `FROM oidc_session` 的查询回
+   `{sub:"1", claims: JSON.stringify(PROBE_CLAIMS)}`，claims 带 `roles:["superadmin"]` 与本仓全部 4 个权限点
+   （`tour.accounts.manage` / `tour.match.manage` / `tour.org.settings` / `tour.team.bind`）。
+6. 详情类路由回「benignRow」桩行（数值列给 1、文本列给 `"probe"`、`status` 给 `"finished"`），
+   否则 `if (!row) throw 404` 会让路由提前退出、量不到真实形状。
+7. **每个读面用全新假 env**（KV 冷、`caches.default` 永不命中）⇒ 量到的是**冷路径**读数，是保守值。
+
+### 三条边界（引用数据时必须一并说明）
+
+| 边界 | 内容 |
+|---|---|
+| 通道 | 走 `wrangler d1 execute` 管理通道量的是**物理行读**，不等价于 worker 运行时通道；两者口径一致（见 §5 双通道对拍），但不要与外部的 D1 Analytics 数字直接混读 |
+| 桩行偏差 | 假 D1 只记录不执行、桩行值≠真实数据 ⇒ 走的是「探针形状」，不是线上百分之百同一分支。偏大计（回一行桩数据而不是空）是配额治理的安全方向 |
+| 冷路径 | 线上命中边缘缓存 / KV 的请求不产生这些行读。**本报告量的是「每个缓存窗口重算一次的单价」，不是「一天的总额」**——日常总额见 §2 的账号读数 |
+| 会话查询恒为 0 | 探针 cookie 的 `token_hash`（`sha256("probe-token")`）在生产库里不存在 ⇒ **所有需鉴权读面的会话查询读数都是 0**（真实每次为 1 行，`token_hash` 是主键）。这是一处系统性低报，量级可忽略但需知情 |
+
+### 一个通道陷阱（已定性，写报告时必须记住）
+
+`wrangler d1 execute --file=<tmp.sql>`（多语句文件）**只回一条聚合汇总行**、不回数据行，而且**对单表索引扫描
+会低报成 1**（`SELECT id FROM match` → 报 1，实际 218）。`--command` 才是逻辑行数口径。
+⇒ **本报告全部读数走 `--command`**；旧 `--file` 数据留档为 `surface-measurements-file-channel.json`，
+只作为通道差异证据（55 读面 13,310 vs 18,904 行，1.42 倍）。
+
+---
+
+## 2. 账号级基线（`npx wrangler d1 info <db> --json`，近 24h，不消耗行读）
+
+| 库 | 大小 | 行读/日 | 读查询/日 | 行/查询 | 行写/日 |
+|---|---|---|---|---|---|
+| **whl（本仓）** | 561 KB | **1,428,496** | **8,205** | **174** | 2,335 |
+| whl-club（俱乐部平台） | 29.1 MB | 768,098 | 7,227 | 106 | 66,703 |
+| whl-auth（认证中心） | 340 KB | 5,733 | 908 | 6 | 455 |
+| whl-guess（竞猜） | 262 KB | 481 | — | — | 0 |
+| **账号合计** | ~30 MB | **≈ 2,202,808** | ≈ 16,340 | 135 | ≈ 69,493 |
+
+- 免费档：**行读 5,000,000/日、行写 100,000/日，UTC 00:00 复位**；存储 5GB 按账号合计。
+  ⇒ 账号读量已用 **44%**，本仓一家占 **65%**。
+- **写配额对本仓不构成约束**（2,335 行/日 vs 10 万）。⇒ 加索引几乎零写成本，
+  「索引要按写配额分天建」的顾虑在本仓**不成立**（这点与 club 相反，club 写 6.6 万/日、索引要排队）。
+- 08:50Z 与 15:43Z 两次采样：whl 1,359,490 → 1,428,496（+69,006 行/7h ≈ **约 9,900 行/小时**）。
+- 口径提醒：`d1 info` 是**每库**统计；免费档文档写的是**账号**额度。09-21 club 报错措辞是
+  `Your account has exceeded…`（account 不是 database）。**若确为账号级**，则 09-21 那天
+  club 4.35M + 本仓 1.36M 已越过 5M。此点建议向 Cloudflare 账单/文档再确认一次，报告里按「账号级」保守处理。
+
+---
+
+## 3. 全站读面普查（55 个读面 / 189 条语句 / 18,904 行读 · 单次冷路径）
+
+样本 id 取自当时线上：tournament=1（S9 顶级联赛）、阶段=1（132 场）、待打场次=284、已结束场次=182、球队=1、伤停=1。
+
+### 3.1 按层次汇总
+
+| 层次 | 读面数 | 行读 | 占比 |
+|---|---|---|---|
+| 公开面（`/api/public/*`） | 21 | 11,442 | 60.5% |
+| 管理面（`/api/admin/*`） | 21 | 4,492 | 23.8% |
+| 教练面（`/api/coach/*`） | 7 | 2,341 | 12.4% |
+| cron（名册同步 / 账号对账） | 2 | 624 | 3.3% |
+| 互动面 / 机器通道 / health | 3 | 5 | 0.03% |
+
+### 3.2 读面排行（前 20，全量见 `surface-measurements.json`）
+
+| 行读 | 语句数 | 读面 | 备注 |
+|---|---|---|---|
+| 2,392 | 18 | `public/feed?limit=20` | 语句数最多；KV SWR 之上还有边缘缓存 |
+| 1,949 | 8 | `public/toplists` | 含全量停赛重放 `computeSuspensions` + 748 行的「事件明细（双 join 球员/助攻）」 |
+| 1,531 | 7 | `public/stats` | 最贵表 `match_event` |
+| 1,402 | 7 | `public/match-report` | 战报射手聚合 |
+| 1,342 | 2 | `admin/injury-candidates` | **单条语句最贵**；`OR` 作用在 join 列上 ⇒ 全表扫 |
+| 1,192 | 1 | `public/upcoming` | **单条语句第二贵**；返回 8 行却读 1,192 行 |
+| 1,020 | 8 | `coach/me-status` | 含 `LIMIT 1` 读 755 行那条 |
+| 876 | 4 | `public/tournament-summary` | `LIMIT 4` 读 808 行 |
+| 800 | 2 | `admin/tournament-matches` | 132 场 × 5 ≈ 660，属「返回 132 行」的固有成本 |
+| 787 | 3 | `coach/me-matches` | 同款 `OR` 模式 |
+| 668 | 2 | `admin/teams` | 逐行两个相关子查询（人数 + 参赛数） |
+| 590 | 2 | `cron-roster-sync` | 全表读 `player`(570) + `team`(20)，每小时一次 |
+| 464 / 462 | 3 / 4 | `admin/injuries` / `public/injuries` | `injury_miss` 展开 |
+| 456 | 9 | `public/round` | 轮次综述 |
+| 420 / 419 | 6 / 4 | `admin/tournament` / `public/tournament` | 参赛队 + 队内人数相关子查询（各 391） |
+| 384 | 11 | `coach/proxy-board` | 语句数第二多 |
+| 341 | 2 | `admin/injury-events` | |
+| 175 / 175 | 5 / 6 | `public/standings` / `admin/tournament-standings` | |
+| 其余 35 个读面 | | 均 ≤ 158 行 | 见 JSON |
+
+### 3.3 五个「转发认证中心」面（本仓花费为 0）
+
+`admin/org-settings`、`admin/accounts`、`admin/accounts/catalog`、`admin/audit`、`admin/signup-codes`
+经 `worker/lib/authAdmin.ts` 的 `machineCall` 走 HMAC HTTP 转给认证中心（账号真源 2026-09-14 起收口 auth）。
+探针环境下回 502（连不上 auth），**在本仓 whl 库的花费只有 `attachUser` 的 1 条会话查询**
+（该查询在探针下读数 0，见 §1 边界）；它们的真实读负载记在 `whl-auth` 上（该库 908 读查询/日、5,733 行/日，确实很轻）。
+
+### 3.4 已知取样偏差
+
+- `admin/match-events` 读 0 行：抽样场次 284 是 pending、本身没有事件 ⇒ 读量 0 属取样偏差，不是端点便宜。
+- `health` 真实 0 语句（`worker/index.ts:26` 只回 `{ok,ts}`，不碰 D1）。
+- `internal/team-upsert` 1 行：机器通道按 `POST|/api/internal/team-upsert|ts|body` 自签，
+  签名含秒级时间戳、验签窗口 ±300s ⇒ 必须在**发请求那一刻**才算（否则 403 `bad_signature`）。
+- cron 两段用假 D1 直接调 `runRosterSync(env)` / `runAccountMirror(env)`：**写被登记但不执行**，
+  不会真落库；`cron-roster-sync` 日志 `[sync-rosters] 队 20 / 快照 30 人：新增 30、换队 0、改名 0、改号 0、删除 1/1、保留 0`（读路径完整、31 条写被跳过）。
+
+---
+
+## 4. 表归因与形状排行（`shape-ranking.json`）
+
+### 4.1 归因到驱动表
+
+| 表 | 行读 | 语句数 | 占比 |
+|---|---|---|---|
+| **match** | **10,826** | 45 | **57.3%** |
+| **match_event** | **3,337** | 23 | **17.7%** |
+| **player** | **2,203** | 7 | **11.7%** |
+| injury_miss | 1,079 | 10 | 5.7% |
+| injury | 640 | 6 | 3.4% |
+| account | 249 | 5 | 1.3% |
+| standing | 185 | 5 | 1.0% |
+| entry | 164 | 7 | 0.9% |
+| audit_log | 49 | 2 | 0.3% |
+| lineup_proxy_grant | 46 | 3 | 0.2% |
+| stage | 35 | 7 | 0.2% |
+| team | 23 | 4 | 0.1% |
+| team_binding | 20 | 7 | 0.1% |
+| user | 17 | 1 | 0.1% |
+| 无表可归因（如 `SELECT 1 AS ok`） | 31 | — | 0.2% |
+
+⇒ **`match` + `match_event` + `player` = 16,366 / 18,904 = 86.6%**。而这三张表只有 218 / 241 / 570 行数据。
+
+### 4.2 最贵形状（`rows_read` 是**跨读面累加值**，`calls` 是出现次数 ⇒ **单价 = rows ÷ calls**）
+
+| 单价 | 出现 | 形状要点 |
+|---|---|---|
+| 1,342 | ×1 | `admin/injury-candidates`：`WHERE e1.team_id = ? OR e2.team_id = ?`（`OR` 作用在 join 出来的列上）⇒ `SCAN m USING INDEX idx_match_stage` 全表 218 场 × 7 表 |
+| 1,192 | ×1 | `public/upcoming`：七表 join + `ORDER BY CASE t.status…, t.id, s.sort_order, m.round, m.slot LIMIT 8` ⇒ 149 场 pending 全量 join 后再 LIMIT |
+| 808 | ×1 | `public/tournament-summary`：`WHERE s.tournament_id=? AND m.status='pending' … LIMIT 4` ⇒ `idx_match_status(status=?)` 起手 + 排序全部 pending |
+| 800 | ×1 | `admin/tournament-matches`：`idx_stage_tournament` + `idx_match_stage` 走对了，132 场 × 5 是「返回 132 行」的固有成本 |
+| 794 | ×1 | `public/match-report` 射手聚合：`idx_match_event_type_time(type=?)` + `GROUP BY` |
+| 785 | ×1 | `coach/me-matches`：同款 `OR` 模式 |
+| 755 | ×1 | `coach/me-status`：`SELECT t.id … WHERE m.status='pending' … (he.team_id=? OR ae.team_id=?) ORDER BY … LIMIT 1` ⇒ **`LIMIT 1` 读 755 行** |
+| 748 | ×1 | `public/toplists` 事件明细：`player` + `assist_player` 双 join（每事件多 2 行读） |
+| 668 | ×1 | `admin/teams`：逐行两个相关子查询（`p.team_id = t.id` 人数 + 参赛数） |
+| 665 | ×1 | `feed` 取各阶段最后完赛：`GROUP BY m.stage_id, m.round HAVING …` ⇒ **`SCAN m USING INDEX idx_match_stage`（真全索引扫）** |
+| 570 | ×1 | `cron-roster-sync`：`SELECT id, team_id, name, number FROM player`（整表，每小时一次） |
+| 487 | ×1 | `public/feed` 场次列表（`match` + 4 表 join） |
+| 432 | ×1 | 黄牌且无 `red_2y` 的 `NOT EXISTS (SELECT 1 FROM match_event r …)` 相关子查询 |
+| 420 | ×1 | 事件类型计数 `GROUP BY me.type` |
+| 391 | ×2 | 参赛队 + 队内人数：`(SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id)`（`public/tournament`、`admin/tournament`） |
+| 341 | ×1 | `admin/injury-events` |
+| 289 | ×2 | `SELECT m.id, m.round, m.score_home, m.score_away, he.team_id…`（`public/toplists`、`public/stats`） |
+| 267 | ×1 | 待打场次列表（`match` ctx 形态，`public/toplists`） |
+| 240 | ×3 | `injury_miss` 展开：`SCAN im USING COVERING INDEX sqlite_autoindex_injury_miss_1` + TEMP B-TREE |
+| 133 | ×5 | `SELECT stage_id, MAX(round) AS mr FROM match WHERE stage_id IN (?) GROUP BY stage_id` ⇒ `COVERING INDEX idx_match_stage`，线性（非病态） |
+| 133 | ×5 | 阶段完赛场比分列表（`idx_match_stage`） |
+| 61 | ×3 | `SELECT id, name, number FROM player WHERE team_id = ? ORDER BY …`（`coach/proxy-board`、`coach/me-team`、`admin/team`） |
+| 58 | ×4 | `account LEFT JOIN team`（`coach/proxy-board`、`admin/proxy-grants`、`coach/proxy-sessions`、`admin/rosters-context`） |
+
+**两处真正的 `SCAN`（全索引扫）**：① `feed` 取各阶段最后完赛（665 行）；② `injury_miss` 展开（240/次 × 3 读面）。
+**主导模式**是 `SEARCH m USING INDEX idx_match_status (status=?)` + 若干 rowid 点查 + `USE TEMP B-TREE FOR ORDER BY`
+——即「先用状态索引捞出全部 pending，再排序，最后才 LIMIT」。
+
+### 4.3 关键分布（解释最贵形状）
+
+- `match` 状态：**pending 149 / finished 69 / live 0**（合计 218）。
+  ⇒ `public/upcoming` 的 1,192 行 = **149 场 pending × (1 + 7 张 join 表)**，`LIMIT 8` 在 join 之后才生效。
+- `injury` 28 行、`injury_miss` 48 行、`player` 570 行、`team` 20 行、`entry` 40 行、`audit_log` 496 行。
+- 核对：`SELECT count(*) FROM player` 读数 = **570**，与表行数一致 ⇒ 读数确实是物理行数。
+
+---
+
+## 5. 成本模型（实测，`cost-model.json`）
+
+### 5.1 排序键决定 136 倍差距（同表、同 `LIMIT 4`）
+
+| 形状 | 行读 |
+|---|---|
+| `WHERE status='finished' ORDER BY finished_at DESC LIMIT 4` | **1**（覆盖索引直接取） |
+| `WHERE status='finished' ORDER BY round DESC LIMIT 4` | **136**（temp b-tree 排序全部 69 场） |
+
+⇒ **`LIMIT` 不省读，省读的是「排序列有索引且与 `ORDER BY` 表达式逐字一致」。**
+
+### 5.2 其它实测
+
+| 形状 | 行读 |
+|---|---|
+| `SELECT id FROM match WHERE status='pending'`（返回 149） | 149 |
+| `SELECT id FROM match`（返回 218） | 218 |
+| `SELECT COUNT(*) FROM player`（返回 1） | 570（整表扫） |
+| 8 个主键点查 | 16（2 行/点查） |
+| 8 主键 + 1 表 join | 24（3 行/点查） |
+| 8 主键 + 4 表 join | 48（6 行/点查） |
+| 4 表 join + 排序（48 行表） | 193 |
+
+⇒ 点查单价 = `1 + join 表数` 行；**join 每多一张表，每行多 1 行读**。这解释了为什么「七表 join 的 upcoming」
+在 149 行数据上要读 1,192 行。
+
+### 5.3 双通道对拍（`--command` vs `--file`）
+
+8 条最贵形状两通道差 1–24%（`upcoming` 1.01×、`injury-candidates` 1.01×、`admin/tournament-matches` 1.20×、
+`injury_miss` 1.24×），**只有单表索引扫描被 `--file` 低报成 1**。
+⇒ join 类查询两通道可比，单表扫描必须用 `--command`。
+
+---
+
+## 6. 写端点的读（16 面 / 56 条 SELECT / 648 行读 · `write-path-measurements.json`）
+
+假 D1 只记录不执行 ⇒ **写语句全部只登记、绝不落库**（本表行读只含写端点发出的 SELECT）。
+
+| 行读 | SELECT | 跳过写 | 写面 |
+|---|---|---|---|
+| **284** | 6 | 4 | `POST /api/admin/matches/:id/finish`（终场 + 重算 + 晋级） |
+| **284** | 6 | 4 | 同上（弃权变体，同一代码路径） |
+| 28 | 5 | 0 | `POST /api/admin/tournaments/:id/entries/bulk` |
+| 19 | 5 | 0 | `PUT /api/coach/matches/:mid/lineup` |
+| 6 | 6 | 2 | `PUT /api/admin/matches/:id/events/:eventId` |
+| 5 | 4 | 2 | `POST /api/admin/matches/:id/events`（录事件） |
+| 5 | 4 | 2 | `DELETE /api/admin/matches/:id/events/:eventId` |
+| 5 | 3 | 0 | `PUT /api/admin/injuries/:id` |
+| 3 | 2 | 2 | `POST /api/admin/matches/:id/start` |
+| 2 | 2 | 2 | `DELETE /api/admin/injuries/:id` |
+| 2 | 2 | 0 | `POST /api/coach/tactics` |
+| 2 | 3 | 1 | `POST /api/interact/matches/:mid/motm` |
+| 1 | 3 | 0 | `POST /api/admin/injuries` |
+| 1 | 2 | 1 | `POST /api/admin/tournaments/:id/transition` |
+| 1 | 2 | 0 | `POST /api/admin/teams` |
+| 0 | 1 | 1 | `PATCH /api/admin/teams/:id` |
+
+**终场为什么 284 行**（逐条实测）：会话 0 + `loadMatchCtx` 三表 join 3 + `SELECT kind FROM stage WHERE id=?` 1
++ `SELECT e.id, e.group_id, e.points_deducted FROM entry e WHERE e.tournament_id = (SELECT tournament_id FROM stage WHERE id=?)` **14**
++ `SELECT … FROM match WHERE stage_id = ? AND status = 'finished'` **133**
++ `SELECT COUNT(*) AS n FROM match WHERE stage_id = ? AND status != 'finished'` **133**
+⇒ **每次报分都把该阶段的比赛读两遍**（同一批 132 场，一次取完赛场明细、一次只为了数未完赛场）。
+132 场的比赛日全部报分 ≈ 132 × 284 ≈ **3.8 万行/日**，相对 143 万是 2.6%。
+
+**结论**：写端点不是日常读量的主因。284 行里约 133 行是「重算积分榜必须读全部已完赛场」的固有成本，
+剩下 133 行（只为一个计数而重扫整阶段）是**可以合并掉**的（一次阶段扫描同时得出已完赛明细与是否全部完赛）。
+
+**桩行导致的提前退出（已登记为偏差，不影响结论）**：`admin/injury-post` 在「该事件已建过登记」处 409、
+`admin/team-post` 在「id 已占用」处 409、`coach/lineup-put` 在「队内球员数 ≠ 11」处 400——
+桩行恒有数据造成的，量到的是它们的前置读。
+
+---
+
+## 7. 日常读量从哪来：轮询 × TTL
+
+### 7.1 前端轮询（`setInterval`）
+
+| 页面 | 间隔 | 打的端点 | 单次冷成本 |
+|---|---|---|---|
+| `src/pages/Home.tsx:152` | **30s**（无 live 时降到 120s 兜底） | `tournaments` / `upcoming` / `live` / `announcement` / `feed?limit=20` / `interact/reactions` | 48 + **1,192** + 11 + 2 + **2,392** + 2 = **3,647 行 / 25 条语句** |
+| `src/pages/PublicTournament.tsx:163` | **30s** | 每个可见轮次 `tournaments/:tid/matches?stageId&round`（Promise.all 并发） | 48/轮次 |
+| `src/pages/PublicMatchDetail.tsx:122` | **30s**（完赛后停止轮询） | 场次详情 + 阵容 | 51 + 5 |
+
+⇒ **首页一次冷轮询就占单次冷路径总读量的 19%**，且它每 30s 触发一次。
+
+### 7.2 TTL 窗口容量（「每个 TTL 窗口都有请求」时的上限）
+
+| 读面 | 单价 | TTL | 窗口数/日 | 上限行读/日 |
+|---|---|---|---|---|
+| `portal/feed` | 2,392 | 60s（+KV SWR 60s） | 1,440 | **3,444,480** |
+| `portal/matches/:mid/report` | 1,402 | 60s | 1,440 | **2,018,880** |
+| `public/upcoming` | 1,192 | 60s | 1,440 | **1,716,480** |
+| `public/tournament-summary` | 876 | 60s | 1,440 | **1,261,440** |
+| `public/toplists` | 1,949 | 300s | 288 | 561,312 |
+| `public/stats` | 1,531 | 300s | 288 | 440,928 |
+| `public/tournament-rounds` | 158 | 60s | 1,440 | 227,520 |
+| `public/recent` | 96 | 60s | 1,440 | 138,240 |
+| `public/injuries` | 462 | 300s | 288 | 133,056 |
+| `portal/round` | 456 | 300s | 288 | 131,328 |
+| `public/tournament` | 419 | 300s | 288 | 120,672 |
+| 其余 10 个公开面 | | | | ≈ 295,200 |
+| **公开面合计上限（21 个）** | | | | **10,489,536** |
+
+- 当前实到 1,428,496 行/日 = 上限的 **13.6%**（公开面之外还有管理面/教练面/写端点/cron 的贡献）。
+- **上限是账号 500 万池的 2.1 倍** ⇒ 若流量增长或出现「全天连续有访客」的窗口，账号会先于功能受限。
+  club 已在 09-21 炸过一次（4,350,235 行），本仓当天同时占 1.36M。
+- 反过来看这是好消息：**单价降一半，上限就降一半**，不需要改架构。
+
+### 7.3 缓存现状（治理时的边界条件）
+
+- `worker/lib/cache.ts`（25 行）`pubCache(ttl)` 用 `caches.default`：非 GET 直通、命中即返、
+  只有 `c.res.ok` 才设 `Cache-Control: public, max-age=N` 并 `waitUntil(cache.put(...))`。
+- **无项目级 purge 机制**（`caches.default` 多 isolate 共享、按完整 URL 作 key）⇒ 改 TTL 是安全动作，
+  「写后立即失效」不是现成能力。
+- `portal/feed` 另有一层 KV SWR（key `swr:feed:v2:{limit}:{before}`，`expirationTtl 600`，
+  60s 内直出、过期先回旧值再后台重算）⇒ feed 的重算频率被压到「至多每 60s 一次」，
+  但**每次重算单价 2,392 行**。
+- 管理端全部未缓存；无内存缓存；无会话缓存（`PERF_PLAN.md` 明确不做：角色变更/封禁要立刻生效）。
+
+---
+
+## 8. A/B 改写对照（`rewrite-ab.json`，全部实测）
+
+| # | 候选 | 改前 | 改后 | 变化 | 结论 |
+|---|---|---|---|---|---|
+| 1 | 伤停候选：`WHERE e1.team_id=? OR e2.team_id=?` → `WHERE m.home_entry_id IN (SELECT id FROM entry WHERE team_id=?) OR m.away_entry_id IN (…)` | 1,326 | **140** | **−89.4%** | 计划从 `SCAN m USING INDEX idx_match_stage` 变为 `MULTI-INDEX OR` + `idx_match_home`/`idx_match_away`。NULL 语义等价（away 为空时 `NULL IN (…)` 不为真，同 LEFT JOIN 效果）。**最大单笔可修浪费** |
+| 2 | `upcoming` 两段式（先取 id 三表，名字另取） | 1,185 | **589** | **−50.3%** | 第二段实测 8 场取队名 = 6 行 ⇒ 合计 ≈ 595 |
+| 3 | `tournament-summary` 两段式 | 805 | **397** | **−50.7%** | |
+| 4 | 参赛队 + 队内人数（改由 `player` 分组驱动） | 380 | **639** | **+68.2%** | **不要改**——`player` 全表分组要 SCAN 570 行。反直觉，必须靠读数定 |
+| 5 | `feed` 取各阶段最后完赛（改由 `status='finished'` 驱动 `idx_match_status`） | 655 | **140** | **−78.6%** | 替掉 `idx_match_stage` 全扫 |
+| 6 | 排序键探针（同表同 LIMIT 4） | 136 | **1** | −99% | 见 §5.1 |
+
+⇒ 同一模式的 `OR` 改写还出现在 `worker/routes/coach.ts:160`（me-matches）、`worker/routes/coach.ts:249`
+（me-status，LIMIT 1 读 755 行）、`worker/routes/public.ts:688`、`worker/routes/public.ts:855`。
+
+---
+
+## 9. 候选清单（**只列不改**，按行读收益排序）
+
+### A 档 · 零写成本、不动契约（改 SQL / 改 TTL）
+
+| 候选 | 收益（单次冷） | 位置 |
+|---|---|---|
+| 伤停候选 `OR` → `IN (SELECT …)` 改写 | −1,186 行（−89%） | `worker/lib/injury.ts` `listTeamMissCandidates` |
+| `upcoming` 两段式 | −596 行（−50%） | `worker/routes/public.ts:1021` |
+| `feed` 最后完赛轮次改由 `status` 驱动 | −515 行（−79%） | `worker/lib/feedNews.ts:596` |
+| `tournament-summary` 两段式 | −408 行（−51%） | `worker/routes/public.ts:432` |
+| `coach/me-status` / `me-matches` 同款 `OR` 改写 | ≈ −670 / −700（未单独实测，按 §8 #1 的 −89% 比例估） | `worker/routes/coach.ts:249`、`:160` |
+| 终场重算合并为一次阶段扫描 | −133 行/次 | `worker/lib/standings.ts` `buildStandingsStmts` |
+| `upcoming` / `feed` 的 TTL 60s → 更长（待打比赛不需要 60s 新鲜度） | 直接按倍数砍窗口数 | `worker/routes/public.ts:1021`、`worker/routes/portal.ts:30` |
+
+### B 档 · 需改契约或前端配合
+
+| 候选 | 说明 |
+|---|---|
+| 首页轮询降频 / 合并（`Home.tsx:152` 30s × 6 端点） | 一次冷轮询 3,647 行、25 条语句；无 live 时已降 120s，可把 `upcoming` 也纳入慢刷 |
+| `feed` 契约瘦身（18 条语句） | 冷重算两波并行后仍 18 条；`limit=20` 时是否每条都要算全套派生 |
+| 公开面加「按赛事分片」的缓存键 | 现在 key = 完整 URL，`upcoming` 是全站共享单键（好），但 `stats`/`toplists` 每赛事各一份 |
+| 停赛重放 `computeSuspensions` 的增量维护 | 现在 `public/toplists` 每次冷重算都全量重放 |
+
+### C 档 · 不建议做（实测更贵或收益不足）
+
+| 候选 | 原因 |
+|---|---|
+| 参赛队 + 队内人数改分组驱动 | **+68.2%**（§8 #4）。同型的 `admin/teams`(668) 与 `admin/tournament`(420)/`public/tournament`(419) 里的人数子查询**同理不要改**——`player` 全表只有 570 行，相关子查询走 `idx_player_team` 反而更省 |
+| 为「返回 132 行」的 `admin/tournament-matches` 做索引优化 | 已走对索引，132×5 是固有成本 |
+| 终场重算里的 133 行「已完赛场明细」 | 重算积分榜必须读全部已完赛场，属固有成本（可省的只有另一次纯计数扫描） |
+| `MAX(round) GROUP BY stage_id` 优化 | `COVERING INDEX`，133/次线性 |
+| 加索引 | **外键与常用列都已有索引**（`idx_match_status`、`idx_match_stage(stage_id,round,slot)`、`idx_match_home/away`、`idx_match_event_type_time`、`idx_player_team`、`idx_entry_tournament`…），贵的形状不是缺索引造成的 |
+
+### 阈值口径的修正建议
+
+club 的「单次 ≥10,000 行才治理」在本仓不适用（0 个读面达标）。建议本仓改用：
+
+> **治理判据 = 单价 × 重算频率。** 单价 ≥1,000 行且 TTL ≤60s（即每日窗口数 ≥1,440）⇒ 上限 ≥1.44M/日，必做；
+> 单价 ≥1,000 行但走 KV/长 TTL ⇒ 看实测频率再定；单价 <500 行 ⇒ 除非高频否则不动。
+
+按此判据，A 档前四条（`upcoming`、`feed`、`summary`、`injury-candidates`）优先级最高。
+
+---
+
+## 10. 复测口径
+
+```bash
+# 前置：生产 D1 读通道（不消耗行读）
+npx wrangler d1 execute whl --remote --json --command "SELECT 1 AS ok"
+
+# 账号级 24h 基线（不消耗行读）
+npx wrangler d1 info whl --json
+
+# 全站读面普查（约 13 分钟，写 surface-measurements.json）
+npx vite-node scripts/d1-read-audit/measure-surface.mts
+npx vite-node scripts/d1-read-audit/measure-surface.mts --only=feed   # 只复测名字含 feed 的（结果按名字合并回 JSON）
+npx vite-node scripts/d1-read-audit/measure-surface.mts --no-cost --dump  # 只抓 SQL 不打生产
+
+# 写端点的读（约 7 分钟）
+npx vite-node scripts/d1-read-audit/measure-writes.mts
+
+# 形状归并 / 排行
+npx vite-node scripts/d1-read-audit/rank-shapes.mts
+
+# 形状与索引的执行计划、A/B 对照、成本阶梯
+npx vite-node scripts/d1-read-audit/measure-shapes.mts
+```
+
+**复测注意**：
+- 每个读面必须**独立进程**（同一进程内连跑，`caches.default` 桩与 KV 会在 isolate 内变热，读数被抹平）。
+- 只执行 `SELECT`（`selectOnly`），写语句一律只登记。
+- `internal/team-upsert` 的签名要在发请求那一刻算（±300s 窗口）。
+- 单条语句一个 `--command`（`--file` 会把单表索引扫描低报成 1）。
+- Windows 偶发 `exit 3221226505`：`runWrangler` 内置重试 3 次。
+
+---
+
+## 11. 未覆盖与已知缺口
+
+1. **写端点的读只覆盖 16 个面**，且 3 个因桩行在守卫处停下（§6 末）。
+   `POST /api/admin/rosters/sync-rosters` 未单列（其底层 `syncRosters` 已由 `cron-roster-sync` 量到 590 行）；
+   `auth` / `oidc` 路由未量（账号真源在 `whl-auth`，本库花费很小）。
+2. **重算频率（每日缓存窗口数）无法从外部实测**——本报告只给了单价与窗口上限，
+   实到总额 1,428,496 行/日是**账号侧**读数。要精确定位「哪一天哪一面吃掉了配额」，需要
+   D1 Analytics 的按查询分组数据（GraphQL）或自建采样表（本仓目前**完全没有**读消耗度量，
+   这是最大的长期缺口：优化缺基线、事故前无预警）。
+3. **账号级 vs 数据库级的额度归属**待确认（§2 末）。
+4. 抽查样本单一：`tid=1`（S9 顶级联赛、132 场最多）与 `tid=2`（次级联赛、56 场）的成本未对照；
+   换赛事/阶段只需改脚本里的样本 id 取法（已参数化）。
+5. `admin/match-events` 因抽样场次无事件而读 0，需换一个已完赛且带事件的场次复测。
+
+---
+
+## 附：文件清单
+
+| 文件 | 内容 |
+|---|---|
+| `harness.mts` | 度量基建：参数内联 / `selectOnly` / `runWrangler` / `queryMeta` / `queryRows` / `explainPlan` / `d1Info` / 假 D1 / 假 KV / `caches` 桩 / 会话桩 / `captureSurface` / `costOf` / `setValueHints` |
+| `measure-surface.mts` | 55 个读面普查（含 2 个 cron、机器通道自签） |
+| `measure-writes.mts` | 16 个写端点的读量普查 |
+| `rank-shapes.mts` | 189 条语句归并为形状、按表归因 |
+| `measure-shapes.mts` | 索引清单 / `EXPLAIN QUERY PLAN` / A/B 改写对照 / 双通道成本阶梯 |
+| `smoke.mts` | 冒烟（3 个读面 + 一次 `costOf` + 一次 `EXPLAIN`） |
+| `surface-measurements.json` | 读面普查原始数据（55 面 / 189 语句 / 18,904 行） |
+| `write-path-measurements.json` | 写面普查原始数据（16 面 / 56 语句 / 648 行） |
+| `shape-ranking.json` | 形状排行（表归因 + Top 形状 + 读面榜） |
+| `rewrite-ab.json` | 6 组 A/B 改写对照 |
+| `cost-model.json` | 17 条双通道成本阶梯 |
+| `surface-measurements-file-channel.json` | `--file` 通道旧数据（只作通道差异证据） |
