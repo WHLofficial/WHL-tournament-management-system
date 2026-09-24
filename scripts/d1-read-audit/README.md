@@ -1,9 +1,10 @@
-# D1 读消耗量化报告（增量 38 · 步骤 1–4）+ 治理后复测（步骤 6–9）
+# D1 读消耗量化报告（增量 38 · 步骤 1–4）+ 治理后复测（增量 38 步骤 6–9 / 增量 39）
 
 > 量化基线：2026-09-23（UTC 15:43 采样）；**实放复测追加于 2026-09-24**（§3.5）；
-> **治理（步骤 6–9）与治理后复测追加于 2026-09-24**（见「治理后复测」节）。
+> **增量 38 治理（步骤 6–9）与治理后复测追加于 2026-09-24**（见「治理后复测（增量 38）」节）；
+> **增量 39（剩余 `OR` 清理 + 端点合并 + 排期守卫批量化）与复测追加于 2026-09-24**（见「治理后复测（增量 39）」节）。
 > 复测命令见 §10；原始数据在同目录 `surface-measurements.json`（55 读面，桩行）、
-> `live-measurements.json`（20 条记录，实放）、`write-path-measurements.json`（16 写面）、
+> `live-measurements.json`（实放）、`write-path-measurements.json`（16 写面）、
 > `shape-ranking.json`（形状归并）、`rewrite-ab.json`（A/B 改写对照）、`cost-model.json`（双通道成本阶梯）。
 
 ---
@@ -19,14 +20,15 @@
 3. **按 club 的「单次 ≥10,000 行才治理」阈值，本仓达标读面 0 个。** 55 个读面单次冷路径合计 18,904 行（桩行），
    用实放复测修正后约 **22,655 行**（§3.5），最贵的 `public/feed` 单次 6,777 行（limit=20）/ 7,016 行（limit=30）。
    ⇒ 不能照搬 club 的阈值判定，本仓的浪费是「普遍偏贵 × 高频重算」。改用「**单价 × 重算频率**」判据后
-   治理已落地 6 个读面，实放复测合计 **−44.2%**（见「治理后复测」节）。
+   治理已落地 6 个读面（实放合计 **−44.2%**），增量 39 又清掉剩余 3 个 `OR` 读面（实放合计 **−38.1%**）；
+   两次合计见各自的「治理后复测」节。
 4. **读量高度集中：`match` + `match_event` 两张表占 75%**（10,826 + 3,337 行），再加 `player` 11.7%
    ⇒ 三张表 86.6%。治理目标就是这三张。
-5. **公开页轮询是日常读量的主源。** 首页 `Home.tsx:152` 每 60s 轮询一次、一次打 6 个端点
-   （`tournaments` / `upcoming` / `live` / `announcement` / `feed` / `reactions`），其中 `feed`
-   与 `upcoming` 是全部读面里最贵的两笔；`PublicTournament.tsx:163` 与 `PublicMatchDetail.tsx:122`
-   同样 60s 轮询（原为 30s，增量 38 步骤 13 统一降频，理由与「省的是请求数不是行读」见 §7.1）。
-   治理后这一轮降到 **5,022 行 / 34 条语句**（−35.4%，见「治理后复测」节）。
+5. **公开页轮询是日常读量的主源。** 首页 `Home.tsx` 每 60s 轮询一次；增量 39 把原来的 6 个端点合并成
+   `/api/public/home` 一个（`/api/public/live` 因 TTL 不同保持独立）⇒ **一轮 2 个请求**，
+   行读 **5,025 行 / 31 条语句**（合并前 6 请求、5,022 行 ⇒ **合并只省请求数，不省行读**）。
+   `PublicTournament.tsx` 与 `PublicMatchDetail.tsx` 同样 60s 轮询（原为 30s，增量 38 步骤 13 统一降频，
+   理由与「省的是请求数不是行读」见 §7.1）。
 6. **缓存把「访客数」和「D1 读数」解耦了，但没降低每个窗口的重算单价。** `pubCache` 保证每个 TTL 窗口
    至多重算一次（与访客数无关，这是好设计），可单价太高：把 21 个公开面按「每个 TTL 窗口都有请求」相加，
    上限约 **1,449 万行/日**，是账号 500 万池的 **2.9 倍**。当前实到 143 万（= 上限的 9.9%），
@@ -38,6 +40,10 @@
    - 「给参赛队列表加队内人数」的候选改写**更贵 +68%**（380 → 639 行，因为要全表扫 `player`）；
    - 同表同 `LIMIT 4`，`ORDER BY finished_at DESC` 只读 **1 行**，`ORDER BY round DESC` 读 **136 行**
      ⇒ **排序键决定 136 倍差距，`LIMIT` 本身不省读**。
+9. **免费档里比 D1 行读更早撞墙的是 Worker 请求数（10 万/日）。** 按「每次轮询 1 个请求」估算是错的——
+   首页一轮本来发 **6 个请求**，30 人 × 4h @30s 就是 8.6 万请求/日，余量只有 1.16 倍。
+   增量 38 把轮询降到 60s、增量 39 把 6 个端点合并成 2 个 ⇒ **降到 1.44 万请求/日**（余量 7 倍）。
+   端点合并的收益全在这一项上，不在行读。
 
 ---
 
@@ -116,6 +122,75 @@ KV 写最坏 1,440/日 → 288/日（免费档约 1,000/日）。
 - 步骤 7.4（去掉 `leader`/`milestone` 两类条目）需产品决策，按计划**默认不做**。
 - 步骤 8.5（合并终场两次阶段扫描）**删项**：A/B 实测合并后 265 行 vs 现状两条合计 266 行，
   只省 1 行，不值得动正确性关键的晋级闸门。
+
+---
+
+## 治理后复测（增量 39，2026-09-24）
+
+增量 39 做三件事：把「关联列上的 `OR`」在剩余读面清干净、合并首页与教练首屏端点、批量排期守卫批量化。
+复测口径同 §3.5（实放模式，`measure-live.mts`，每面独立进程）。
+
+### 被改读面的前后对照（实放，同 URL）
+
+| 读面 | 增量 38 后 | 增量 39 后 | 变化 | 手段 |
+|---|---|---|---|---|
+| `public/match-h2h` | 1,102 | **466** | −57.7% | 两处 `OR` 改 `IN (SELECT …)` + `IS NOT NULL` 守卫 |
+| `public/match-lineup-stats` | 754 | **270** | −64.2% | `buildTeamTactics` 同款改写（两条各 355 → 113） |
+| `public/toplists` | 1,949 | **1,619** | −16.9% | `listActiveInjuryPlayerIds` 改窄查询（436 → 106） |
+| **三面合计** | 3,805 | **2,355** | **−38.1%** | |
+
+三面都是 TTL 60s（h2h / lineup-stats）或 300s（toplists），单价降幅直接按比例压到窗口容量上限上。
+
+### 端点合并（只省请求数，**不省行读**）
+
+| 端点 | 请求数 | 行读 | 说明 |
+|---|---|---|---|
+| `/api/public/home` | 1（原 6） | **5,025 / 31 条语句** | 与六段分算之和（48+644+11+2+4,315+2 = 5,022）基本一致 |
+| `/api/coach/bootstrap` | 1（原 4） | — | 四段与四条旧路由 deep-equal（`tests/coach.bootstrap.test.ts` 守住不漂移） |
+
+首页一轮：**6 请求 → 2**（`Promise.all([home, live])`），行读 5,022 → 5,025（等价）。
+`/live` 保持 60s 独立、**没有**并进 `/home`——并进去会让 feed 按 60s 重算，4,315 × 1,440 = 621 万行/日 > 账号整池 500 万。
+
+**这是本轮最重要的一条结论：端点个数不影响行读。** 行读只由「单价 × 重算频率」决定，
+合并端点的收益全在**请求配额**上（免费档 10 万请求/日比行读更早撞墙，见 `TECH_DESIGN.md` §3）。
+
+### 请求配额（比 D1 读更早撞墙的那条线）
+
+`Home.tsx` 一轮从 6 个请求降到 2 个 ⇒ 30 人 × 4h 轮询（60s）从 4.3 万请求/日降到 **1.44 万/日**（免费档 10 万）。
+教练页（`Tactics.tsx`）首屏 7 → 4。
+
+### 批量排期守卫（无行读收益，纯延迟）
+
+`POST /api/admin/tournaments/:id/stages/:stageId/matches/bulk` 原来逐对调 `guardMatch`
+（每场 4 条串行查询），最多 24 场 ≈ **96 条串行查询 / 约 19s**；改为整批固定 **2 条查询** + 内存判定
+（`guardMatches`）。单场路由复用同一函数，冲突分流口径（本轮/交手 409、其余 400）未变。
+
+### 实测否决（别再试）
+
+`worker/routes/admin/injuries.ts` 两处 `(e1.team_id = ? OR e2.team_id = ?)` **不改**：外层是
+`WHERE m.id IN (...)`（rowid 列表），`OR` 只在已取回的行上求值、不驱动扫描。
+**教训：关联列上的 `OR` 只有充当扫描驱动时才有害**（已写进 `TECH_DESIGN.md` §3.1 第 2 条）。
+
+---
+
+## 12. 剩余机会清单（增量 39 排查，**未做**）
+
+按「单价 × 重算频率」判据都够不上「必做」，但下次做 D1 治理时可直接从这里挑：
+
+| 位置 | 问题 | 量级 |
+|---|---|---|
+| `worker/routes/admin/schedule.ts:1126-1246` `buildAutoFillStmts` | `for (const next of stages)` 内 `await COUNT(*)`(:1128)、`await buildCrossStagePlan`(:1199)、`await COUNT(*)`(:1219)、`await takeRangePool`(:1228) 全串行；**每次终场都会跑** | 阶段数 × 4 条串行；当前 3 阶段约 12 条 |
+| `worker/routes/admin/tournaments.ts:335-361` `checkRankZoneScope` | 逐 `stageId`/逐 `groupId` 各一条查询 | 排名段数量条串行，仅保存设置时触发 |
+| `src/pages/MatchesTab.tsx:138` | 按队 `GET /api/admin/teams/:tid`（每个缺失队一次） | 已用 `playersCache` 去重，首轮按队数并发 |
+| `src/pages/MatchesTab.tsx:167` | 按队 `GET /api/admin/injuries?teamId=`（每个队一次） | 同上，无缓存 |
+
+**都不属行读问题**（管理端读量占全站 23.8%，且这些查询单价低），属**延迟 / 请求数**问题。
+真要动，方向是给这两条管理端接口加 `?teamIds=` 批量形式，而不是改 SQL。
+
+### 本轮新增的读面（未纳入普查基线）
+
+`/api/public/home` 与 `/api/coach/bootstrap` 是新增端点，尚未写进 `surface-measurements.json`
+（用 `measure-live.mts --extra=` 单独量）。下次全量普查会把它们收进去。
 
 ---
 
@@ -629,6 +704,9 @@ npx vite-node scripts/d1-read-audit/measure-live.mts --only=feed --limit=16
 npx vite-node scripts/d1-read-audit/measure-live.mts --only=feed --limit=20
 npx vite-node scripts/d1-read-audit/measure-live.mts --only=feed --limit=30
 
+# 增量 39 复测（被改的三个面 + 基线里还没有的新端点；--extra 用 | 分隔多项）
+npx vite-node scripts/d1-read-audit/measure-live.mts --only=match-h2h,lineup-stats,toplists --extra="public/home:/api/public/home?limit=16" --dump
+
 # 写端点的读（约 7 分钟）
 npx vite-node scripts/d1-read-audit/measure-writes.mts
 
@@ -667,9 +745,12 @@ npx vite-node scripts/d1-read-audit/measure-shapes.mts
    其余 40 个仍是桩行读数。已复测的覆盖了单价前 10 名。**两个已知不可用/待补的点**：
    - `coach/proxy-board` 实放 status=403（探针会话拿不到代打鉴权），读数 61 行不可信 ⇒ 该面仍按桩行 384 行看待。
    - `admin/injuries`(464)、`public/injuries`(462)、`public/round`(456→447) 已实放且与桩行一致 ⇒ 无扇出，桩行准确。
-7. **治理后复测覆盖被改的 6 个面**（实放）；未改面沿用治理前读数。
+7. **治理后复测覆盖被改的 6 个面（增量 38）+ 3 个面与 2 个新端点（增量 39）**（全部实放）；未改面沿用治理前读数。
    要判断「治理后账号级日读总量降了多少」，需等治理版本部署后的 `npx wrangler d1 info whl --json` 实测
    （本仓当前**未部署**，交付纪律为不 push、不部署）。
+8. **增量 39 新增的 `/api/public/home` 与 `/api/coach/bootstrap` 尚未写进普查基线**
+   （`surface-measurements.json` 仍是增量 38 的 55 面），用 `measure-live.mts --extra=` 单独量。
+   下次全量普查应收进去。
 
 ---
 

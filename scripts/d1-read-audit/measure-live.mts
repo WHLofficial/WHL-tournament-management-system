@@ -25,6 +25,15 @@ const onlyArg = args.find((a) => a.startsWith("--only="))?.slice(7);
 /** 支持逗号分隔多选：--only=toplists,stats,match-report */
 const onlyParts = onlyArg ? onlyArg.split(",").map((s) => s.trim()).filter(Boolean) : null;
 const limitArg = args.find((a) => a.startsWith("--limit="))?.slice(8);
+const extraArg = args.find((a) => a.startsWith("--extra="))?.slice(8);
+/** --extra=名字:/api/public/home?limit=16|名字2:/path —— 量基线 JSON 里没有的读面 */
+const extras = (extraArg ? extraArg.split("|") : [])
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((s) => {
+    const i = s.indexOf(":");
+    return { name: s.slice(0, i), url: s.slice(i + 1), total_rows_read: 0, statements: [] as Captured[] };
+  });
 const dump = args.includes("--dump");
 const outFile = new URL("./live-measurements.json", import.meta.url);
 
@@ -40,7 +49,11 @@ const baseline = JSON.parse(readFileSync(new URL("./surface-measurements.json", 
   surfaces: Array<{ name: string; url: string; total_rows_read: number; statements: Captured[] }>;
 };
 
-const targets = baseline.surfaces.filter((s) => !onlyParts || onlyParts.some((p) => s.name.includes(p)));
+const targets = [
+  ...baseline.surfaces.filter((s) => !onlyParts || onlyParts.some((p) => s.name.includes(p))),
+  // --extra=name:/path?query|name2:/path2 —— 量基线里没有的读面（如新增的 /api/public/home）
+  ...extras,
+];
 if (targets.length === 0) {
   console.error(`没有匹配 --only=${onlyArg} 的读面`);
   process.exit(1);
