@@ -137,7 +137,7 @@ export default function PublicTournament() {
 
   const hasLive = !!meta?.some((st) => st.rounds.some((r) => r.live > 0));
 
-  // 30s 轮询：只有存在进行中比赛时才启动；页面不可见时暂停，回来立刻刷一次
+  // 轮询（POLL_MS，与公开面 pubCache 的 60s TTL 对齐）：只有存在进行中比赛时才启动；页面不可见时暂停，回来立刻刷一次
   useEffect(() => {
     if (!hasLive) return;
     const tick = async () => {

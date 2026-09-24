@@ -123,6 +123,31 @@ async function weekMatches(db: D1Database, startISO: string, endISO: string): Pr
 
 const fmtMD = (iso: string): string => iso.slice(5, 7) + "." + iso.slice(8, 10);
 
+// 回退探针（增量 40）：问「这个窗口里最近一场完赛是哪天」，取它所在周即可，
+// 不必逐周试。走 idx_match_status(status, finished_at DESC) 反向扫且 LIMIT 1 可提前停。
+// 过滤条件与 weekMatches 逐条对齐（含 entry→team 的 INNER JOIN）——否则队伍待定的场次
+// 会被探针选中、却取不出比赛，回退周就空了。
+export const WEEKLY_LATEST_FINISHED_SQL = `SELECT m.finished_at
+   FROM match m
+   JOIN stage s ON s.id = m.stage_id
+   JOIN tournament t ON t.id = s.tournament_id
+   JOIN entry he ON he.id = m.home_entry_id
+   JOIN team ht ON ht.id = he.team_id
+   JOIN entry ae ON ae.id = m.away_entry_id
+   JOIN team at ON at.id = ae.team_id
+   WHERE t.status != 'draft' AND m.status = 'finished'
+     AND m.finished_at >= ? AND m.finished_at < ?
+   ORDER BY m.finished_at DESC
+   LIMIT 1`;
+
+async function latestFinishedIn(db: D1Database, startISO: string, endISO: string): Promise<string | null> {
+  const row = await db
+    .prepare(WEEKLY_LATEST_FINISHED_SQL)
+    .bind(startISO, endISO)
+    .first<{ finished_at: string | null }>();
+  return row?.finished_at ?? null;
+}
+
 export async function buildWeekly(db: D1Database, weekParam?: string): Promise<WeeklyDTO> {
   const nowMonday = mondayUTC(new Date());
   let start = weekParam ? mondayUTC(new Date(`${weekParam}T00:00:00Z`)) : nowMonday;
@@ -134,15 +159,15 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
   } else {
     list = await weekMatches(db, weekKey(start), weekKey(new Date(start.getTime() + WEEK_MS)));
     if (list.length === 0) {
-      for (let i = 1; i <= 8; i++) {
-        const s = new Date(start.getTime() - i * WEEK_MS);
-        const l = await weekMatches(db, weekKey(s), weekKey(new Date(s.getTime() + WEEK_MS)));
-        if (l.length > 0) {
-          start = s;
-          list = l;
-          isFallback = true;
-          break;
-        }
+      // 一次探针定周 + 一次取数（增量 40）：原来是逐周串行试，最多 8 次往返。
+      // 探针窗口取回退区间 [nowMonday-8w, nowMonday)，与逐周试的 i=1..8 完全一致；
+      // 它命中的那场所在周，就是区间内最近的有比赛周。
+      const probeStart = new Date(nowMonday.getTime() - 8 * WEEK_MS);
+      const hit = await latestFinishedIn(db, weekKey(probeStart), weekKey(nowMonday));
+      if (hit) {
+        start = mondayUTC(new Date(hit));
+        list = await weekMatches(db, weekKey(start), weekKey(new Date(start.getTime() + WEEK_MS)));
+        isFallback = true;
       }
     }
   }
