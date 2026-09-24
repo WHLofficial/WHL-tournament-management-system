@@ -30,8 +30,9 @@ import { pubCache } from "../lib/cache";
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
 const app = new Hono<AppEnv>();
 
-app.get("/tournaments", pubCache(300), async (c) => {
-  const rows = await c.env.DB.prepare(
+// 赛事列表（非草稿）。抽成函数供首页聚合端点 /api/public/home 复用，避免两处口径分叉。
+export async function buildTournamentList(db: D1Database): Promise<TournamentDTO[]> {
+  const rows = await db.prepare(
     `SELECT t.id, t.name, t.description, t.format, t.status, t.created_at, t.cover_key,
        (SELECT COUNT(*) FROM entry e WHERE e.tournament_id = t.id) AS entry_count
      FROM tournament t
@@ -48,7 +49,7 @@ app.get("/tournaments", pubCache(300), async (c) => {
     entry_count: number;
     cover_key: string | null;
   }>();
-  const tournaments: TournamentDTO[] = rows.results.map((r) => ({
+  return rows.results.map((r) => ({
     id: r.id,
     name: r.name,
     description: r.description,
@@ -58,7 +59,10 @@ app.get("/tournaments", pubCache(300), async (c) => {
     entryCount: r.entry_count,
     coverUrl: mediaUrl(r.cover_key),
   }));
-  return c.json({ tournaments });
+}
+
+app.get("/tournaments", pubCache(300), async (c) => {
+  return c.json({ tournaments: await buildTournamentList(c.env.DB) });
 });
 
 app.get("/tournaments/:id", pubCache(300), async (c) => {
@@ -663,6 +667,28 @@ const PAIR_COLS = `
     he.team_id AS h_tid, ht.name AS h_name, ht.logo_key AS h_logo,
     ae.team_id AS a_tid, at.name AS a_name, at.logo_key AS a_logo`;
 
+// 增量 39：`he.team_id = ? OR ae.team_id = ?` 改成 match 自身列上的 IN 子查询。
+// 原式 OR 作用在 JOIN 出来的列上，规划器用不了 match 上的任何索引 ⇒ 全表扫 match
+// （h2h 单次冷路径实测 1,102 行，见 scripts/d1-read-audit/README.md §12）。
+// 两个 IS NOT NULL 守卫是必需的：PAIR_FROM 用 INNER JOIN entry，本来就把队伍待定的行丢掉；
+// 换成 `IN (子查询)` 后 `NULL IN (...)` 为 NULL 不为真，但 OR 另一支可能为真 ⇒ 必须显式排除。
+export const H2H_FORM_SQL = `${PAIR_COLS} ${PAIR_FROM}
+    WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
+      AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
+      AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+           OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
+    ORDER BY m.finished_at DESC, m.id DESC LIMIT 5`;
+
+// 两队之间的交锋记录：两个「主客对」的 OR，两支各自都是 IN 子查询。
+export const H2H_MEETINGS_SQL = `${PAIR_COLS} ${PAIR_FROM}
+       WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
+         AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
+         AND ((m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+               AND m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
+           OR (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+               AND m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?)))
+       ORDER BY m.finished_at DESC, m.id DESC LIMIT 100`;
+
 // 跨赛事历史交锋（未开赛场次用）：两队按 team_id 对 team_id，全量安全帽 100，展示取前 10
 app.get("/tournaments/:id/matches/:mid/h2h", pubCache(60), async (c) => {
   const tid = Number(c.req.param("id"));
@@ -699,22 +725,12 @@ app.get("/tournaments/:id/matches/:mid/h2h", pubCache(60), async (c) => {
   if (!m) return c.json({ message: "比赛不存在" }, 404);
   if (m.home_tid == null || m.away_tid == null || m.note === "轮空") return c.json(H2H_EMPTY);
 
-  const FORM_SQL = `${PAIR_COLS} ${PAIR_FROM}
-    WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
-      AND (he.team_id = ? OR ae.team_id = ?)
-    ORDER BY m.finished_at DESC, m.id DESC LIMIT 5`;
-
   const [meetingsRes, homeFormRes, awayFormRes, stageList] = await Promise.all([
-    c.env.DB.prepare(
-      `${PAIR_COLS} ${PAIR_FROM}
-       WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
-         AND ((he.team_id = ? AND ae.team_id = ?) OR (he.team_id = ? AND ae.team_id = ?))
-       ORDER BY m.finished_at DESC, m.id DESC LIMIT 100`
-    )
+    c.env.DB.prepare(H2H_MEETINGS_SQL)
       .bind(mid, m.home_tid, m.away_tid, m.away_tid, m.home_tid)
       .all<PairRow>(),
-    c.env.DB.prepare(FORM_SQL).bind(mid, m.home_tid, m.home_tid).all<PairRow>(),
-    c.env.DB.prepare(FORM_SQL).bind(mid, m.away_tid, m.away_tid).all<PairRow>(),
+    c.env.DB.prepare(H2H_FORM_SQL).bind(mid, m.home_tid, m.home_tid).all<PairRow>(),
+    c.env.DB.prepare(H2H_FORM_SQL).bind(mid, m.away_tid, m.away_tid).all<PairRow>(),
     // 排名对话只有非淘汰赛阶段才有；淘汰赛直接跳过省一趟查询
     m.stage_kind === "elim"
       ? Promise.resolve([])
@@ -851,6 +867,20 @@ app.get("/tournaments/:id/matches/:mid/h2h", pubCache(60), async (c) => {
   return c.json(dto);
 });
 
+// 某队最近场次（用于阵容沿用链）：同款 OR 改 IN 子查询（增量 39）。
+export const TEAM_TACTICS_MATCHES_SQL = `SELECT m.id
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'
+       JOIN entry he ON he.id = m.home_entry_id
+       JOIN entry ae ON ae.id = m.away_entry_id
+       WHERE m.status IN ('live','finished') AND m.id != ?
+         AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
+         AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+              OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
+       ORDER BY s.sort_order DESC, m.round DESC, m.slot DESC, m.leg DESC, m.id DESC
+       LIMIT 25`;
+
 // 某队最近场次的「有效阵容」序列（链式沿用：未提交的场次自动按上一场的算）。
 // 只统计已开打（live/finished）的非草稿赛事场次；窗口外更早的真实提交也能作为沿用源头。
 async function buildTeamTactics(
@@ -860,18 +890,7 @@ async function buildTeamTactics(
   excludeMatchId: number,
 ): Promise<TeamTacticsDTO | null> {
   const rows = await db
-    .prepare(
-      `SELECT m.id
-       FROM match m
-       JOIN stage s ON s.id = m.stage_id
-       JOIN tournament t ON t.id = s.tournament_id AND t.status != 'draft'
-       JOIN entry he ON he.id = m.home_entry_id
-       JOIN entry ae ON ae.id = m.away_entry_id
-       WHERE m.status IN ('live','finished') AND m.id != ?
-         AND (he.team_id = ? OR ae.team_id = ?)
-       ORDER BY s.sort_order DESC, m.round DESC, m.slot DESC, m.leg DESC, m.id DESC
-       LIMIT 25`
-    )
+    .prepare(TEAM_TACTICS_MATCHES_SQL)
     .bind(excludeMatchId, teamId, teamId)
     .all<{ id: number }>();
   const matchIds = (rows.results ?? []).map((r) => r.id);
@@ -1057,14 +1076,13 @@ async function fetchTeamNamesForMatches(
   return out;
 }
 
-// 跨赛事"即将进行"：非草稿赛事的未开打场次（排除轮空/队伍待定），running 优先
-// 待打列表：TTL 300s——两段式后冷重算实测 644 行读/次，按 60s 窗口算上限约 93 万行/日；拉到 300s 后约 18.5 万行/日。
-// 待打列表本来就是「未来赛程」，5 分钟陈旧无实感；已开打的场次走 /live 与单场详情（仍 60s）。
-app.get("/upcoming", pubCache(300), async (c) => {
-  // 两段式：第一段只取排序键与场次 id（三表），第二段只为最终 8 场补队名。
-  // 原七表 join 版 LIMIT 8 在 join 之后才生效 ⇒ 149 场待打比赛每场都付 7 张表（实测 1192 行）。
-  // home/away_entry_id 的 IS NOT NULL 顶掉原来靠 INNER JOIN 隐式完成的「队伍待定」排除。
-  const rows = await c.env.DB.prepare(
+// 跨赛事"即将进行"：非草稿赛事的未开打场次（排除轮空/队伍待定），running 优先。
+// 抽成函数供首页聚合端点 /api/public/home 复用，避免两处口径分叉。
+// 两段式：第一段只取排序键与场次 id（三表），第二段只为最终 8 场补队名。
+// 原七表 join 版 LIMIT 8 在 join 之后才生效 ⇒ 149 场待打比赛每场都付 7 张表（实测 1192 行）。
+// home/away_entry_id 的 IS NOT NULL 顶掉原来靠 INNER JOIN 隐式完成的「队伍待定」排除。
+export async function buildUpcomingList(db: D1Database): Promise<UpcomingDTO[]> {
+  const rows = await db.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status,
        m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round
      FROM match m
@@ -1082,8 +1100,8 @@ app.get("/upcoming", pubCache(300), async (c) => {
     stage_order: number; round: number;
   }>();
   const picked = rows.results ?? [];
-  const names = await fetchTeamNamesForMatches(c.env.DB, picked.map((r) => r.match_id));
-  const upcoming: UpcomingDTO[] = picked.map((r) => ({
+  const names = await fetchTeamNamesForMatches(db, picked.map((r) => r.match_id));
+  return picked.map((r) => ({
     tournamentId: r.tournament_id,
     tournamentName: r.tournament_name,
     matchId: r.match_id,
@@ -1093,7 +1111,12 @@ app.get("/upcoming", pubCache(300), async (c) => {
     homeTeamName: names.get(r.match_id)?.home ?? "",
     awayTeamName: names.get(r.match_id)?.away ?? "",
   }));
-  return c.json({ upcoming });
+}
+
+// 待打列表：TTL 300s——两段式后冷重算实测 644 行读/次，按 60s 窗口算上限约 93 万行/日；拉到 300s 后约 18.5 万行/日。
+// 待打列表本来就是「未来赛程」，5 分钟陈旧无实感；已开打的场次走 /live 与单场详情（仍 60s）。
+app.get("/upcoming", pubCache(300), async (c) => {
+  return c.json({ upcoming: await buildUpcomingList(c.env.DB) });
 });
 
 // 跨赛事"进行中"：live 场，实时比分与 liveScore 同口径（goal/pen_goal 计事件方，own_goal 记对方）

@@ -285,10 +285,23 @@ export async function listActiveInjuries(
   return out;
 }
 
-// 伤病榜「伤停中」徽标用：全平台仍在伤停中的球员 id 集合（跨赛事，球员在哪儿伤的都算）
+// 伤病榜「伤停中」徽标用：全平台仍在伤停中的球员 id 集合（跨赛事，球员在哪儿伤的都算）。
+// 调用方只要一个 Set，所以别走 listActiveInjuries——那条路要 7 表 join 全 injury + 全 injury_miss 扫描
+// （增量 39 实测 436 行/次）只为 map 出 player_id。这条 EXISTS 半连接只回 id，
+// 走 injury_miss 的唯一索引 + match 主键点查，实测 106 行。
+// 口径等价：missesAll 也是 INNER JOIN match（match_id 为空的缺阵记录同样不计），
+// 「伤停中」= 缺阵场次里存在 status != 'finished' 的。
+export const ACTIVE_INJURY_PLAYER_IDS_SQL = `SELECT DISTINCT i.player_id
+       FROM injury i
+       WHERE EXISTS (
+         SELECT 1 FROM injury_miss im
+         JOIN match m ON m.id = im.match_id
+         WHERE im.injury_id = i.id AND m.status != 'finished'
+       )`;
+
 export async function listActiveInjuryPlayerIds(db: D1Database): Promise<Set<number>> {
-  const list = await listActiveInjuries(db);
-  return new Set(list.map((i) => i.playerId));
+  const rows = await db.prepare(ACTIVE_INJURY_PLAYER_IDS_SQL).all<{ player_id: number }>();
+  return new Set((rows.results ?? []).map((r) => r.player_id));
 }
 
 // 公开端「伤停动态」板块：某届赛事的参赛队里，仍在伤停中的登记，按队分组。
