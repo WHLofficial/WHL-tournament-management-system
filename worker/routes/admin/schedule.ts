@@ -620,61 +620,70 @@ app.patch("/:id/stages/:stageId/entries/:entryId/group", async (c) => {
 });
 
 // ---------- 手动落场（仅循环/小组阶段；淘汰赛由晋级器填充） ----------
-// 守卫单场与批量共用：null = 通过；extraPairIds = 同批已检查过的其它场队伍
-// （批量场景库里还没插入，批次内互斥由调用方先查，这里只防与已有场次冲突）
-async function guardMatch(
+// 守卫（单场与批量共用，增量 39 起批量化）：返回 null = 全部通过，否则给出首个不过的场次下标与原因。
+// 原实现逐场 4 条串行查询，批量最多 24 场 ≈ 96 条 ≈ 19s；批量化后整批固定 2 条查询，与场数无关。
+// 批次内互斥（一队一批只踢一场）由调用方先查；这里对「本轮已有比赛」只看本场两支队的库里占用——
+// 同批先前的队必然已各自通过检查，故无需再并进 IN 列表（语义与原 extraPairIds 一致）。
+async function guardMatches(
   db: D1Database,
   tid: number,
   stage: StageRow,
   round: number,
-  homeEntryId: number,
-  awayEntryId: number,
-  extraPairIds: number[] = []
-): Promise<string | null> {
+  pairs: Array<{ home: number; away: number }>
+): Promise<{ index: number; why: string } | null> {
   if (stage.kind === "elim") {
-    return "淘汰赛对阵由晋级器按结果填充，不支持手动落场";
+    return { index: 0, why: "淘汰赛对阵由晋级器按结果填充，不支持手动落场" };
   }
   const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { loops?: number };
   const loops = cfg.loops === 2 ? 2 : 1;
 
-  const e1 = await db
-    .prepare("SELECT id, group_id FROM entry WHERE id = ? AND tournament_id = ?")
-    .bind(homeEntryId, tid)
-    .first<{ id: number; group_id: number | null }>();
-  const e2 = await db
-    .prepare("SELECT id, group_id FROM entry WHERE id = ? AND tournament_id = ?")
-    .bind(awayEntryId, tid)
-    .first<{ id: number; group_id: number | null }>();
-  if (!e1 || !e2) return "参赛队伍不存在";
+  const wantIds = [...new Set(pairs.flatMap((p) => [p.home, p.away]))];
+  if (wantIds.length === 0) return null;
 
-  if (stage.kind === "group") {
-    if (e1.group_id == null || e1.group_id !== e2.group_id) {
-      return "小组赛只能在同组球队之间落场";
+  // 1) 参赛队伍归属：一次取回本批涉及的全部 entry
+  const erows = await db
+    .prepare(
+      `SELECT id, group_id FROM entry WHERE tournament_id = ? AND id IN (${wantIds.map(() => "?").join(",")})`
+    )
+    .bind(tid, ...wantIds)
+    .all<{ id: number; group_id: number | null }>();
+  const groupOf = new Map<number, number | null>();
+  for (const r of erows.results ?? []) groupOf.set(r.id, r.group_id);
+
+  // 2) 该阶段全部场次：同时供「本轮占用」与「历史交手次数」判定
+  const mrows = await db
+    .prepare("SELECT round, home_entry_id, away_entry_id FROM match WHERE stage_id = ?")
+    .bind(stage.id)
+    .all<{ round: number; home_entry_id: number | null; away_entry_id: number | null }>();
+  const roundOccupied = new Set<number>();
+  const pairCount = new Map<string, number>();
+  const pairKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+  for (const m of mrows.results ?? []) {
+    if (m.round === round) {
+      if (m.home_entry_id != null) roundOccupied.add(m.home_entry_id);
+      if (m.away_entry_id != null) roundOccupied.add(m.away_entry_id);
+    }
+    if (m.home_entry_id != null && m.away_entry_id != null) {
+      const k = pairKey(m.home_entry_id, m.away_entry_id);
+      pairCount.set(k, (pairCount.get(k) ?? 0) + 1);
     }
   }
 
-  // 一轮一支队只踢一场（含同批已检查的队，防与库里已有场次冲突）
-  const allIds = [homeEntryId, awayEntryId, ...extraPairIds];
-  const ph = allIds.map(() => "?").join(",");
-  const dup = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM match
-       WHERE stage_id = ? AND round = ?
-         AND (home_entry_id IN (${ph}) OR away_entry_id IN (${ph}))`
-    )
-    .bind(stage.id, round, ...allIds, ...allIds)
-    .first<{ n: number }>();
-  if ((dup?.n ?? 0) > 0) return "本轮已有其中一支球队的比赛";
-  const played = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM match
-       WHERE stage_id = ?
-         AND ((home_entry_id = ? AND away_entry_id = ?) OR (home_entry_id = ? AND away_entry_id = ?))`
-    )
-    .bind(stage.id, homeEntryId, awayEntryId, awayEntryId, homeEntryId)
-    .first<{ n: number }>();
-  if ((played?.n ?? 0) >= loops) {
-    return loops === 1 ? "两队在本阶段已交手过" : "两队交手次数已达上限（双循环）";
+  for (let i = 0; i < pairs.length; i++) {
+    const { home, away } = pairs[i];
+    if (!groupOf.has(home) || !groupOf.has(away)) return { index: i, why: "参赛队伍不存在" };
+    if (stage.kind === "group") {
+      const g1 = groupOf.get(home);
+      const g2 = groupOf.get(away);
+      if (g1 == null || g1 !== g2) return { index: i, why: "小组赛只能在同组球队之间落场" };
+    }
+    // 一轮一支队只踢一场
+    if (roundOccupied.has(home) || roundOccupied.has(away)) {
+      return { index: i, why: "本轮已有其中一支球队的比赛" };
+    }
+    if ((pairCount.get(pairKey(home, away)) ?? 0) >= loops) {
+      return { index: i, why: loops === 1 ? "两队在本阶段已交手过" : "两队交手次数已达上限（双循环）" };
+    }
   }
   return null;
 }
@@ -703,10 +712,10 @@ app.post("/:id/stages/:stageId/matches", async (c) => {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
     throw e;
   }
-  const why = await guardMatch(c.env.DB, tid, stage, round, homeEntryId, awayEntryId);
-  if (why) {
-    const conflict = why.includes("本轮") || why.includes("交手");
-    return fail(c, conflict ? 409 : 400, why);
+  const bad = await guardMatches(c.env.DB, tid, stage, round, [{ home: homeEntryId, away: awayEntryId }]);
+  if (bad) {
+    const conflict = bad.why.includes("本轮") || bad.why.includes("交手");
+    return fail(c, conflict ? 409 : 400, bad.why);
   }
 
   const r = await c.env.DB.prepare(
@@ -767,14 +776,9 @@ app.post("/:id/stages/:stageId/matches/bulk", async (c) => {
     seen.set(away, i + 1);
   }
 
-  // 逐场守卫（带上同批先前的队做互查）；任一不过整批拒
-  const extra: number[] = [];
-  for (let i = 0; i < clean.length; i++) {
-    const { home, away } = clean[i];
-    const why = await guardMatch(c.env.DB, tid, stage, round, home, away, extra);
-    if (why) return fail(c, 400, `第 ${i + 1} 场：${why}`);
-    extra.push(home, away);
-  }
+  // 整批守卫（增量 39：一次批量化查询覆盖全部场次，不再逐场 4 条串行）；任一不过整批拒并报出场次
+  const bad = await guardMatches(c.env.DB, tid, stage, round, clean);
+  if (bad) return fail(c, 400, `第 ${bad.index + 1} 场：${bad.why}`);
 
   const mx = await c.env.DB.prepare(
     "SELECT COALESCE(MAX(slot), 0) AS m FROM match WHERE stage_id = ? AND round = ?"
