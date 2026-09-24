@@ -1,5 +1,5 @@
 {
-  "measured_at": "2026-09-23T15:43:40.049Z",
+  "measured_at": "2026-09-24T02:16:10.294Z",
   "note": "每个读面独立冷路径：假 KV 空、边缘缓存空；逐条语句打到生产 D1 读回 meta.rows_read",
   "boundaries": [
     "走 wrangler d1 execute 管理通道量物理行读，不等价于 worker 运行时通道（后者才有 RPC 与限制）",
@@ -19,9 +19,9 @@
       },
       "jurisdiction": null,
       "database_size": 561152,
-      "read_queries_24h": 8205,
-      "write_queries_24h": 1458,
-      "rows_read_24h": 1428496,
+      "read_queries_24h": 3861,
+      "write_queries_24h": 1459,
+      "rows_read_24h": 633456,
       "rows_written_24h": 2335
     },
     "whl-club": {
@@ -34,11 +34,11 @@
         "mode": "disabled"
       },
       "jurisdiction": null,
-      "database_size": 29102080,
-      "read_queries_24h": 7227,
-      "write_queries_24h": 78,
-      "rows_read_24h": 768098,
-      "rows_written_24h": 66703
+      "database_size": 29106176,
+      "read_queries_24h": 7556,
+      "write_queries_24h": 77,
+      "rows_read_24h": 541425,
+      "rows_written_24h": 66697
     },
     "whl-auth": {
       "uuid": "b76d1129-77ae-4844-931c-1c7b00a9b048",
@@ -51,10 +51,10 @@
       },
       "jurisdiction": null,
       "database_size": 339968,
-      "read_queries_24h": 908,
-      "write_queries_24h": 197,
-      "rows_read_24h": 5733,
-      "rows_written_24h": 455
+      "read_queries_24h": 890,
+      "write_queries_24h": 201,
+      "rows_read_24h": 5956,
+      "rows_written_24h": 460
     },
     "whl-guess": {
       "uuid": "8f48bd5e-5d1b-4d62-ba4f-bf9b0cdb09eb",
@@ -67,9 +67,9 @@
       },
       "jurisdiction": null,
       "database_size": 262144,
-      "read_queries_24h": 997,
+      "read_queries_24h": 1095,
       "write_queries_24h": 0,
-      "rows_read_24h": 491,
+      "rows_read_24h": 545,
       "rows_written_24h": 0
     }
   },

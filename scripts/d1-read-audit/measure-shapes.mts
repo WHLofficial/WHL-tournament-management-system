@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { explainPlan, inlineParams, queryRows, queryMeta, runWrangler, oneLine } from "./harness.mts";
 
 const planOnly = process.argv.includes("--plan-only");
+const cOnly = process.argv.includes("--c-only");
 const ranking = JSON.parse(readFileSync("scripts/d1-read-audit/shape-ranking.json", "utf8")) as {
   shapes: Array<{ sql: string; table: string; rows_read: number; calls: number; surfaces: string[] }>;
 };
@@ -127,10 +128,50 @@ const pairs: Pair[] = [
     a: `SELECT COUNT(*) AS n FROM match WHERE status = 'pending'`,
     b: `SELECT m.id, ht.name AS home_team_name, at.name AS away_team_name FROM match m JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id WHERE m.id IN (14, 21, 22, 23, 24, 25, 26, 27)`,
   },
+
+  // ── 下面六组是步骤 5.3 补测：实施前先把读数拿到，不达预期就删掉该项 ──────────────
+  {
+    name: "教练状态默认赛事：OR 作用在 join 列上（coach/me/status，LIMIT 1 却扫全量）",
+    why: "A `he.team_id = 1 OR ae.team_id = 1` 作用在 LEFT JOIN 出来的列上 ⇒ 无索引可用；B 改成对 match 自身的 home/away_entry_id 用 IN 子查询（同伤停候选的省法）。NULL 语义等价：away 为空时 NULL IN (...) 不为真",
+    a: `SELECT t.id AS tournament_id FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id WHERE m.status = 'pending' AND t.status != 'draft' AND (m.note IS NULL OR m.note != '轮空') AND (he.team_id = 1 OR ae.team_id = 1) ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`,
+    b: `SELECT t.id AS tournament_id FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id WHERE m.status = 'pending' AND t.status != 'draft' AND (m.note IS NULL OR m.note != '轮空') AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = 1) OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = 1)) ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`,
+  },
+  {
+    name: "本队待赛场次：同款 OR 改写（coach/me/matches，含两个 LEFT JOIN 到本队的表）",
+    why: "A 同上一组的 OR 模式，但这条还带 tactic_submission 与 lineup_proxy_grant 两个按本队过滤的 LEFT JOIN（列 sub_id/grant_id 还在用，必须保留）；B 只换 WHERE 里的 OR",
+    a: `SELECT m.id, m.round, m.leg, m.note, t.id AS tournament_id, t.name AS tournament_name, s.name AS stage_name, s.kind AS stage_kind, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_team_name, at.name AS away_team_name, ts.id AS sub_id, g.id AS grant_id FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN team at ON at.id = ae.team_id LEFT JOIN tactic_submission ts ON ts.match_id = m.id AND ts.team_id = 1 LEFT JOIN lineup_proxy_grant g ON g.id = (SELECT MIN(g2.id) FROM lineup_proxy_grant g2 WHERE g2.match_id = m.id AND g2.team_id = 1 AND g2.revoked_at IS NULL) WHERE m.status = 'pending' AND t.status != 'draft' AND (m.note IS NULL OR m.note != '轮空') AND (he.team_id = 1 OR ae.team_id = 1) ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`,
+    b: `SELECT m.id, m.round, m.leg, m.note, t.id AS tournament_id, t.name AS tournament_name, s.name AS stage_name, s.kind AS stage_kind, he.team_id AS home_tid, ae.team_id AS away_tid, ht.name AS home_team_name, at.name AS away_team_name, ts.id AS sub_id, g.id AS grant_id FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id LEFT JOIN entry he ON he.id = m.home_entry_id LEFT JOIN entry ae ON ae.id = m.away_entry_id LEFT JOIN team ht ON ht.id = he.team_id LEFT JOIN team at ON at.id = ae.team_id LEFT JOIN tactic_submission ts ON ts.match_id = m.id AND ts.team_id = 1 LEFT JOIN lineup_proxy_grant g ON g.id = (SELECT MIN(g2.id) FROM lineup_proxy_grant g2 WHERE g2.match_id = m.id AND g2.team_id = 1 AND g2.revoked_at IS NULL) WHERE m.status = 'pending' AND t.status != 'draft' AND (m.note IS NULL OR m.note != '轮空') AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = 1) OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = 1)) ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`,
+  },
+  {
+    name: "轮次伤情：加 match_id 子查询能否改掉 type 驱动的扫描（feed 的 injuriesInRound）",
+    why: "A 现状由 idx_match_event_type_time(type=?) 驱动 ⇒ 扫全部伤情事件（生产 28 条）；B 加 `me.match_id IN (SELECT ...)` 看规划器会不会改走 idx_match_event_match。注意这里必须用语义等价的子查询，不能由调用方传「已完赛场次 id」——buildRoundRecap 的轮次可能未完赛",
+    a: `SELECT me.id AS event_id, i.id AS injury_id, me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name, me.type, i.injury_name, m.id AS match_id, m.stage_id, m.round, m.finished_at, s.tournament_id, tt.name AS tournament_name, (SELECT COUNT(*) FROM injury_miss im JOIN match m2 ON m2.id = im.match_id WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament tt ON tt.id = s.tournament_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id JOIN player p ON p.id = me.player_id LEFT JOIN injury i ON i.event_id = me.id WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND m.stage_id = 1 AND m.round = 5 ORDER BY m.finished_at, me.id`,
+    b: `SELECT me.id AS event_id, i.id AS injury_id, me.player_id, p.name AS player_name, t.id AS team_id, t.name AS team_name, me.type, i.injury_name, m.id AS match_id, m.stage_id, m.round, m.finished_at, s.tournament_id, tt.name AS tournament_name, (SELECT COUNT(*) FROM injury_miss im JOIN match m2 ON m2.id = im.match_id WHERE im.injury_id = i.id AND m2.status != 'finished') AS out_matches FROM match_event me JOIN match m ON m.id = me.match_id JOIN stage s ON s.id = m.stage_id JOIN tournament tt ON tt.id = s.tournament_id JOIN entry e ON e.id = me.entry_id JOIN team t ON t.id = e.team_id JOIN player p ON p.id = me.player_id LEFT JOIN injury i ON i.event_id = me.id WHERE me.type IN ('injury_minor', 'injury_major') AND tt.status != 'draft' AND me.match_id IN (SELECT id FROM match WHERE stage_id = 1 AND round = 5) ORDER BY m.finished_at, me.id`,
+  },
+  {
+    name: "待赛列表：两段式 vs 单语句子查询（省掉第二次往返）",
+    why: "A 是上一组「两段式」的 B（只取 id，三表）；B 把 LIMIT 8 塞进子查询、外层再 join 队名 —— 行读若与 A 相当，就能省掉一次往返（PERF_PLAN 口径每次串行 D1 ≈ +0.2s）。若明显更贵就退回两段式",
+    a: `SELECT m.id AS match_id, t.id AS tournament_id, t.status AS tournament_status, s.kind AS stage_kind, s.sort_order AS stage_order, m.round FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE t.status != 'draft' AND m.status = 'pending' AND (m.note IS NULL OR m.note != '轮空') ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.id, s.sort_order, m.round, m.slot LIMIT 8`,
+    b: `SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status, m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round, ht.name AS home_team_name, at.name AS away_team_name FROM (SELECT m.id, m.stage_id, m.round, m.slot, m.home_entry_id, m.away_entry_id FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE t.status != 'draft' AND m.status = 'pending' AND (m.note IS NULL OR m.note != '轮空') ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.id, s.sort_order, m.round, m.slot LIMIT 8) m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id JOIN entry he ON he.id = m.home_entry_id JOIN team ht ON ht.id = he.team_id JOIN entry ae ON ae.id = m.away_entry_id JOIN team at ON at.id = ae.team_id ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.id, s.sort_order, m.round, m.slot`,
+  },
+  {
+    name: "综述轮次筛选：等价地先限定「有完赛场次的轮」能不能改掉全索引扫描（feed 的 recapP）",
+    why: "A 现状 GROUP BY stage_id,round 后由 HAVING 判断整轮是否完赛 ⇒ 规划器走 idx_match_stage 全索引扫（实测 655 行）。B 加 `(m.stage_id, m.round) IN (SELECT ... status='finished')` 缩小 GROUP BY 的输入，语义等价（一轮若没有任何完赛场次，COUNT(*) 必然 > SUM(finished)，HAVING 本就不成立）",
+    a: `SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL AND COALESCE(m.note, '') != '轮空' GROUP BY m.stage_id, m.round HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END) AND MAX(m.finished_at) < COALESCE('9999-12-31', '9999-12-31') ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT 20`,
+    b: `SELECT m.stage_id, m.round, MAX(m.finished_at) AS last_at, s.tournament_id, t.name AS tournament_name, s.kind AS stage_kind, s.name AS stage_name FROM match m JOIN stage s ON s.id = m.stage_id JOIN tournament t ON t.id = s.tournament_id WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL AND COALESCE(m.note, '') != '轮空' AND (m.stage_id, m.round) IN (SELECT stage_id, round FROM match WHERE status = 'finished') GROUP BY m.stage_id, m.round HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END) AND MAX(m.finished_at) < COALESCE('9999-12-31', '9999-12-31') ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT 20`,
+  },
+  {
+    name: "终场合并阶段扫描：现状是两条语句，这里量「一条全阶段读」值不值",
+    why: "现状每次终场在相邻两处各扫一遍全阶段：buildStandingsStmts 读 status='finished'（实测 133 行）+ buildAutoFillStmts 读 COUNT(*) ... status!='finished'（实测 133 行）= 266。A 是后者（可被消掉的那条）；B 是一条读全阶段所有列的合并形状（buildAdvanceStmts 已是这个形状）。判据是 B 是否 < 133 + A",
+    a: `SELECT COUNT(*) AS n FROM match WHERE stage_id = 1 AND status != 'finished'`,
+    b: `SELECT id, round, slot, leg, home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, status, winner_entry_id, note FROM match WHERE stage_id = 1 ORDER BY round, slot, leg`,
+  },
 ];
 
 const abOut: unknown[] = [];
+const pairFilter = (process.argv.find((a) => a.startsWith("--pairs=")) ?? "").slice("--pairs=".length);
 for (const p of pairs) {
+  if (pairFilter && !p.name.includes(pairFilter)) continue;
   const ra = queryMeta(p.a);
   const rb = queryMeta(p.b);
   const pa = explainPlan(p.a);
@@ -145,10 +186,27 @@ for (const p of pairs) {
   for (const l of pb) console.log(`    B· ${l}`);
   abOut.push({ name: p.name, why: p.why, a: p.a, b: p.b, a_rows_read: ra.rows_read, b_rows_read: rb.rows_read, a_plan: pa, b_plan: pb, delta_pct: Number(delta.toFixed(1)) });
 }
-writeFileSync("scripts/d1-read-audit/rewrite-ab.json", JSON.stringify({ measured_at: new Date().toISOString(), pairs: abOut }, null, 2));
+// --pairs= 只跑选中的几组时按名字合并回既有结果，别把已量到的对拍冲掉
+const abPath = "scripts/d1-read-audit/rewrite-ab.json";
+let abFinal: unknown[] = abOut;
+if (pairFilter) {
+  try {
+    const prev = JSON.parse(readFileSync(abPath, "utf8")) as { pairs: Array<{ name: string }> };
+    const fresh = new Map((abOut as Array<{ name: string }>).map((x) => [x.name, x]));
+    abFinal = prev.pairs.map((x) => fresh.get(x.name) ?? x);
+    for (const x of abOut as Array<{ name: string }>) if (!prev.pairs.some((y) => y.name === x.name)) abFinal.push(x);
+  } catch {
+    /* 首次运行没有既有结果，直接用本次的 */
+  }
+}
+writeFileSync(abPath, JSON.stringify({ measured_at: new Date().toISOString(), pairs: abFinal }, null, 2));
 console.log("\n→ scripts/d1-read-audit/rewrite-ab.json");
 
 // ── D. 成本模型阶梯：把「rows_read 到底在数什么」钉死 ──────────────────────────
+if (cOnly) {
+  console.log("\n（--c-only：跳过 D 段）");
+  process.exit(0);
+}
 console.log("\n═══ D. 成本模型阶梯（--command 与 --file 双通道各量一遍）═══");
 const ladder: Array<{ label: string; sql: string }> = [
   { label: "match 主键点查 8 行", sql: `SELECT id FROM match WHERE id IN (14,21,22,23,24,25,26,27)` },
