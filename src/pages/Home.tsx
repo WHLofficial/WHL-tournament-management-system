@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
+import { POLL_MS } from "../lib/polling";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { EventTimeline } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
@@ -152,9 +153,9 @@ export function Home() {
     const t = setInterval(() => {
       if (document.hidden) return;
       ticks++;
-      // 有 live 30s 快刷；无 live 降到 120s 慢刷兜底（不漏新开的比赛）
-      if (liveRef.current > 0 || ticks % 4 === 0) void load();
-    }, 30000);
+      // 有 live 按 POLL_MS 快刷；无 live 降到 120s 慢刷兜底（不漏新开的比赛）
+      if (liveRef.current > 0 || ticks % 2 === 0) void load();
+    }, POLL_MS);
     return () => clearInterval(t);
   }, [load]);
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
+import { POLL_MS } from "../lib/polling";
 import { MatchScore } from "../components/MatchScore";
 import { EventTimeline, eventMeta, timelineSide } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
@@ -121,7 +122,7 @@ export default function PublicMatchDetail() {
     if (m?.status === "finished") return;
     const t = setInterval(() => {
       if (!document.hidden) void refetch();
-    }, 30000);
+    }, POLL_MS);
     return () => clearInterval(t);
   }, [refetch, m?.status]);
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
+import { POLL_MS } from "../lib/polling";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { StandingsTables } from "./StandingsTab";
 import { stageTitle } from "./MatchesTab";
@@ -160,7 +161,7 @@ export default function PublicTournament() {
         // 单次轮询失败静默，下一轮再试
       }
     };
-    const iv = setInterval(() => void tick(), 30_000);
+    const iv = setInterval(() => void tick(), POLL_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") void tick();
     };

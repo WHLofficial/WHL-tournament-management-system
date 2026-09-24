@@ -22,10 +22,10 @@
    治理已落地 6 个读面，实放复测合计 **−44.2%**（见「治理后复测」节）。
 4. **读量高度集中：`match` + `match_event` 两张表占 75%**（10,826 + 3,337 行），再加 `player` 11.7%
    ⇒ 三张表 86.6%。治理目标就是这三张。
-5. **公开页轮询是日常读量的主源。** 首页 `Home.tsx:152` 每 30s 轮询一次、一次打 6 个端点
+5. **公开页轮询是日常读量的主源。** 首页 `Home.tsx:152` 每 60s 轮询一次、一次打 6 个端点
    （`tournaments` / `upcoming` / `live` / `announcement` / `feed` / `reactions`），其中 `feed`
-   （实放 **6,464 行**，§3.5）与 `upcoming`（1,192 行）是全部读面里最贵的两笔；
-   `PublicTournament.tsx:163` 与 `PublicMatchDetail.tsx:122` 同样 30s 轮询。
+   与 `upcoming` 是全部读面里最贵的两笔；`PublicTournament.tsx:163` 与 `PublicMatchDetail.tsx:122`
+   同样 60s 轮询（原为 30s，增量 38 步骤 13 统一降频，理由与「省的是请求数不是行读」见 §7.1）。
    治理后这一轮降到 **5,022 行 / 34 条语句**（−35.4%，见「治理后复测」节）。
 6. **缓存把「访客数」和「D1 读数」解耦了，但没降低每个窗口的重算单价。** `pubCache` 保证每个 TTL 窗口
    至多重算一次（与访客数无关，这是好设计），可单价太高：把 21 个公开面按「每个 TTL 窗口都有请求」相加，
@@ -101,7 +101,7 @@ KV 写最坏 1,440/日 → 288/日（免费档约 1,000/日）。
 
 ### 首页一次冷轮询（总验收线）
 
-`Home.tsx:152` 每 30s 打 6 个端点，治理前 7,776 行 / 51 条语句 → 治理后
+`Home.tsx:152` 每 60s 打 6 个端点（原 30s，步骤 13 降频），治理前 7,776 行 / 51 条语句 → 治理后
 `tournaments 48 + upcoming 644 + live 11 + announcement 2 + feed(limit=16) 4,315 + reactions 2`
 = **5,022 行 / 34 条语句（−35.4% 行读，−33% 语句）**。
 
@@ -422,12 +422,21 @@ me-matches +33、tournament-matches −2）。**最贵读面从 `public/toplists
 
 | 页面 | 间隔 | 打的端点 | 单次冷成本 |
 |---|---|---|---|
-| `src/pages/Home.tsx:152` | **30s**（无 live 时降到 120s 兜底） | `tournaments` / `upcoming` / `live` / `announcement` / `feed` / `interact/reactions` | 48 + **1,192** + 11 + 2 + **6,464** + 2 = **7,719 行 / 44 条语句** |
-| `src/pages/PublicTournament.tsx:163` | **30s** | 每个可见轮次 `tournaments/:tid/matches?stageId&round`（Promise.all 并发） | 46/轮次 |
-| `src/pages/PublicMatchDetail.tsx:122` | **30s**（完赛后停止轮询） | 场次详情 + 阵容 | 51 + 5 |
+| `src/pages/Home.tsx:152` | **60s**（无 live 时降到 120s 兜底） | `tournaments` / `upcoming` / `live` / `announcement` / `feed` / `interact/reactions` | 48 + **644** + 11 + 2 + **4,315** + 2 = **5,022 行 / 34 条语句** |
+| `src/pages/PublicTournament.tsx:163` | **60s**（仅本赛事有 live 时才轮询） | 每个可见轮次 `tournaments/:tid/matches?stageId&round`（Promise.all 并发） | 46/轮次 |
+| `src/pages/PublicMatchDetail.tsx:122` | **60s**（完赛后停止轮询） | 场次详情 + 阵容 | 51 + 5 |
 
-⇒ **首页一次冷轮询就占单次冷路径总读量的 34%**（7,719 / 22,655），且它每 30s 触发一次。
-其中 `feed` 一项占 6,464 行（实放读数，§3.5）——**首页一半以上的 D1 读都花在这一个端点上**。
+⇒ 首页一次冷轮询占总读量的大头，60s 触发一次。
+
+> **2026-09-24 更新（增量 38 步骤 13）**：三处轮询从 30s 统一降到 60s（`src/lib/polling.ts` 的 `POLL_MS`）。
+> 选 60s 而不是更密：这些读面都走 `pubCache`，TTL 就是 60s，比 TTL 更密的轮询里必然有一部分落在
+> 同一个缓存窗口内、拿到逐字相同的数据。选 60s 而不是 90s：一场球的比分最多晚一分钟出现是「直播」
+> 还能接受的边界。
+>
+> **要说清楚降频省的是什么**：D1 行读由 TTL 决定，不由轮询频率决定——同一个缓存窗口里轮询两次，
+> 第二次读 0 行。所以降频主要省的是 **Worker 请求数**（首页一轮 6 个请求）与边缘缓存回源次数
+> （请求越多越容易打到没缓存的节点、触发重算），对 D1 行读是二阶影响。真正把行读降下来的是
+> 步骤 6–9 的 SQL 与 TTL 改动。
 
 ### 7.2 TTL 窗口容量（「每个 TTL 窗口都有请求」时的上限）
 
@@ -514,7 +523,7 @@ me-matches +33、tournament-matches −2）。**最贵读面从 `public/toplists
 | 代码瘦身 + TTL 300s | 3,924 | 288 | **1,130,112** | **0.23 倍** |
 
 ⇒ **组合起来上限降 88%**（930 万 → 113 万行/日），且全部是「改 SQL + 改 TTL」，不动任何接口契约。
-TTL 放宽的代价：待打比赛列表与 feed 最长 5 分钟陈旧——首页本身有 30s 轮询，但缓存会把实际刷新压到 5 分钟，
+TTL 放宽的代价：待打比赛列表与 feed 最长 5 分钟陈旧——首页本身有 60s 轮询，但缓存会把实际刷新压到 5 分钟，
 **这是产品口径决定，需要确认可接受**（比赛中直播比分的 `live`/`match` 面仍保持 60s，不受影响）。
 
 ### 8.2 未做的 feed 候选（成本高或需产品决策）
@@ -552,7 +561,7 @@ TTL 放宽的代价：待打比赛列表与 feed 最长 5 分钟陈旧——首�
 
 | 候选 | 说明 |
 |---|---|
-| 首页轮询降频 / 合并（`Home.tsx:152` 30s × 6 端点） | 一次冷轮询 7,719 行、44 条语句；无 live 时已降 120s，可把 `upcoming` 也纳入慢刷 |
+| 首页轮询降频 / 合并（`Home.tsx:152` 60s × 6 端点） | **已做（步骤 13，30s → 60s）**；无 live 时已降 120s，可把 `upcoming` 也纳入慢刷 |
 | `feed` 叙事块（赛事射手榜） | `buildNarrativeFacts`（`worker/lib/feedNews.ts:296`）按赛事拉全部完赛场次 + 全部事件行，约 1,770 行（§8.2）。属产品决策，不是纯技术优化 |
 | 公开面加「按赛事分片」的缓存键 | 现在 key = 完整 URL，`upcoming` 是全站共享单键（好），但 `stats`/`toplists` 每赛事各一份 |
 | 停赛重放 `computeSuspensions` 的增量维护 | 现在 `public/toplists` 每次冷重算都全量重放 |
