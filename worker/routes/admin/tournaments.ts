@@ -3,6 +3,7 @@ import type { AppEnv, Bindings } from "../../env";
 import {
   DEFAULT_TOURNAMENT_CONFIG,
   type EntryDTO,
+  type PlayerDTO,
   type TournamentDTO,
 } from "../../../shared/types";
 import { defaultCrossTemplate } from "../../lib/seeding";
@@ -22,7 +23,7 @@ import {
   buildToplistsWithSuspension,
 } from "../../lib/suspension";
 import type { SuspensionConfig } from "../../../shared/types";
-import { listTournamentActiveInjuries } from "../../lib/injury";
+import { listTournamentActiveInjuries, listTournamentTeamInjuries } from "../../lib/injury";
 import type { RankZoneSettings } from "../../../shared/types";
 import {
   parseRankZoneSettings,
@@ -783,6 +784,43 @@ app.get(
     return c.json({ groups: await listTournamentActiveInjuries(c.env.DB, id) });
   }
 );
+
+// ---------- 比赛 tab 的按队数据（增量 40） ----------
+// 前端原来逐队打 `?teamId=` / `teams/:id`：12~20 队的赛事就是 12~20 次请求（每次一轮往返）。
+// 这两个端点一次给齐全部参赛队、按 team_id 分组；行读与逐队调用相当（名单反而更省，
+// 少了每队一次的 team 行读取），省下来的是请求数与往返。
+// 排序表达式与 teams.ts 的单队名单逐字一致，避免优化器静默不用 idx_player_team。
+export const TOURNAMENT_TEAM_PLAYERS_SQL = `SELECT id, team_id, name, number
+   FROM player
+  WHERE team_id IN (SELECT team_id FROM entry WHERE tournament_id = ?)
+  ORDER BY team_id, (number IS NULL), CAST(number AS INTEGER), number, id`;
+
+app.get("/:id/team-players", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+    .bind(id)
+    .first<{ id: number }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+  const rows = await c.env.DB.prepare(TOURNAMENT_TEAM_PLAYERS_SQL)
+    .bind(id)
+    .all<{ id: number; team_id: number; name: string; number: string | null }>();
+  const playersByTeam: Record<string, PlayerDTO[]> = {};
+  for (const r of rows.results ?? []) {
+    (playersByTeam[r.team_id] ??= []).push({ id: r.id, name: r.name, number: r.number });
+  }
+  return c.json({ playersByTeam });
+});
+
+app.get("/:id/team-injuries", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+    .bind(id)
+    .first<{ id: number }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+  return c.json({
+    injuriesByTeam: Object.fromEntries(await listTournamentTeamInjuries(c.env.DB, id)),
+  });
+});
 
 // ---------- 停赛规则 ----------
 // GET /:id/suspensions：配置 + 每球员停赛/黄牌累积状态（纯派生实时计算）

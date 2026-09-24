@@ -74,6 +74,40 @@ export async function listTeamInjuries(
   return assemble(injuries.results ?? [], misses.results ?? [], (r) => `${r.from_tournament_name} · 第${r.from_round}轮`);
 }
 
+// 赛事作用域：全部参赛队的登记，按 team_id 分组（增量 40）。
+// 管理端比赛 tab 原来逐队打一次 ?teamId=，12~20 队就是 12~20 次请求；这里一次拉齐。
+// SQL 与 listTeamInjuries 同形，只把「单队等值」换成「参赛队子查询」，DTO 形状保持一致。
+export const TOURNAMENT_TEAM_INJURIES_SQL = `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
+                me.type AS event_type, me.minute AS event_minute,
+                p.name AS player_name,
+                fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
+                fm.round AS from_round, fs.kind AS from_stage_kind
+         FROM injury i
+         JOIN match_event me ON me.id = i.event_id
+         JOIN player p ON p.id = i.player_id
+         JOIN match fm ON fm.id = me.match_id
+         JOIN stage fs ON fs.id = fm.stage_id
+         JOIN tournament ft ON ft.id = fs.tournament_id
+         WHERE i.team_id IN (SELECT team_id FROM entry WHERE tournament_id = ?)
+         ORDER BY i.created_at DESC, i.id DESC`;
+
+export async function listTournamentTeamInjuries(
+  db: D1Database,
+  tournamentId: number
+): Promise<Map<number, InjuryStatusDTO[]>> {
+  const [injuries, misses] = await Promise.all([
+    db.prepare(TOURNAMENT_TEAM_INJURIES_SQL).bind(tournamentId).all<InjuryRow>(),
+    missesForTournament(db, tournamentId),
+  ]);
+  const byTeam = new Map<number, InjuryStatusDTO[]>();
+  for (const inj of assemble(injuries.results ?? [], misses.results ?? [], (r) => `${r.from_tournament_name} · 第${r.from_round}轮`)) {
+    const list = byTeam.get(inj.teamId);
+    if (list) list.push(inj);
+    else byTeam.set(inj.teamId, [inj]);
+  }
+  return byTeam;
+}
+
 // 公开端：单场比赛（赛前情报/详情页）双方当前缺阵名单。
 // 每条登记若勾选了该场即入列，附带伤情（名称/档位/伤愈进度）。
 // 公开端 DTO（PublicAbsenceDTO / InjuryWatchDTO / InjuryWatchGroupDTO）定义在 shared/types.ts，
@@ -524,6 +558,24 @@ function missesForTeams(db: D1Database, teamIds: number[]): Promise<D1Result<Mis
        ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id`
     )
     .bind(...teamIds)
+    .all<MissRow>();
+}
+
+// 赛事作用域版：参赛队由 entry 子查询给出（增量 40，供 listTournamentTeamInjuries 用）
+function missesForTournament(db: D1Database, tournamentId: number): Promise<D1Result<MissRow>> {
+  return db
+    .prepare(
+      `SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,
+              m.round, s.kind AS stage_kind, m.status
+       FROM injury_miss im
+       JOIN injury i ON i.id = im.injury_id
+       JOIN match m ON m.id = im.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t2 ON t2.id = s.tournament_id
+       WHERE i.team_id IN (SELECT team_id FROM entry WHERE tournament_id = ?)
+       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id`
+    )
+    .bind(tournamentId)
     .all<MissRow>();
 }
 

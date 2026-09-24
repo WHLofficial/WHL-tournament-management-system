@@ -4,6 +4,8 @@ import type { PlayerDTO, TeamDTO } from "../../../shared/types";
 import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
 import { pushError, pushTeamToClub } from "../../lib/clubSync";
 import { BULK_MAX, NAME_MAX, parseBulkLine } from "../../lib/teamBulk";
+import { teamCodes, teamMembers } from "../../lib/authClient";
+import { listTeamInjuries } from "../../lib/injury";
 
 const app = new Hono<AppEnv>();
 
@@ -121,6 +123,10 @@ app.post("/bulk", async (c) => {
   );
 });
 
+// 单队名单（排序表达式与 tournament 作用域的批量版保持一致，避免优化器静默不用 idx_player_team）
+export const TEAM_PLAYERS_SQL =
+  "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id";
+
 // 球队详情 + 名单
 app.get("/:id", async (c) => {
   const id = Number(c.req.param("id"));
@@ -131,9 +137,7 @@ app.get("/:id", async (c) => {
     .first<{ id: number; name: string; logo_key: string | null }>();
   if (!teamRow) return c.json({ message: "球队不存在" }, 404);
   const team = { id: teamRow.id, name: teamRow.name, logoUrl: mediaUrl(teamRow.logo_key) };
-  const rows = await c.env.DB.prepare(
-    "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id"
-  )
+  const rows = await c.env.DB.prepare(TEAM_PLAYERS_SQL)
     .bind(id)
     .all<{ id: number; name: string; number: string | null }>();
   const players: PlayerDTO[] = rows.results.map((r) => ({
@@ -142,6 +146,36 @@ app.get("/:id", async (c) => {
     number: r.number,
   }));
   return c.json({ team, players });
+});
+
+// 球队详情一次取齐（增量 40）：队 + 名单 + 认证码 + 已绑定教练 + 伤停登记。
+// 前端原来先取 /:id 再并行取三个（4 请求、2 波往返），而它不只在挂载时跑 ——
+// 生成认证码/解绑/改队名/传删队徽/伤停登记保存共 7 处都会重发这 4 个请求。
+// 这里 6 条查询并行、1 波返回；认证码与教练名单读 AUTH_DB（只读镜像绑定），与本地读同一失败域。
+// 字段名沿用四个原端点的口径（team/players/codes/members/injuries），前端与测试可直接对拍。
+app.get("/:id/context", async (c) => {
+  const id = Number(c.req.param("id"));
+  const teamRow = await c.env.DB.prepare(
+    "SELECT id, name, logo_key FROM team WHERE id = ? AND org_id = 1"
+  )
+    .bind(id)
+    .first<{ id: number; name: string; logo_key: string | null }>();
+  if (!teamRow) return c.json({ message: "球队不存在" }, 404);
+  const [rows, codes, members, injuries] = await Promise.all([
+    c.env.DB.prepare(TEAM_PLAYERS_SQL)
+      .bind(id)
+      .all<{ id: number; name: string; number: string | null }>(),
+    teamCodes(c.env, id),
+    teamMembers(c.env, id),
+    listTeamInjuries(c.env.DB, id),
+  ]);
+  return c.json({
+    team: { id: teamRow.id, name: teamRow.name, logoUrl: mediaUrl(teamRow.logo_key) },
+    players: (rows.results ?? []).map((r) => ({ id: r.id, name: r.name, number: r.number })),
+    codes,
+    members,
+    injuries,
+  });
 });
 
 // 改队名（增量 37 边界：改名不联动俱乐部平台，只在对账页显示两边不一致）
