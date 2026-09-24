@@ -408,12 +408,18 @@ async function injuryFacts(
 }
 
 // 某一轮里的伤情（轮次伤情快讯条用；轮次的完赛判定由调用方负责）
+// 用 match_id 子查询而不是 m.stage_id / m.round：后者让规划器按 idx_match_event_type_time(type=?)
+// 驱动、每轮都要扫全部伤情事件；实测该轮 93 → 79 行。必须是子查询而不是由调用方传「已完赛场次 id」——
+// buildRoundRecap 的轮次可能未完赛，传已完赛 id 会漏掉 live 场次的伤情。
 export function injuriesInRound(
   db: D1Database,
   stageId: number,
   round: number
 ): Promise<InjuryFact[]> {
-  return injuryFacts(db, "m.stage_id = ? AND m.round = ?", [stageId, round]);
+  return injuryFacts(db, "me.match_id IN (SELECT id FROM match WHERE stage_id = ? AND round = ?)", [
+    stageId,
+    round,
+  ]);
 }
 
 // 时间窗口里的伤情（按完赛时刻，与 fetchFinishedWindow / weekMatches 同口径：左闭右开）；
@@ -435,15 +441,13 @@ export function injuriesInWindow(
 
 // 某队可勾选为缺阵的比赛：跨赛事全量（含已完赛，支持补录），登记面板用。
 // away 可为 NULL 的未编排场用 LEFT JOIN 兜住（否则主队是它的场次会被漏掉）。
+// 过滤写成 match 自身的 home/away_entry_id + IN 子查询，而不是 e1.team_id OR e2.team_id：
+// 后者作用在 JOIN 出来的列上，规划器没有可用索引（实测全表扫 1326 行 → 140 行）。
+// 语义等价：away 为空时 NULL IN (...) 不为真，与 LEFT JOIN 下 e2.team_id = ? 同效。
 // 注意：D1 按 SQL 别名原样返列名，必须显式转到驼峰 DTO——漏转会让前端拿到 undefined
 // 的 matchId（所有复选框共用一个 undefined 状态，点一场就全选）。
-export async function listTeamMissCandidates(
-  db: D1Database,
-  teamId: number,
-): Promise<InjuryMissCandidateDTO[]> {
-  const r = await db
-    .prepare(
-      `SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name,
+// 导出给 tests/d1-read-plan.test.ts 跑 EXPLAIN QUERY PLAN 用（断言走 MULTI-INDEX OR、没有全表扫）
+export const TEAM_MISS_CANDIDATES_SQL = `SELECT m.id AS match_id, t2.id AS tournament_id, t2.name AS tournament_name,
               m.round, s.kind AS stage_kind, m.status,
               eh.id AS home_team_id, eh.name AS home_team_name,
               ea.id AS away_team_id, ea.name AS away_team_name
@@ -454,9 +458,16 @@ export async function listTeamMissCandidates(
        JOIN team eh ON eh.id = e1.team_id
        LEFT JOIN entry e2 ON e2.id = m.away_entry_id
        LEFT JOIN team ea ON ea.id = e2.team_id
-       WHERE e1.team_id = ? OR e2.team_id = ?
-       ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id`,
-    )
+       WHERE m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+          OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+       ORDER BY t2.id, s.sort_order, m.round, m.slot, m.leg, m.id`;
+
+export async function listTeamMissCandidates(
+  db: D1Database,
+  teamId: number,
+): Promise<InjuryMissCandidateDTO[]> {
+  const r = await db
+    .prepare(TEAM_MISS_CANDIDATES_SQL)
     .bind(teamId, teamId)
     .all<{
       match_id: number;
