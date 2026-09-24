@@ -13,6 +13,7 @@ import {
   fetchEventRows,
   fetchFinishedWindow,
   fetchRoundFinished,
+  fetchScoringEvents,
   fetchStageMaxRounds,
   fetchTournamentFinished,
   rankRowsSimple,
@@ -301,7 +302,7 @@ async function buildNarrativeFacts(
   const finAsc = await fetchTournamentFinished(db, tid);
   const scorersAt = new Map<number, { before: ScorerRow[]; after: ScorerRow[] }>();
   if (wantedMatchIds.size === 0) return { finAsc, scorersAt };
-  const evAll = await fetchEventRows(
+  const evAll = await fetchScoringEvents(
     db,
     finAsc.map((m) => m.id),
   );
@@ -312,16 +313,16 @@ async function buildNarrativeFacts(
     const cap = wantedMatchIds.has(m.id) ? { before: sortedLedger(), after: [] as ScorerRow[] } : null;
     if (cap) scorersAt.set(m.id, cap);
     for (const e of evAll.get(m.id) ?? []) {
-      if ((e.type !== "goal" && e.type !== "pen_goal") || e.playerId == null) continue;
+      if (e.player_id == null) continue;
       const cur =
-        ledger.get(e.playerId) ??
-        { name: e.playerName ?? "未知球员", teamName: "", goals: 0, penGoals: 0 };
+        ledger.get(e.player_id) ??
+        { name: e.player_name ?? "未知球员", teamName: "", goals: 0, penGoals: 0 };
       cur.goals += 1;
       if (e.type === "pen_goal") cur.penGoals += 1;
       if (!cur.teamName) {
-        cur.teamName = e.entryId === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
+        cur.teamName = e.entry_id === m.homeEntryId ? m.homeTeamName : m.awayTeamName;
       }
-      ledger.set(e.playerId, cur);
+      ledger.set(e.player_id, cur);
     }
     if (cap) cap.after = sortedLedger();
   }
@@ -524,6 +525,23 @@ function injuryOutTail(facts: InjuryFact[], seed: string): string {
   return out > 0 ? pickText(`${seed}:out`, INJURY_OUT_TAIL)(out) : pickText(`${seed}:clear`, INJURY_CLEAR_TAIL);
 }
 
+/**
+ * 轮次综述只保留「可能进入前 cap 名」的轮次，省掉被 slice 丢掉那些轮的整轮完赛名单与伤情查询。
+ * 依据：最终输出是「按 at 倒序取前 cap」，而窗口已提供 max(cap*3, 40) 条带 at 的条目，
+ * 所以 at 早于第 cap 条窗口项的条目必然排在前 cap 之外。判据用 >= 保守（并列时保留）。
+ * 窗口不足 cap 条时无法定界，原样返回。
+ */
+export function filterRecapByCutoff<T extends { last_at: string | null }>(
+  rows: T[],
+  window: FinishedMatch[],
+  cap: number,
+): T[] {
+  if (window.length < cap) return rows;
+  const cutoff = window[cap - 1].finishedAt;
+  if (!cutoff) return rows;
+  return rows.filter((r) => r.last_at === null || r.last_at >= cutoff);
+}
+
 export async function buildFeed(
   db: D1Database,
   opts: { limit?: number; before?: string } = {},
@@ -531,6 +549,16 @@ export async function buildFeed(
   const cap = Math.min(Math.max(opts.limit ?? 15, 1), 50);
   const before = opts.before;
   const items: FeedItemDTO[] = [];
+
+  // 请求内记忆化：同一批阶段 id 在一轮 buildFeed 里被问三次（窗口 / 红牌 / 综述），
+  // 实测其中两次是同一集合不同顺序（[6,2,1] 与 [2,1,6]），各付 223 行。
+  const maxRoundsCache = new Map<string, Promise<Map<number, number>>>();
+  const maxRoundsOf = (stageIds: number[]) => {
+    const key = [...new Set(stageIds)].sort((a, b) => a - b).join(",");
+    let p = maxRoundsCache.get(key);
+    if (!p) maxRoundsCache.set(key, (p = fetchStageMaxRounds(db, stageIds)));
+    return p;
+  };
 
   // 两波并行取代九段串行（冷缓存 20-40 查逐段 +0.2s，是 /feed 慢到超时的根因）：
   // 波 1 互相独立一起发——完赛窗口 / 红牌 / 改判 / 齐轮分组 / 周报；
@@ -603,6 +631,10 @@ export async function buildFeed(
        JOIN tournament t ON t.id = s.tournament_id
        WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
          AND COALESCE(m.note, '') != '轮空'
+         -- 先限定「至少有一场完赛」的轮，缩小 GROUP BY 的输入：规划器原本走 idx_match_stage
+         -- 全索引扫描（实测 665 行 → 407 行，−38.8%）。语义等价：某轮若没有任何完赛场次，
+         -- COUNT(*) 必然大于 SUM(finished)，HAVING 本就不成立。
+         AND (m.stage_id, m.round) IN (SELECT stage_id, round FROM match WHERE status = 'finished')
        GROUP BY m.stage_id, m.round
        HAVING COUNT(*) = SUM(CASE WHEN m.status = 'finished' THEN 1 ELSE 0 END)
          AND MAX(m.finished_at) < COALESCE(?, '9999-12-31')
@@ -622,7 +654,7 @@ export async function buildFeed(
 
   const [eventsByMatch, maxRounds, factsEntries, snapEntries, red, recap] = await Promise.all([
     fetchEventRows(db, window.map((m) => m.id)),
-    fetchStageMaxRounds(db, window.map((m) => m.stageId)),
+    maxRoundsOf(window.map((m) => m.stageId)),
     Promise.all(
       [...wantedByTid.entries()].map(
         async ([tid, wanted]) => [tid, await buildNarrativeFacts(db, tid, wanted)] as const,
@@ -647,15 +679,17 @@ export async function buildFeed(
       );
       const [banSuffixes, redMaxRounds] = await Promise.all([
         suffixes,
-        fetchStageMaxRounds(db, rows.map((r) => r.stage_id)),
+        maxRoundsOf(rows.map((r) => r.stage_id)),
       ]);
       return { rows, banSuffixes, redMaxRounds };
     })(),
     // 综述后置：轮数、各轮完赛名单与各轮伤情并行
     (async () => {
-      const rows = (await recapP).results ?? [];
+      // 先按 cap 截断再发查询：被 slice 丢掉的轮次不必付整轮名单与伤情。
+      // 必须在三个 .map 之前过滤，否则 recapRows / recapLists / recapInjuries 会按下标错位。
+      const rows = filterRecapByCutoff((await recapP).results ?? [], window, cap);
       const [recapMaxRounds, recapLists, recapInjuries] = await Promise.all([
-        fetchStageMaxRounds(db, rows.map((r) => r.stage_id)),
+        maxRoundsOf(rows.map((r) => r.stage_id)),
         Promise.all(rows.map((r) => fetchRoundFinished(db, r.stage_id, r.round))),
         Promise.all(rows.map((r) => injuriesInRound(db, r.stage_id, r.round))),
       ]);

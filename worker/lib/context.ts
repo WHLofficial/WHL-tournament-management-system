@@ -33,7 +33,8 @@ export interface FinishedMatch {
   finishedAt: string | null;
 }
 
-const FINISHED_COLS = `SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,
+// 导出给 tests/d1-read-plan.test.ts 跑 EXPLAIN QUERY PLAN 用（断言计划走哪条索引）
+export const FINISHED_COLS = `SELECT m.id, m.stage_id, s.tournament_id, t.name AS tournament_name,
    s.kind AS stage_kind, s.name AS stage_name, m.round,
    m.home_entry_id, m.away_entry_id,
    ht.name AS home_team_name, at.name AS away_team_name,
@@ -41,13 +42,22 @@ const FINISHED_COLS = `SELECT m.id, m.stage_id, s.tournament_id, t.name AS tourn
    m.score_home, m.score_away, m.pen_home, m.pen_away,
    m.walkover_side, m.note, m.status, m.finished_at`;
 
-const FINISHED_FROM = `FROM match m
-   JOIN stage s ON s.id = m.stage_id
+const FINISHED_FROM_TAIL = `JOIN stage s ON s.id = m.stage_id
    JOIN tournament t ON t.id = s.tournament_id
    JOIN entry he ON he.id = m.home_entry_id
    JOIN team ht ON ht.id = he.team_id
    JOIN entry ae ON ae.id = m.away_entry_id
    JOIN team at ON at.id = ae.team_id`;
+
+export const FINISHED_FROM = `FROM match m
+   ${FINISHED_FROM_TAIL}`;
+
+// 单阶段单轮的窄过滤（通常 4-10 场）走上面那份 FROM 时，规划器会挑 idx_match_status
+// （反向扫正好满足 ORDER BY finished_at DESC，省掉排序）——代价是每轮都要扫全部完赛场。
+// 强制走 idx_match_stage(stage_id, round, slot) 后实测 11 轮合计 1081 → 393 行。
+// INDEXED BY 是硬指令：索引被删则查询直接报错，由迁移测试兜底。
+export const FINISHED_FROM_ROUND = `FROM match m INDEXED BY idx_match_stage
+   ${FINISHED_FROM_TAIL}`;
 
 type FinishedRow = {
   id: number; stage_id: number; tournament_id: number; tournament_name: string;
@@ -136,7 +146,7 @@ export async function fetchRoundFinished(
 ): Promise<FinishedMatch[]> {
   const res = await db
     .prepare(
-      `${FINISHED_COLS} ${FINISHED_FROM}
+      `${FINISHED_COLS} ${FINISHED_FROM_ROUND}
        WHERE m.stage_id = ? AND m.round = ? AND m.status = 'finished'
        ORDER BY m.finished_at ASC, m.id ASC`,
     )
@@ -222,6 +232,51 @@ export async function fetchEventRows(
         assistName: r.assist_name,
         createdAt: r.created_at,
       });
+      byMatch.set(r.match_id, list);
+    }
+  }
+  return byMatch;
+}
+
+// 叙事账本专用的窄查询：只取进球/点球事件、不带助攻 join（助攻 join 与其余事件类型
+// 对账本贡献为零）。整届事件重放（fetchEventRows 拿该赛事全部完赛场的全部事件）实测
+// 约 1,770 行/次，换成这条后账本累加结果不变。
+export interface ScoringEventRow {
+  match_id: number;
+  entry_id: number | null;
+  player_id: number | null;
+  type: MatchEventType;
+  player_name: string | null;
+}
+
+export async function fetchScoringEvents(
+  db: D1Database,
+  matchIds: number[]
+): Promise<Map<number, ScoringEventRow[]>> {
+  const ids = [...new Set(matchIds)];
+  const byMatch = new Map<number, ScoringEventRow[]>();
+  if (ids.length === 0) return byMatch;
+  const queries: Promise<D1Result<ScoringEventRow>>[] = [];
+  for (let i = 0; i < ids.length; i += 90) {
+    const chunk = ids.slice(i, i + 90);
+    queries.push(
+      db
+        .prepare(
+          `SELECT me.match_id, me.entry_id, me.player_id, me.type, p.name AS player_name
+           FROM match_event me
+           LEFT JOIN player p ON p.id = me.player_id
+           WHERE me.match_id IN (${chunk.map(() => "?").join(",")})
+             AND me.type IN ('goal', 'pen_goal')
+           ORDER BY me.match_id, COALESCE(me.minute, -1), me.id`
+        )
+        .bind(...chunk)
+        .all<ScoringEventRow>(),
+    );
+  }
+  for (const res of await Promise.all(queries)) {
+    for (const r of res.results ?? []) {
+      const list = byMatch.get(r.match_id) ?? [];
+      list.push(r);
       byMatch.set(r.match_id, list);
     }
   }

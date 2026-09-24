@@ -27,18 +27,22 @@ app.get("/announcement", pubCache(300), async (c) => {
 // 首页（无 before）在边缘 Cache 之下再垫一层 KV SWR：60s 内直出缓存；
 // 过期先把旧值回给访客、waitUntil 后台重算回填——冷重算的两波查询不再压在某个访客的请求里。
 // KV 为最终一致且每键写限频，写失败/写冲突静默吞掉（旧值或边缘缓存兜底）；带 before 的翻页冷路径不进 SWR。
-app.get("/feed", pubCache(60), async (c) => {
+// TTL 300s：feed 是全站最贵读面，瘦身前冷重算 6,521 行（首页 limit=16）/ 7,016 行（列表页 limit=30），
+// 按 60s 窗口算上限 930 万–1,010 万行/日，单独就超过账号 5,000,000 行/日的整池；瘦身后降到
+// 4,315 / 4,957 行，300s 窗口（288 窗/日）上限约 124 万–143 万行/日。代价是首页动态最长陈旧 5 分钟，
+// 比分与单场详情仍走 60s 的 /live 与 /matches/:mid，实时性不受影响。
+app.get("/feed", pubCache(300), async (c) => {
   const limitRaw = Number(c.req.query("limit"));
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 15;
   const before = c.req.query("before") || undefined;
   const key = `swr:feed:v2:${limit}:${before ?? "latest"}`;
   const store = (items: FeedItemDTO[]) =>
     c.executionCtx.waitUntil(
-      c.env.KV.put(key, JSON.stringify({ at: Date.now(), items }), { expirationTtl: 600 }).catch(() => {}),
+      c.env.KV.put(key, JSON.stringify({ at: Date.now(), items }), { expirationTtl: 1800 }).catch(() => {}),
     );
   const cached = before ? null : await c.env.KV.get<{ at: number; items: FeedItemDTO[] }>(key, "json");
   if (cached && Array.isArray(cached.items)) {
-    if (Date.now() - cached.at < 60_000) return c.json({ items: cached.items });
+    if (Date.now() - cached.at < 300_000) return c.json({ items: cached.items });
     c.executionCtx.waitUntil(
       buildFeed(c.env.DB, { limit, before })
         .then(store)
