@@ -4,7 +4,7 @@ import { api } from "../api";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 import { TeamLogo } from "../components/TeamLogo";
 import { InjuryRegPanel } from "../components/InjuryRegPanel";
-import type { InjuryListResp, InjuryStatusDTO, PlayerDTO } from "../../shared/types";
+import type { InjuryStatusDTO, PlayerDTO } from "../../shared/types";
 
 interface TeamDetail {
   team: { id: number; name: string; logoUrl: string | null };
@@ -25,6 +25,14 @@ interface MemberRow {
   joinedAt: string;
 }
 
+// /api/admin/teams/:id/context 的响应（增量 40）：把原来 4 个请求合成一次。
+// 字段名沿用四个原端点的口径，服务端保证与逐端点取回的结果一致。
+interface TeamContext extends TeamDetail {
+  codes: AuthCodeRow[];
+  members: MemberRow[];
+  injuries: InjuryStatusDTO[];
+}
+
 export function TeamDetailPage() {
   const { id } = useParams();
   const teamId = Number(id);
@@ -43,17 +51,14 @@ export function TeamDetailPage() {
 
   async function reload() {
     try {
-      const d = await api<TeamDetail>(`/api/admin/teams/${teamId}`);
+      // 一次取齐（增量 40）：原来先取 /:id、再并行取 auth-codes/members/injuries，
+      // 共 4 请求 2 波往返；而本页生成认证码/解绑/改名/传删队徽/伤停保存都会重发这一组。
+      const d = await api<TeamContext>(`/api/admin/teams/${teamId}/context`);
       setData(d);
       setName(d.team.name);
-      const [cs, ms, inj] = await Promise.all([
-        api<{ codes: AuthCodeRow[] }>(`/api/admin/teams/${teamId}/auth-codes`),
-        api<{ members: MemberRow[] }>(`/api/admin/teams/${teamId}/members`),
-        api<InjuryListResp>(`/api/admin/injuries?teamId=${teamId}`),
-      ]);
-      setCodes(cs.codes);
-      setMembers(ms.members);
-      setInjuries(inj.injuries);
+      setCodes(d.codes);
+      setMembers(d.members);
+      setInjuries(d.injuries);
     } catch {
       setMissing(true);
     }

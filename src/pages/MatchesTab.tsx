@@ -8,7 +8,6 @@ import { LineupGrid } from "../components/LineupView";
 import type {
   AuditEntryDTO,
   EntryDTO,
-  InjuryListResp,
   InjuryStatusDTO,
   MatchDTO,
   MatchEventDTO,
@@ -122,63 +121,51 @@ export default function MatchesTab({
     };
   }, [panelActive, detail.tournament.id, suspTick]);
 
-  // 自驱动补拉缺失的队名单（拉完缓存更新，触发重试直至补齐）
+  // 参赛队名单：开 tab 一次拉齐（增量 40）。原来逐队打 teams/:id，12~20 队的赛事就是
+  // 12~20 次请求；现在一个端点按 team_id 分组给全部参赛队，playersCache 一次填满。
+  // 失败不置位，下次 matches 变化时重试（与原「自驱动补拉」的收敛行为一致）。
+  // 记「已加载哪个赛事」而不是布尔量：本 tab 不随 detail 变化重挂，切换赛事时必须重拉。
+  const playersLoadedForRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!matches) return;
-    const ids = new Set<number>();
-    for (const m of matches) {
-      for (const eid of [m.homeEntryId, m.awayEntryId]) {
-        const tid = eid != null ? entryById.get(eid)?.teamId : undefined;
-        if (tid != null) ids.add(tid);
-      }
-    }
-    const missing = [...ids].filter((tid) => !playersCache.has(tid));
-    if (missing.length === 0) return;
+    const tid = detail.tournament.id;
+    if (!matches || playersLoadedForRef.current === tid) return;
     let alive = true;
-    Promise.all(
-      missing.map((tid) =>
-        api<{ players: PlayerDTO[] }>(`/api/admin/teams/${tid}`).then(
-          (b) => [tid, b.players] as const,
-        ),
-      ),
+    api<{ playersByTeam: Record<string, PlayerDTO[]> }>(
+      `/api/admin/tournaments/${tid}/team-players`,
     )
-      .then((pairs) => {
-        if (alive)
-          setPlayersCache((prev) => new Map([...prev, ...pairs]));
+      .then((b) => {
+        if (!alive) return;
+        playersLoadedForRef.current = tid;
+        setPlayersCache(
+          new Map(Object.entries(b.playersByTeam ?? {}).map(([k, v]) => [Number(k), v])),
+        );
       })
       .catch(() => {}); // 名单拉不到就保持空：事件照录，仅无球员选项
     return () => {
       alive = false;
     };
-  }, [matches, playersCache, entryById]);
+  }, [matches, detail.tournament.id]);
 
-  // 伤停登记（按队拉）：给事件表单做「选了伤停球员」的软提示。登记本身在伤停管理页
+  // 伤停登记：面板打开才拉（增量 40，同样一次拉齐全部参赛队）。
+  // 不再依赖 matches/entryById —— 原写法在面板开着时，每次事件增删触发 refetch 都会把
+  // 全部队的伤停重拉一遍；赛事内的参赛队集合本身不会变。
   useEffect(() => {
-    if (!panelActive || !matches) return;
-    const ids = new Set<number>();
-    for (const m of matches) {
-      for (const eid of [m.homeEntryId, m.awayEntryId]) {
-        const tid = eid != null ? entryById.get(eid)?.teamId : undefined;
-        if (tid != null) ids.add(tid);
-      }
-    }
-    if (ids.size === 0) return;
+    if (!panelActive) return;
     let alive = true;
-    Promise.all(
-      [...ids].map((tid) =>
-        api<InjuryListResp>(`/api/admin/injuries?teamId=${tid}`).then(
-          (b) => [tid, b.injuries] as const,
-        ),
-      ),
+    api<{ injuriesByTeam: Record<string, InjuryStatusDTO[]> }>(
+      `/api/admin/tournaments/${detail.tournament.id}/team-injuries`,
     )
-      .then((pairs) => {
-        if (alive) setInjuriesByTeam(new Map(pairs));
+      .then((b) => {
+        if (alive)
+          setInjuriesByTeam(
+            new Map(Object.entries(b.injuriesByTeam ?? {}).map(([k, v]) => [Number(k), v])),
+          );
       })
       .catch(() => {}); // 拉不到就不做伤停标记，录入流程不受影响
     return () => {
       alive = false;
     };
-  }, [panelActive, matches, entryById]);
+  }, [panelActive, detail.tournament.id]);
 
   const playersOf = (entryId: number | null): PlayerDTO[] =>
     entryId == null
