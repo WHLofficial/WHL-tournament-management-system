@@ -400,4 +400,17 @@ describe("教练端代打", () => {
       [803, false],
     ]);
   });
+
+  it("/me/matches 覆盖客队一侧：蓝队教练看到同两场，side=away 且对手是红队", async () => {
+    const { env } = freshEnv();
+    // 上面几条都以红队教练（主队）身份请求，802/803 的 home_entry_id 都是红队 500；
+    // 这里换蓝队教练（这两场都是客队）走同一段 SQL，确认 away 侧也命中、且主客名不串位。
+    const b = (await (await req(env, "b", "/api/coach/me/matches")).json()) as {
+      matches: { id: number; side: string; opponentName: string; homeTeamName?: string }[];
+    };
+    expect(b.matches.map((m) => [m.id, m.side, m.opponentName])).toEqual([
+      [802, "away", "红队"],
+      [803, "away", "红队"],
+    ]);
+  });
 });

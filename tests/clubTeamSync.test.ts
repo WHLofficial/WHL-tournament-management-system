@@ -224,12 +224,28 @@ describe("增量 37：入站机器端点 POST /api/internal/team-upsert", () => 
     ["签名头缺失", { omitSign: true }],
     ["时间戳头缺失", { omitTs: true }],
     ["时间戳不是数字", { ts: Number("abc") }],
-    ["时间戳过期 301 秒", { ts: nowSec() - 301 }],
-    ["时间戳超前 301 秒", { ts: nowSec() + 301 }],
+    // 超窗两条传的是相对冻结时钟的偏移，不是 nowSec()±301：用例表在收集阶段求值，
+    // 真时钟若在「建表」与「发请求」之间走满一秒，超前 301 就会翻回窗内、端点会正确放行。
+    ["时间戳过期 301 秒", { tsDelta: -301 }],
+    ["时间戳超前 301 秒", { tsDelta: +301 }],
     ["签名对但请求体被换掉", { signOver: JSON.stringify({ id: 700, name: "被换过的名字" }) }],
   ])("验签失败一律 403 且不落库：%s", async (_label, opts) => {
     const { env, sqlite } = freshEnv();
-    const res = await inbound(env, { id: 700, name: "偷渡的队" }, opts as never);
+    const { tsDelta } = opts as { tsDelta?: number };
+    let res: Response;
+    if (tsDelta === undefined) {
+      res = await inbound(env, { id: 700, name: "偷渡的队" }, opts as never);
+    } else {
+      const frozen = new Date("2026-01-01T00:00:00Z");
+      const base = Math.floor(frozen.getTime() / 1000);
+      vi.useFakeTimers();
+      vi.setSystemTime(frozen);
+      try {
+        res = await inbound(env, { id: 700, name: "偷渡的队" }, { ts: base + tsDelta } as never);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("bad_signature");
     expect(sqlGet(sqlite, "SELECT id FROM team WHERE id = ?", 700)).toBeUndefined();
