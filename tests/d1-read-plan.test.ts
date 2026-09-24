@@ -7,8 +7,13 @@ import { describe, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { createTestDb, sqlAll } from "./d1";
 import { FINISHED_COLS, FINISHED_FROM_ROUND } from "../worker/lib/context";
-import { TEAM_MISS_CANDIDATES_SQL } from "../worker/lib/injury";
+import { TEAM_MISS_CANDIDATES_SQL, ACTIVE_INJURY_PLAYER_IDS_SQL } from "../worker/lib/injury";
 import { COACH_DEFAULT_TOURNAMENT_SQL, COACH_ME_MATCHES_SQL } from "../worker/routes/coach";
+import {
+  H2H_FORM_SQL,
+  H2H_MEETINGS_SQL,
+  TEAM_TACTICS_MATCHES_SQL,
+} from "../worker/routes/public";
 import { filterRecapByCutoff } from "../worker/lib/feedNews";
 
 // EXPLAIN QUERY PLAN 不绑参数也能跑，把每个计划步骤的 detail 拼成一行方便断言
@@ -150,5 +155,27 @@ describe("增量 38：综述按 cap 截断（纯函数，输出等价）", () =>
   it("空窗口原样返回", () => {
     const rows = [row(1, 5, "2000-01-01T00:00:00.000Z")];
     expect(filterRecapByCutoff(rows, [], 2)).toEqual(rows);
+  });
+});
+
+describe("增量 39：端点合并与剩余 OR 改写的执行计划回归", () => {
+  const { sqlite } = createTestDb();
+
+  it("h2h 两条 + 阵容沿用链：OR 换成 match 自身列上的 IN 子查询后不再全表扫 match", () => {
+    // 原状 `he.team_id = ? OR ae.team_id = ?` 作用在 JOIN 出来的列上 ⇒ 规划器用不了 match
+    // 上任何索引，退化为全表扫（h2h 单次冷路径实测 1,102 行、lineup-stats 754 行）。
+    for (const sql of [H2H_FORM_SQL, H2H_MEETINGS_SQL, TEAM_TACTICS_MATCHES_SQL]) {
+      const plan = planOf(sqlite, sql);
+      expect(plan).not.toMatch(/SCAN m\b/);
+      expect(plan).toMatch(/idx_match_status|idx_match_home|idx_match_away|MULTI-INDEX OR/);
+      expect(plan).toContain("idx_entry_team");
+    }
+  });
+
+  it("伤停中的球员 id：EXISTS 半连接不再扫 injury_miss 全表", () => {
+    // 原状先 listActiveInjuries 拉全量明细再在 JS 里判，实测公开 toplists 单次为此读 436 行。
+    const plan = planOf(sqlite, ACTIVE_INJURY_PLAYER_IDS_SQL);
+    expect(plan).not.toMatch(/SCAN im\b/);
+    expect(plan).toContain("injury_miss");
   });
 });
