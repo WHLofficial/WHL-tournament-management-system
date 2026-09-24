@@ -121,27 +121,26 @@ export function Home() {
 
   const load = useCallback(async () => {
     try {
-      const [b, u, l, a, f] = await Promise.all([
-        api<{ tournaments: TournamentDTO[] }>("/api/public/tournaments"),
-        api<{ upcoming: UpcomingDTO[] }>("/api/public/upcoming"),
+      // 聚合端点（增量 39）：首屏 5 段合成 1 个请求，reactions 由服务端从 feed ids 现算，
+      // 省掉原先那次串行往返。/live 保持独立（60s 实时性），故一轮共 2 个请求。
+      const [h, l] = await Promise.all([
+        api<{
+          tournaments: TournamentDTO[];
+          upcoming: UpcomingDTO[];
+          announcement: AnnouncementDTO | null;
+          feed: FeedItemDTO[];
+          reactions: Record<string, ReactionCounts>;
+        }>("/api/public/home?limit=16"),
         api<{ live: LiveDTO[] }>("/api/public/live"),
-        api<{ announcement: AnnouncementDTO | null }>("/api/public/announcement"),
-        api<{ items: FeedItemDTO[] }>("/api/public/feed?limit=16"),
       ]);
-      setList(b.tournaments);
-      setUpcoming(u.upcoming);
+      setList(h.tournaments);
+      setUpcoming(h.upcoming);
+      setAnnouncement(h.announcement);
+      setFeed(h.feed);
+      setReactions(h.reactions);
       setLiveList(l.live);
-      setAnnouncement(a.announcement);
-      setFeed(f.items);
       liveRef.current = l.live.length;
       setErr(null);
-      const ids = f.items.map((i) => i.id);
-      if (ids.length > 0) {
-        const r = await api<{ reactions: Record<string, ReactionCounts> }>(
-          `/api/interact/reactions?ids=${ids.map(encodeURIComponent).join(",")}`,
-        );
-        setReactions(r.reactions);
-      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "加载失败");
     }

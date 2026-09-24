@@ -103,26 +103,34 @@ app.post("/reactions/:itemId", async (c) => {
   return c.json({ ok: true, cnt: row?.cnt ?? 0 });
 });
 
-// 批量计数（橱窗可见条目一次性拉，?ids=a,b,c 至多 50 个）
-app.get("/reactions", async (c) => {
-  const ids = (c.req.query("ids") ?? "")
-    .split(",")
+// 批量计数（橱窗可见条目一次性拉，?ids=a,b,c 至多 50 个）。
+// 抽成函数供首页聚合端点 /api/public/home 复用：服务端从刚构建的 feed ids 直接算，
+// 省掉前端那一次串行往返（口径与 GET /api/interact/reactions 同源，不重抄过滤规则）。
+export async function buildReactionCounts(
+  db: D1Database,
+  ids: string[],
+): Promise<Record<string, Partial<Record<EmojiKey, number>>>> {
+  const clean = ids
     .map((s) => s.trim())
     .filter((s) => s && ITEM_ID_RE.test(s))
     .slice(0, 50);
   const out: Record<string, Partial<Record<EmojiKey, number>>> = {};
-  if (ids.length > 0) {
-    const res = await c.env.DB.prepare(
-      `SELECT item_id, emoji, cnt FROM reaction WHERE item_id IN (${ids.map(() => "?").join(",")})`,
-    )
-      .bind(...ids)
-      .all<{ item_id: string; emoji: EmojiKey; cnt: number }>();
-    for (const r of res.results ?? []) {
-      const row = (out[r.item_id] ??= {});
-      row[r.emoji] = r.cnt;
-    }
+  if (clean.length === 0) return out;
+  const res = await db.prepare(
+    `SELECT item_id, emoji, cnt FROM reaction WHERE item_id IN (${clean.map(() => "?").join(",")})`,
+  )
+    .bind(...clean)
+    .all<{ item_id: string; emoji: EmojiKey; cnt: number }>();
+  for (const r of res.results ?? []) {
+    const row = (out[r.item_id] ??= {});
+    row[r.emoji] = r.cnt;
   }
-  return c.json({ reactions: out });
+  return out;
+}
+
+app.get("/reactions", async (c) => {
+  const ids = (c.req.query("ids") ?? "").split(",");
+  return c.json({ reactions: await buildReactionCounts(c.env.DB, ids) });
 });
 
 export default app;
