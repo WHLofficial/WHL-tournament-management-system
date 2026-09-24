@@ -133,13 +133,8 @@ async function teamIdOf(env: AppEnv["Bindings"], userId: number): Promise<number
   return boundTeamId(env, userId);
 }
 
-// 本队待开的比赛：选一场提交阵容用。轮空场排除（没有对阵意义）
-app.get("/me/matches", async (c) => {
-  const user = c.get("user")!;
-  const teamId = await teamIdOf(c.env, user.id);
-  if (!teamId) return c.json({ matches: [] });
-  const rows = await c.env.DB.prepare(
-    `SELECT m.id, m.round, m.leg, m.note,
+// 导出给 tests/d1-read-plan.test.ts 跑 EXPLAIN QUERY PLAN 用
+export const COACH_ME_MATCHES_SQL = `SELECT m.id, m.round, m.leg, m.note,
        t.id AS tournament_id, t.name AS tournament_name,
        s.name AS stage_name, s.kind AS stage_kind,
        he.team_id AS home_tid, ae.team_id AS away_tid,
@@ -157,9 +152,16 @@ app.get("/me/matches", async (c) => {
        WHERE g2.match_id = m.id AND g2.team_id = ? AND g2.revoked_at IS NULL)
      WHERE m.status = 'pending' AND t.status != 'draft'
        AND (m.note IS NULL OR m.note != '轮空')
-       AND (he.team_id = ? OR ae.team_id = ?)
-     ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`,
-  )
+       AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+            OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
+     ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`;
+
+// 本队待开的比赛：选一场提交阵容用。轮空场排除（没有对阵意义）
+app.get("/me/matches", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env, user.id);
+  if (!teamId) return c.json({ matches: [] });
+  const rows = await c.env.DB.prepare(COACH_ME_MATCHES_SQL)
     .bind(teamId, teamId, teamId, teamId)
     .all<{
       id: number;
@@ -222,6 +224,19 @@ async function suspensionSliceOf(
 
 // 本队伤停/停赛概览：战术板上的状态提示（只读；全部只提示不拦截）。
 // 停赛按赛事算（红黄牌在赛事内独立累计，故板上要能切赛事）；伤停跨赛事，不随赛事变。
+// 导出给 tests/d1-read-plan.test.ts 跑 EXPLAIN QUERY PLAN 用
+export const COACH_DEFAULT_TOURNAMENT_SQL = `SELECT t.id AS tournament_id
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t ON t.id = s.tournament_id
+       LEFT JOIN entry he ON he.id = m.home_entry_id
+       LEFT JOIN entry ae ON ae.id = m.away_entry_id
+       WHERE m.status = 'pending' AND t.status != 'draft'
+         AND (m.note IS NULL OR m.note != '轮空')
+         AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
+              OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
+       ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`;
+
 app.get("/me/status", async (c) => {
   const user = c.get("user")!;
   const teamId = await teamIdOf(c.env, user.id);
@@ -246,18 +261,7 @@ app.get("/me/status", async (c) => {
       .bind(teamId)
       .all<{ tournament_id: number; name: string; config_json: string | null }>(),
     // 默认赛事：本队最近一场待开比赛所在赛事（口径同 /me/matches）；没有待开比赛就取最新赛事
-    c.env.DB.prepare(
-      `SELECT t.id AS tournament_id
-       FROM match m
-       JOIN stage s ON s.id = m.stage_id
-       JOIN tournament t ON t.id = s.tournament_id
-       LEFT JOIN entry he ON he.id = m.home_entry_id
-       LEFT JOIN entry ae ON ae.id = m.away_entry_id
-       WHERE m.status = 'pending' AND t.status != 'draft'
-         AND (m.note IS NULL OR m.note != '轮空')
-         AND (he.team_id = ? OR ae.team_id = ?)
-       ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`,
-    )
+    c.env.DB.prepare(COACH_DEFAULT_TOURNAMENT_SQL)
       .bind(teamId, teamId)
       .first<{ tournament_id: number }>(),
     listActiveInjuries(c.env.DB, teamId),

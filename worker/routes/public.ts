@@ -438,7 +438,9 @@ app.get("/tournaments/:id/matches/summary", pubCache(60), async (c) => {
     .first<{ n: number }>();
   if (!pub?.n) return c.json({ message: "赛事不存在或未发布" }, 404);
 
-  const [recentRows, upcomingRows] = await Promise.all([
+  // 待打 4 场走两段式：先只取 id（match + stage 两表），再只为这 4 场补齐整行。
+  // 原版把 21 列与 4 张队名表都 join 进主查询，LIMIT 4 在 join 之后才生效（实测 805 行 → 约 400 行）。
+  const [recentRows, upcomingIdRows] = await Promise.all([
     c.env.DB.prepare(
       `${MATCH_COLS}
        ${MATCH_FROM}
@@ -449,19 +451,33 @@ app.get("/tournaments/:id/matches/summary", pubCache(60), async (c) => {
       .bind(tid)
       .all<PubMatchRow>(),
     c.env.DB.prepare(
-      `${MATCH_COLS}
-       ${MATCH_FROM}
+      `SELECT m.id
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
        WHERE s.tournament_id = ? AND m.status = 'pending'
-         AND he.id IS NOT NULL AND ae.id IS NOT NULL
+         AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
        ORDER BY s.sort_order, m.round, m.slot
        LIMIT 4`
     )
       .bind(tid)
-      .all<PubMatchRow>(),
+      .all<{ id: number }>(),
   ]);
   const recentList = recentRows.results ?? [];
+  const upcomingIds = (upcomingIdRows.results ?? []).map((r) => r.id);
+  const [upcomingRows, eventsByMatch] = await Promise.all([
+    upcomingIds.length
+      ? c.env.DB.prepare(
+          `${MATCH_COLS}
+           ${MATCH_FROM}
+           WHERE m.id IN (${upcomingIds.map(() => "?").join(",")})
+           ORDER BY s.sort_order, m.round, m.slot`
+        )
+          .bind(...upcomingIds)
+          .all<PubMatchRow>()
+      : Promise.resolve({ results: [] as PubMatchRow[] }),
+    fetchPublicEvents(c.env.DB, recentList),
+  ]);
   const upcomingList = upcomingRows.results ?? [];
-  const eventsByMatch = await fetchPublicEvents(c.env.DB, recentList);
   const emptyLive = new Map<number, { home: number; away: number }>();
   return c.json({
     recent: recentList.map((r) => toPubMatch(r, emptyLive, eventsByMatch)),
@@ -1017,20 +1033,45 @@ app.get("/tournaments/:id/matches/:mid/lineup-stats", pubCache(60), async (c) =>
   return c.json({ home, away } satisfies LineupStatsDTO);
 });
 
+// 只为最终入选的几场补主客队名（两段式的第二段）。
+// 单语句版把队名 join 进主查询时 LIMIT 在 join 之后才生效，待打场次每场都要付 4 张表的读。
+async function fetchTeamNamesForMatches(
+  db: D1Database,
+  matchIds: number[]
+): Promise<Map<number, { home: string; away: string }>> {
+  const out = new Map<number, { home: string; away: string }>();
+  if (matchIds.length === 0) return out;
+  const res = await db
+    .prepare(
+      `SELECT m.id, ht.name AS home_team_name, at.name AS away_team_name
+       FROM match m
+       JOIN entry he ON he.id = m.home_entry_id
+       JOIN team ht ON ht.id = he.team_id
+       JOIN entry ae ON ae.id = m.away_entry_id
+       JOIN team at ON at.id = ae.team_id
+       WHERE m.id IN (${matchIds.map(() => "?").join(",")})`
+    )
+    .bind(...matchIds)
+    .all<{ id: number; home_team_name: string; away_team_name: string }>();
+  for (const r of res.results ?? []) out.set(r.id, { home: r.home_team_name, away: r.away_team_name });
+  return out;
+}
+
 // 跨赛事"即将进行"：非草稿赛事的未开打场次（排除轮空/队伍待定），running 优先
-app.get("/upcoming", pubCache(60), async (c) => {
+// 待打列表：TTL 300s——两段式后冷重算实测 644 行读/次，按 60s 窗口算上限约 93 万行/日；拉到 300s 后约 18.5 万行/日。
+// 待打列表本来就是「未来赛程」，5 分钟陈旧无实感；已开打的场次走 /live 与单场详情（仍 60s）。
+app.get("/upcoming", pubCache(300), async (c) => {
+  // 两段式：第一段只取排序键与场次 id（三表），第二段只为最终 8 场补队名。
+  // 原七表 join 版 LIMIT 8 在 join 之后才生效 ⇒ 149 场待打比赛每场都付 7 张表（实测 1192 行）。
+  // home/away_entry_id 的 IS NOT NULL 顶掉原来靠 INNER JOIN 隐式完成的「队伍待定」排除。
   const rows = await c.env.DB.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status,
-       m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round,
-       ht.name AS home_team_name, at.name AS away_team_name
+       m.id AS match_id, s.kind AS stage_kind, s.sort_order AS stage_order, m.round
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      JOIN tournament t ON t.id = s.tournament_id
-     JOIN entry he ON he.id = m.home_entry_id
-     JOIN team ht ON ht.id = he.team_id
-     JOIN entry ae ON ae.id = m.away_entry_id
-     JOIN team at ON at.id = ae.team_id
      WHERE t.status != 'draft' AND m.status = 'pending'
+       AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
        AND (m.note IS NULL OR m.note != '轮空')
      ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END,
        t.id, s.sort_order, m.round, m.slot
@@ -1039,17 +1080,18 @@ app.get("/upcoming", pubCache(60), async (c) => {
     tournament_id: number; tournament_name: string; tournament_status: string;
     match_id: number; stage_kind: "elim" | "round_robin" | "group";
     stage_order: number; round: number;
-    home_team_name: string; away_team_name: string;
   }>();
-  const upcoming: UpcomingDTO[] = (rows.results ?? []).map((r) => ({
+  const picked = rows.results ?? [];
+  const names = await fetchTeamNamesForMatches(c.env.DB, picked.map((r) => r.match_id));
+  const upcoming: UpcomingDTO[] = picked.map((r) => ({
     tournamentId: r.tournament_id,
     tournamentName: r.tournament_name,
     matchId: r.match_id,
     stageKind: r.stage_kind,
     stageOrder: r.stage_order,
     round: r.round,
-    homeTeamName: r.home_team_name,
-    awayTeamName: r.away_team_name,
+    homeTeamName: names.get(r.match_id)?.home ?? "",
+    awayTeamName: names.get(r.match_id)?.away ?? "",
   }));
   return c.json({ upcoming });
 });
