@@ -90,6 +90,10 @@ export interface Captured {
   db: "DB" | "AUTH_DB";
   /** 该语句被执行了几次（同一次请求内循环绑定算多次，读量按次数累计）。 */
   calls: number;
+  /** 实放模式（mode:"live"）下该次执行的物理行读；桩行模式为 0。 */
+  rows_read?: number;
+  /** 实放模式下回传的结果行数。 */
+  result_rows?: number;
 }
 
 /**
@@ -265,6 +269,42 @@ export function queryMeta(
   throw lastErr;
 }
 
+/**
+ * 实放模式：把带参 SQL 内联成字面量后打到生产，**回传真实数据行**与行读量。
+ * 与桩行模式的差别在于「扇出次数」——桩 D1 的 all() 恒回 1 行，per-row/per-stage 的循环
+ * 只会跑一次，于是 LIMIT 45 的窗口、11 条轮次综述在探针里都被压成 1 次；
+ * 实放模式让应用用真实数据跑真实扇出，量到的才是线上形状。
+ * 只读：调用方负责先用 selectOnly 过滤掉写语句。
+ */
+export function runQueryLive(
+  sql: string,
+  args: unknown[],
+  opts: { db?: string; attempts?: number } = {},
+): { rows: Array<Record<string, unknown>>; rows_read: number; rows_written: number } {
+  const { db = "whl", attempts = 3 } = opts;
+  const cmd = inlineParams(sql, args).trim().replace(/;?\s*$/, "");
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const out = runCli([db, "--remote", "--json", "--command", cmd]);
+      const data = parseJsonArray(out) as Array<{
+        results?: Array<Record<string, unknown>>;
+        meta?: { rows_read?: number; rows_written?: number };
+      }>;
+      const first = data[0];
+      return {
+        rows: first?.results ?? [],
+        rows_read: first?.meta?.rows_read ?? -1,
+        rows_written: first?.meta?.rows_written ?? 0,
+      };
+    } catch (e) {
+      // 管理通道偶发失败（Windows 退出码 3221226505 / Cloudflare API 限流），重跑即过。
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
 export function queryRows(sql: string, opts: { db?: string; attempts?: number } = {}): Array<Record<string, unknown>> {
   const { db = "whl", attempts = 3 } = opts;
   const cmd = sql.trim().replace(/;?\s*$/, "");
@@ -341,35 +381,56 @@ interface Stmt {
  * 记录型 D1：prepare 记账、执行时把 {sql,args} 推进 sink。
  * `rows` 模式下 all() 回一行桩数据（生产表里有数据，回空会让路由提前 return 而漏测后续查询；
  * 偏大计是配额治理的安全方向）；`empty` 模式回空数组，用于对照「空库路径」。
+ * `live` 模式把语句实放打生产、回真实数据行并记下 meta.rows_read —— 用它量真实扇出次数
+ * （桩行模式每查恒回 1 行，per-row 循环只会跑一次，会把 feed 这类扇出型读面严重低估）。
+ * 写语句在 live 模式下也只记账不执行（度量通道绝不写生产）。
  */
 export function makeCaptureDb(
   sink: Captured[],
-  opts: { db?: "DB" | "AUTH_DB"; mode?: "rows" | "empty" } = {},
+  opts: { db?: "DB" | "AUTH_DB"; mode?: "rows" | "empty" | "live" } = {},
 ) {
   const dbTag = opts.db ?? "DB";
   const mode = opts.mode ?? "rows";
+  const live = mode === "live";
+  const dbName = dbTag === "AUTH_DB" ? "whl-auth" : "whl";
 
   const makeStmt = (sql: string, args: unknown[]): Stmt => {
+    const rec = (extra: Partial<Captured> = {}) =>
+      sink.push({ sql, args, db: dbTag, calls: 1, ...extra });
+    const isWrite = !/^\s*(SELECT|WITH)\b/i.test(sql.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, ""));
+    const runLive = () => runQueryLive(sql, args, { db: dbName });
     return {
       __captured: { sql, args, db: dbTag, calls: 0 },
       bind(...next: unknown[]) {
         return makeStmt(sql, next);
       },
       async first<T>() {
-        sink.push({ ...this.__captured, calls: 1 });
         const flat = sql.replace(/\s+/g, " ");
+        // 探针会话：生产库里没有 probe-token 的 token_hash，实放会查空 ⇒ 恒用桩 claims。
         if (/FROM oidc_session/i.test(flat)) {
+          rec();
           return { ok: 1, sub: "1", claims: JSON.stringify(PROBE_CLAIMS) } as T;
         }
+        if (live && !isWrite) {
+          const r = runLive();
+          rec({ rows_read: r.rows_read, result_rows: r.rows.length });
+          return (r.rows[0] ?? null) as T | null;
+        }
+        rec();
         return benignRow(dbTag) as T;
       },
       async all<T>() {
-        sink.push({ ...this.__captured, calls: 1 });
+        if (live && !isWrite) {
+          const r = runLive();
+          rec({ rows_read: r.rows_read, result_rows: r.rows.length });
+          return { results: r.rows as T[], success: true as const, meta: { rows_read: r.rows_read, rows_written: 0 } };
+        }
+        rec();
         const results = (mode === "empty" ? [] : [benignRow(dbTag)]) as T[];
         return { results, success: true as const, meta: { rows_read: 0, rows_written: 0 } };
       },
       async run() {
-        sink.push({ ...this.__captured, calls: 1 });
+        rec();
         return { success: true as const, meta: { rows_read: 0, rows_written: 0 } };
       },
     };
@@ -443,7 +504,7 @@ export function installCachesStub() {
 
 export interface CaptureEnvOptions {
   db?: "DB" | "AUTH_DB";
-  mode?: "rows" | "empty";
+  mode?: "rows" | "empty" | "live";
 }
 
 export function makeFakeEnv(sink: Captured[], opts: CaptureEnvOptions = {}) {

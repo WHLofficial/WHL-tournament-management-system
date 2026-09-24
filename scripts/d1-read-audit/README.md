@@ -1,7 +1,9 @@
 # D1 读消耗量化报告（增量 38 · 步骤 1–4）
 
-> 量化基线：2026-09-23（UTC 15:43 采样）。**本文件只做量化，不含任何治理改动**——治理范围待确认后另开步骤。
-> 复测命令见 §10；原始数据在同目录 `surface-measurements.json`（55 读面）、`write-path-measurements.json`（16 写面）、
+> 量化基线：2026-09-23（UTC 15:43 采样）；**实放复测追加于 2026-09-24**（§3.5）。
+> **本文件只做量化，不含任何治理改动**——治理范围待确认后另开步骤。
+> 复测命令见 §10；原始数据在同目录 `surface-measurements.json`（55 读面，桩行）、
+> `live-measurements.json`（12 读面，实放）、`write-path-measurements.json`（16 写面）、
 > `shape-ranking.json`（形状归并）、`rewrite-ab.json`（A/B 改写对照）、`cost-model.json`（双通道成本阶梯）。
 
 ---
@@ -14,13 +16,15 @@
    占免费档 500 万/日的 **44%**；本仓占其中 **65%**，库却是四个里第二小的。姊妹仓库俱乐部平台
    （`whl-club`）2026-09-21 已因超限报 `Your account has exceeded D1's free tier daily row read limit`
    （当天 4,350,235 行读）——同一天本仓也在从同一个池子里舀水。
-3. **按 club 的「单次 ≥10,000 行才治理」阈值，本仓达标读面 0 个。** 55 个读面单次冷路径合计 18,904 行，
-   最贵的 `public/feed` 单次 2,392 行。⇒ 不能照搬 club 的阈值判定，本仓的浪费是「普遍偏贵 × 高频重算」。
+3. **按 club 的「单次 ≥10,000 行才治理」阈值，本仓达标读面 0 个。** 55 个读面单次冷路径合计 18,904 行（桩行），
+   用实放复测修正后约 **22,655 行**（§3.5），最贵的 `public/feed` 单次 **6,777 行**。
+   ⇒ 不能照搬 club 的阈值判定，本仓的浪费是「普遍偏贵 × 高频重算」。
 4. **读量高度集中：`match` + `match_event` 两张表占 75%**（10,826 + 3,337 行），再加 `player` 11.7%
    ⇒ 三张表 86.6%。治理目标就是这三张。
 5. **公开页轮询是日常读量的主源。** 首页 `Home.tsx:152` 每 30s 轮询一次、一次打 6 个端点
-   （`tournaments` / `upcoming` / `live` / `announcement` / `feed` / `reactions`），其中 `upcoming`（1,192 行）
-   与 `feed`（2,392 行）是全部读面里最贵的两笔；`PublicTournament.tsx:163` 与 `PublicMatchDetail.tsx:122` 同样 30s 轮询。
+   （`tournaments` / `upcoming` / `live` / `announcement` / `feed` / `reactions`），其中 `feed`
+   （实放 **6,464 行**，§3.5）与 `upcoming`（1,192 行）是全部读面里最贵的两笔；
+   `PublicTournament.tsx:163` 与 `PublicMatchDetail.tsx:122` 同样 30s 轮询。
 6. **缓存把「访客数」和「D1 读数」解耦了，但没降低每个窗口的重算单价。** `pubCache` 保证每个 TTL 窗口
    至多重算一次（与访客数无关，这是好设计），可单价太高：把 21 个公开面按「每个 TTL 窗口都有请求」相加，
    上限约 **1,049 万行/日**，是账号 500 万池的 **2.1 倍**。当前实到 143 万（= 上限的 13.6%），
@@ -92,7 +96,12 @@
 
 ---
 
-## 3. 全站读面普查（55 个读面 / 189 条语句 / 18,904 行读 · 单次冷路径）
+## 3. 全站读面普查（55 个读面 / 189 条语句 / 18,904 行读 · 单次冷路径 · **桩行模式**）
+
+> 本节数字来自**桩行模式**（假 D1 每次查询恒回 1 行）。对固定条数的语句准确，
+> 对**扇出型**读面（先查一批、再逐行/逐阶段各发一次查询）会系统性低估——
+> `feed` 低报 2.7 倍、`match-lineup-stats` 低报 108 倍，`match-report` 反过来高报 20 倍。
+> **实放复测见 §3.5**，引用扇出型读面的数字时以 §3.5 为准。
 
 样本 id 取自当时线上：tournament=1（S9 顶级联赛）、阶段=1（132 场）、待打场次=284、已结束场次=182、球队=1、伤停=1。
 
@@ -110,10 +119,10 @@
 
 | 行读 | 语句数 | 读面 | 备注 |
 |---|---|---|---|
-| 2,392 | 18 | `public/feed?limit=20` | 语句数最多；KV SWR 之上还有边缘缓存 |
+| 2,392 | 18 | `public/feed?limit=20` | 语句数最多；KV SWR 之上还有边缘缓存。**桩行低估扇出 ⇒ 实放 6,777 行，见 §3.5** |
 | 1,949 | 8 | `public/toplists` | 含全量停赛重放 `computeSuspensions` + 748 行的「事件明细（双 join 球员/助攻）」 |
 | 1,531 | 7 | `public/stats` | 最贵表 `match_event` |
-| 1,402 | 7 | `public/match-report` | 战报射手聚合 |
+| 1,402 | 7 | `public/match-report` | 战报射手聚合。**桩行高报（走了更重的分支）⇒ 实放 65 行，见 §3.5** |
 | 1,342 | 2 | `admin/injury-candidates` | **单条语句最贵**；`OR` 作用在 join 列上 ⇒ 全表扫 |
 | 1,192 | 1 | `public/upcoming` | **单条语句第二贵**；返回 8 行却读 1,192 行 |
 | 1,020 | 8 | `coach/me-status` | 含 `LIMIT 1` 读 755 行那条 |
@@ -145,6 +154,47 @@
   签名含秒级时间戳、验签窗口 ±300s ⇒ 必须在**发请求那一刻**才算（否则 403 `bad_signature`）。
 - cron 两段用假 D1 直接调 `runRosterSync(env)` / `runAccountMirror(env)`：**写被登记但不执行**，
   不会真落库；`cron-roster-sync` 日志 `[sync-rosters] 队 20 / 快照 30 人：新增 30、换队 0、改名 0、改号 0、删除 1/1、保留 0`（读路径完整、31 条写被跳过）。
+
+### 3.5 实放复测：桩行普查对**扇出型**读面会系统性低估（新增，2026-09-24）
+
+§3 的 18,904 行来自「桩行模式」——假 D1 的 `all()` 恒回 **1 行**（`harness.mts` 桩行模式），
+于是所有「先查一批、再对每一行/每个阶段各发一次查询」的扇出循环在探针里**只跑一次**。
+为量化这个偏差，给 `harness.mts` 增加了 `mode: "live"`：把语句内联参数后**实放打生产、回真实数据行**，
+让应用用真实数据跑真实扇出，同时记录 `meta.rows_read`（仍是只读：写语句只记账不执行）。
+复测脚本 `measure-live.mts`，结果写 `live-measurements.json`。
+
+| 读面 | 桩行 | 实放 | 倍率 | 偏差机制 |
+|---|---|---|---|---|
+| `public/feed`（首页形状 `limit=15`） | 2,392 | **6,464** | **2.70×** | 扇出低估：11 条轮次综述、11 次轮次完赛名单、11 次轮次伤情在桩行下各只跑 1 次 |
+| `public/feed`（`?limit=20`） | 2,392 | 6,777 | 2.83× | 同上（窗口 60 场、cap 20） |
+| `public/match-lineup-stats` | 7 | **754** | **107.7×** | 扇出低估：桩行只回 1 行，真实回多行 |
+| `public/match-report` | 1,402 | **65** | **0.05×** | **反向**：桩行 `stage_kind='probe'` 让路由走进了比真实数据更重的分支 |
+| `coach/me-status` | 1,020 | 903 | 0.89× | 反向：桩行 `status='finished'` 让部分前置分支提前退出 |
+| `public/tournament-summary` | 876 | 918 | 1.05× | 基本一致 |
+| `coach/me-matches` | 787 | 820 | 1.04× | 基本一致 |
+| `public/tournament-matches` | 48 | 46 | 0.96× | 基本一致 |
+| `public/toplists` | 1,949 | 1,949 | 1.00× | 无扇出，桩行准确 |
+| `public/stats` | 1,531 | 1,531 | 1.00× | 同上 |
+| `admin/injury-candidates` | 1,342 | 1,342 | 1.00× | 单条语句，准确 |
+| `public/upcoming` | 1,192 | 1,192 | 1.00× | 单条语句，准确 |
+| `admin/tournament-matches` | 800 | 800 | 1.00× | 单条语句，准确 |
+
+两条结论：
+
+1. **桩行普查对「固定条数的语句」是准确的**（toplists / stats / injury-candidates / upcoming / tournament-matches
+   全部 1.00×）⇒ §4 的表归因与形状单价依然成立，可以直接用。
+2. **桩行普查对「扇出型」读面不可用**：`feed` 低报 2.7 倍，`match-lineup-stats` 低报 108 倍；
+   而 `match-report` 反过来高报 20 倍（桩行值选了另一条分支）。
+   ⇒ 引用**扇出型**读面的数字时，以本节的实放读数为准。
+
+**修正后的全站单次冷路径合计**：18,904 行（桩行）→ **≈22,655 行**（把上表的差值代回：
+feed +4,385、match-lineup-stats +747、match-report −1,337、me-status −117、tournament-summary +42、
+me-matches +33、tournament-matches −2）。**最贵读面从 `public/toplists` 变成 `public/feed`（6,777 行）**。
+
+`public/feed` 的实放拆解（`limit=15`，6,464 行 / 44 条语句）：
+`finishedList`（7 表 join）16 次 / 2,267 行、`fetchEventRows` 5 次 / 1,718 行、
+`injuryFacts` 12 次 / 982 行、`recapP` 1 次 / 665 行、`stageMaxRounds` 2 次 / 446 行、
+`standingsSnapshot` 3 次 / 220 行、`standings` 3 次 / 122 行、红牌 3 行、改判 audit 41 行。
 
 ---
 
@@ -292,20 +342,21 @@
 
 | 页面 | 间隔 | 打的端点 | 单次冷成本 |
 |---|---|---|---|
-| `src/pages/Home.tsx:152` | **30s**（无 live 时降到 120s 兜底） | `tournaments` / `upcoming` / `live` / `announcement` / `feed?limit=20` / `interact/reactions` | 48 + **1,192** + 11 + 2 + **2,392** + 2 = **3,647 行 / 25 条语句** |
-| `src/pages/PublicTournament.tsx:163` | **30s** | 每个可见轮次 `tournaments/:tid/matches?stageId&round`（Promise.all 并发） | 48/轮次 |
+| `src/pages/Home.tsx:152` | **30s**（无 live 时降到 120s 兜底） | `tournaments` / `upcoming` / `live` / `announcement` / `feed` / `interact/reactions` | 48 + **1,192** + 11 + 2 + **6,464** + 2 = **7,719 行 / 44 条语句** |
+| `src/pages/PublicTournament.tsx:163` | **30s** | 每个可见轮次 `tournaments/:tid/matches?stageId&round`（Promise.all 并发） | 46/轮次 |
 | `src/pages/PublicMatchDetail.tsx:122` | **30s**（完赛后停止轮询） | 场次详情 + 阵容 | 51 + 5 |
 
-⇒ **首页一次冷轮询就占单次冷路径总读量的 19%**，且它每 30s 触发一次。
+⇒ **首页一次冷轮询就占单次冷路径总读量的 34%**（7,719 / 22,655），且它每 30s 触发一次。
+其中 `feed` 一项占 6,464 行（实放读数，§3.5）——**首页一半以上的 D1 读都花在这一个端点上**。
 
 ### 7.2 TTL 窗口容量（「每个 TTL 窗口都有请求」时的上限）
 
 | 读面 | 单价 | TTL | 窗口数/日 | 上限行读/日 |
 |---|---|---|---|---|
-| `portal/feed` | 2,392 | 60s（+KV SWR 60s） | 1,440 | **3,444,480** |
-| `portal/matches/:mid/report` | 1,402 | 60s | 1,440 | **2,018,880** |
+| `portal/feed` | **6,464**（实放，§3.5） | 60s（+KV SWR 60s） | 1,440 | **9,308,160** |
+| `portal/matches/:mid/report` | 65（实放，§3.5） | 60s | 1,440 | 93,600 |
 | `public/upcoming` | 1,192 | 60s | 1,440 | **1,716,480** |
-| `public/tournament-summary` | 876 | 60s | 1,440 | **1,261,440** |
+| `public/tournament-summary` | 918（实放） | 60s | 1,440 | **1,321,920** |
 | `public/toplists` | 1,949 | 300s | 288 | 561,312 |
 | `public/stats` | 1,531 | 300s | 288 | 440,928 |
 | `public/tournament-rounds` | 158 | 60s | 1,440 | 227,520 |
@@ -314,11 +365,14 @@
 | `portal/round` | 456 | 300s | 288 | 131,328 |
 | `public/tournament` | 419 | 300s | 288 | 120,672 |
 | 其余 10 个公开面 | | | | ≈ 295,200 |
-| **公开面合计上限（21 个）** | | | | **10,489,536** |
+| **公开面合计上限（21 个）** | | | | **14,488,416** |
 
-- 当前实到 1,428,496 行/日 = 上限的 **13.6%**（公开面之外还有管理面/教练面/写端点/cron 的贡献）。
-- **上限是账号 500 万池的 2.1 倍** ⇒ 若流量增长或出现「全天连续有访客」的窗口，账号会先于功能受限。
+- 单价一律取实放读数（扇出型读面按 §3.5 修正：feed 6,464、match-report 65、tournament-summary 918）。
+- 当前实到 1,428,496 行/日 = 上限的 **9.9%**（公开面之外还有管理面/教练面/写端点/cron 的贡献）。
+- **上限是账号 500 万池的 2.9 倍** ⇒ 若流量增长或出现「全天连续有访客」的窗口，账号会先于功能受限。
   club 已在 09-21 炸过一次（4,350,235 行），本仓当天同时占 1.36M。
+- **单看 `portal/feed` 一项，上限就是 930 万行/日 = 账号池的 1.86 倍** ⇒ 只要 feed 的
+  「每 60s 必有一次请求」成立，光它一个端点就能吃光整个账号的日读配额。
 - 反过来看这是好消息：**单价降一半，上限就降一半**，不需要改架构。
 
 ### 7.3 缓存现状（治理时的边界条件）
@@ -329,7 +383,7 @@
   「写后立即失效」不是现成能力。
 - `portal/feed` 另有一层 KV SWR（key `swr:feed:v2:{limit}:{before}`，`expirationTtl 600`，
   60s 内直出、过期先回旧值再后台重算）⇒ feed 的重算频率被压到「至多每 60s 一次」，
-  但**每次重算单价 2,392 行**。
+  但**每次重算单价 6,464 行**（实放，§3.5）——**这是全站最贵的单次重算**。
 - 管理端全部未缓存；无内存缓存；无会话缓存（`PERF_PLAN.md` 明确不做：角色变更/封禁要立刻生效）。
 
 ---
@@ -348,6 +402,41 @@
 ⇒ 同一模式的 `OR` 改写还出现在 `worker/routes/coach.ts:160`（me-matches）、`worker/routes/coach.ts:249`
 （me-status，LIMIT 1 读 755 行）、`worker/routes/public.ts:688`、`worker/routes/public.ts:855`。
 
+### 8.1 `public/feed` 瘦身套餐（实放基线 6,464 行 → **3,924 行，−39%**）
+
+`feed` 是全站最贵的单次重算（实放 6,464 行 / 44 条语句，§3.5），下面五项**全部实测过**。
+前三项互不依赖，可分别落地。
+
+| # | 手段 | 省 | 机制与安全性 |
+|---|---|---|---|
+| 1 | **轮次综述按 cap 截断** | **−1,626** | `worker/lib/feedNews.ts:654` 的综述后置块现在对 `recapP` 的**全部 11 轮**各发一次 `fetchRoundFinished` + 一次 `injuriesInRound`（11 对，实测 1,081 + 893 行）。最终输出是 `items.sort(at desc).slice(0, cap)`（`:1054`/`:1060`），窗口已提供 `max(cap*3,40)=45` 条带 `at` 的条目 ⇒ **任何 `at` 早于窗口第 cap 条（`window[cap-1].finishedAt`）的条目都不可能进入前 cap**。按 `last_at >= window[cap-1].finishedAt` 过滤后只剩 2 轮（`limit=15` 时 cutoff = `2026-09-15T10:08`），9 轮可跳过。**纯 JS 过滤，不加往返、不改 SQL** |
+| 2 | **`recapP` 改由 `status='finished'` 驱动** | **−523** | 现在 `GROUP BY m.stage_id, m.round HAVING …` 走 `SCAN m USING INDEX idx_match_stage`（真全索引扫，665 行，§4.2）。改写后 665 → ≈142（§8 #5 实测 655 → 140） |
+| 3 | **`fetchStageMaxRounds` 请求内记忆化** | **−223** | `worker/lib/context.ts:472`。实放里被调 2 次，参数分别是 `[6,2,1]` 与 `[2,1,6]` —— **同一集合、顺序不同**，各 223 行。按 `ids.slice().sort()` 作 key 记忆化即可（波 1 的窗口阶段集与综述阶段集在这一天完全重合） |
+| 4 | **`fetchRoundFinished` 强制 `INDEXED BY idx_match_stage`** | **−122** | `worker/lib/context.ts:132`。规划器偏好 `idx_match_status(status=?)`（反向扫正好满足 `ORDER BY finished_at DESC`），代价是单轮 6 场也要扫全部 69 场完赛；11 轮合计 1,081 → 393（**−64%**，§8.1 实测）。`limit=15` 只剩 2 轮 ⇒ 192 → ≈70 |
+| 5 | **`injuriesInRound` 预筛 `me.match_id IN (该轮场次 id)`** | **−46** | `worker/lib/injury.ts:411`。现在按 `type=?` 扫全部 28 条伤情事件（11 轮 893 → 632，**−29%**）；`limit=15` 只剩 2 轮 ⇒ 156 → ≈110 |
+
+合计 **−2,540 行 ⇒ 6,464 → 3,924 行（−39.3%）**。
+
+叠加 TTL 后（`pubCache(60)` 与 KV SWR 的 60s 新鲜度一并放宽到 300s）：
+
+| 状态 | 每次重算 | 窗口数/日 | 上限行读/日 | 相对账号 500 万池 |
+|---|---|---|---|---|
+| 现在 | 6,464 | 1,440 | 9,308,160 | **1.86 倍** |
+| 只做代码瘦身 | 3,924 | 1,440 | 5,650,560 | 1.13 倍 |
+| 代码瘦身 + TTL 300s | 3,924 | 288 | **1,130,112** | **0.23 倍** |
+
+⇒ **组合起来上限降 88%**（930 万 → 113 万行/日），且全部是「改 SQL + 改 TTL」，不动任何接口契约。
+TTL 放宽的代价：待打比赛列表与 feed 最长 5 分钟陈旧——首页本身有 30s 轮询，但缓存会把实际刷新压到 5 分钟，
+**这是产品口径决定，需要确认可接受**（比赛中直播比分的 `live`/`match` 面仍保持 60s，不受影响）。
+
+### 8.2 未做的 feed 候选（成本高或需产品决策）
+
+- `buildNarrativeFacts`（`worker/lib/feedNews.ts:296`）对窗口涉及的**每个赛事**都拉该赛事全部完赛场次
+  （`fetchTournamentFinished`，实测 234/239/289 行 × 3 个赛事）再拉全部事件行（`fetchEventRows` 合计 1,718 行），
+  只为算射手榜叙事。**这是 feed 里第二贵的一块（约 1,770 行）**，但它属「摘要里要不要放赛事叙事」的产品决策，
+  且叙事条目是否进入前 15 取决于数据分布，不宜在量化阶段拍定。
+- `fetchEventRows` 的 90 一批拆分（`worker/lib/context.ts:180`）本身没问题。
+
 ---
 
 ## 9. 候选清单（**只列不改**，按行读收益排序）
@@ -356,20 +445,22 @@
 
 | 候选 | 收益（单次冷） | 位置 |
 |---|---|---|
+| **`public/feed` 瘦身套餐（五项，见 §8.1）** | **−2,540 行（6,464 → 3,924，−39%）** | `worker/lib/feedNews.ts`、`worker/lib/context.ts`、`worker/lib/injury.ts` |
 | 伤停候选 `OR` → `IN (SELECT …)` 改写 | −1,186 行（−89%） | `worker/lib/injury.ts` `listTeamMissCandidates` |
 | `upcoming` 两段式 | −596 行（−50%） | `worker/routes/public.ts:1021` |
-| `feed` 最后完赛轮次改由 `status` 驱动 | −515 行（−79%） | `worker/lib/feedNews.ts:596` |
+| `feed` 最后完赛轮次改由 `status` 驱动 | −523 行（−79%） | `worker/lib/feedNews.ts:596`（= §8.1 第 2 项） |
 | `tournament-summary` 两段式 | −408 行（−51%） | `worker/routes/public.ts:432` |
 | `coach/me-status` / `me-matches` 同款 `OR` 改写 | ≈ −670 / −700（未单独实测，按 §8 #1 的 −89% 比例估） | `worker/routes/coach.ts:249`、`:160` |
 | 终场重算合并为一次阶段扫描 | −133 行/次 | `worker/lib/standings.ts` `buildStandingsStmts` |
-| `upcoming` / `feed` 的 TTL 60s → 更长（待打比赛不需要 60s 新鲜度） | 直接按倍数砍窗口数 | `worker/routes/public.ts:1021`、`worker/routes/portal.ts:30` |
+| `feed` 的 TTL 60s → 300s（含 KV SWR 新鲜度） | 窗口数 1,440 → 288，上限再降 5 倍（见 §8.1） | `worker/routes/portal.ts:30` |
+| `upcoming` 的 TTL 60s → 更长（待打比赛不需要 60s 新鲜度） | 直接按倍数砍窗口数 | `worker/routes/public.ts:1021` |
 
 ### B 档 · 需改契约或前端配合
 
 | 候选 | 说明 |
 |---|---|
-| 首页轮询降频 / 合并（`Home.tsx:152` 30s × 6 端点） | 一次冷轮询 3,647 行、25 条语句；无 live 时已降 120s，可把 `upcoming` 也纳入慢刷 |
-| `feed` 契约瘦身（18 条语句） | 冷重算两波并行后仍 18 条；`limit=20` 时是否每条都要算全套派生 |
+| 首页轮询降频 / 合并（`Home.tsx:152` 30s × 6 端点） | 一次冷轮询 7,719 行、44 条语句；无 live 时已降 120s，可把 `upcoming` 也纳入慢刷 |
+| `feed` 叙事块（赛事射手榜） | `buildNarrativeFacts`（`worker/lib/feedNews.ts:296`）按赛事拉全部完赛场次 + 全部事件行，约 1,770 行（§8.2）。属产品决策，不是纯技术优化 |
 | 公开面加「按赛事分片」的缓存键 | 现在 key = 完整 URL，`upcoming` 是全站共享单键（好），但 `stats`/`toplists` 每赛事各一份 |
 | 停赛重放 `computeSuspensions` 的增量维护 | 现在 `public/toplists` 每次冷重算都全量重放 |
 
@@ -390,7 +481,9 @@ club 的「单次 ≥10,000 行才治理」在本仓不适用（0 个读面达�
 > **治理判据 = 单价 × 重算频率。** 单价 ≥1,000 行且 TTL ≤60s（即每日窗口数 ≥1,440）⇒ 上限 ≥1.44M/日，必做；
 > 单价 ≥1,000 行但走 KV/长 TTL ⇒ 看实测频率再定；单价 <500 行 ⇒ 除非高频否则不动。
 
-按此判据，A 档前四条（`upcoming`、`feed`、`summary`、`injury-candidates`）优先级最高。
+按此判据，A 档前四条（`upcoming`、`feed`、`summary`、`injury-candidates`）优先级最高；
+其中 **`feed` 是唯一「单价 ≥6,000 且 TTL = 60s」的读面，上限 930 万行/日单独就超过账号整个池子**，
+所以它是第一优先级（§8.1 已有五项实测过的瘦身手段）。
 
 ---
 
@@ -407,6 +500,10 @@ npx wrangler d1 info whl --json
 npx vite-node scripts/d1-read-audit/measure-surface.mts
 npx vite-node scripts/d1-read-audit/measure-surface.mts --only=feed   # 只复测名字含 feed 的（结果按名字合并回 JSON）
 npx vite-node scripts/d1-read-audit/measure-surface.mts --no-cost --dump  # 只抓 SQL 不打生产
+
+# 实放复测（扇出型读面必须用它，慢：每面 2–100s；结果写 live-measurements.json，按面名合并）
+npx vite-node scripts/d1-read-audit/measure-live.mts --only=feed --limit=15 --dump
+npx vite-node scripts/d1-read-audit/measure-live.mts --only=toplists,stats,injury-candidates,upcoming
 
 # 写端点的读（约 7 分钟）
 npx vite-node scripts/d1-read-audit/measure-writes.mts
@@ -440,6 +537,10 @@ npx vite-node scripts/d1-read-audit/measure-shapes.mts
 4. 抽查样本单一：`tid=1`（S9 顶级联赛、132 场最多）与 `tid=2`（次级联赛、56 场）的成本未对照；
    换赛事/阶段只需改脚本里的样本 id 取法（已参数化）。
 5. `admin/match-events` 因抽样场次无事件而读 0，需换一个已完赛且带事件的场次复测。
+6. **实放复测只做了 12 个读面**（§3.5），其余 43 个仍是桩行读数。已复测的覆盖了单价前 10 名，
+   剩下的都是「固定条数语句」型（桩行已验证准确）——但严格说，**`coach/proxy-board`（384 行 / 11 条语句）、
+   `admin/injuries`（464）、`public/injuries`（462）、`public/round`（456）这几个带逐行/逐阶段循环的面还没实放**，
+   数字可能偏低。`public/match-lineup-stats` 低报 108 倍说明不能凭「看起来没有扇出」判断。
 
 ---
 
@@ -452,8 +553,10 @@ npx vite-node scripts/d1-read-audit/measure-shapes.mts
 | `measure-writes.mts` | 16 个写端点的读量普查 |
 | `rank-shapes.mts` | 189 条语句归并为形状、按表归因 |
 | `measure-shapes.mts` | 索引清单 / `EXPLAIN QUERY PLAN` / A/B 改写对照 / 双通道成本阶梯 |
+| `measure-live.mts` | **实放复测**（`mode: "live"`：真数据跑真扇出，只读）——扇出型读面必用 |
 | `smoke.mts` | 冒烟（3 个读面 + 一次 `costOf` + 一次 `EXPLAIN`） |
-| `surface-measurements.json` | 读面普查原始数据（55 面 / 189 语句 / 18,904 行） |
+| `surface-measurements.json` | 读面普查原始数据（55 面 / 189 语句 / 18,904 行 · 桩行） |
+| `live-measurements.json` | 实放复测原始数据（12 面，含逐条 `rows_read` 与 `result_rows`） |
 | `write-path-measurements.json` | 写面普查原始数据（16 面 / 56 语句 / 648 行） |
 | `shape-ranking.json` | 形状排行（表归因 + Top 形状 + 读面榜） |
 | `rewrite-ab.json` | 6 组 A/B 改写对照 |
