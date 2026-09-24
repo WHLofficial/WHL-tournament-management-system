@@ -173,24 +173,90 @@ KV 写最坏 1,440/日 → 288/日（免费档约 1,000/日）。
 
 ---
 
-## 12. 剩余机会清单（增量 39 排查，**未做**）
+## 治理后复测（增量 40，2026-09-24）
 
-按「单价 × 重算频率」判据都够不上「必做」，但下次做 D1 治理时可直接从这里挑：
+增量 40 做四件事：把管理端「按队各发一个请求」的扇出改成赛事作用域批量端点、球队详情页 4 请求合 1、
+feed 周报的 8 周串行回退改成「探针 + 实取」两条查询、修一处陈旧注释。
+复测口径同 §3.5（实放模式，`measure-live.mts --extra=`，每面独立进程）。
 
-| 位置 | 问题 | 量级 |
-|---|---|---|
-| `worker/routes/admin/schedule.ts:1126-1246` `buildAutoFillStmts` | `for (const next of stages)` 内 `await COUNT(*)`(:1128)、`await buildCrossStagePlan`(:1199)、`await COUNT(*)`(:1219)、`await takeRangePool`(:1228) 全串行；**每次终场都会跑** | 阶段数 × 4 条串行；当前 3 阶段约 12 条 |
-| `worker/routes/admin/tournaments.ts:335-361` `checkRankZoneScope` | 逐 `stageId`/逐 `groupId` 各一条查询 | 排名段数量条串行，仅保存设置时触发 |
-| `src/pages/MatchesTab.tsx:138` | 按队 `GET /api/admin/teams/:tid`（每个缺失队一次） | 已用 `playersCache` 去重，首轮按队数并发 |
-| `src/pages/MatchesTab.tsx:167` | 按队 `GET /api/admin/injuries?teamId=`（每个队一次） | 同上，无缓存 |
+> **工具坑（下次直接照用）**：`--extra="名字:/路径|名字2:/路径2"` 在 Git Bash 下会被 MSYS 当路径转换
+> （`admin/team-context` 变成 `admin\team-context;C:\Program Files\Git\api\...`，三个面全 404）。
+> 加 `MSYS_NO_PATHCONV=1` 前缀，且名字里不要出现 `/`（用下划线）。
 
-**都不属行读问题**（管理端读量占全站 23.8%，且这些查询单价低），属**延迟 / 请求数**问题。
-真要动，方向是给这两条管理端接口加 `?teamIds=` 批量形式，而不是改 SQL。
+### 一、批量端点：请求数 −92%~−95%，行读基本持平
+
+| 读面 | 现状（按队 N 请求） | 增量 40（1 请求） | 行读 | 请求 |
+|---|---|---|---|---|
+| 事件面板·名单（t1，12 队） | 744 行 / 12 | **723 行** / 1 | −2.8% | −91.7% |
+| 事件面板·伤停（t1，12 队） | 312 行 / 12 | **408 行** / 1 | **+30.8%** | −91.7% |
+| **事件面板合计（t1，12 队）** | 1,056 行 / 24 | **1,131 行** / 2 | +7.1% | **−91.7%** |
+| **事件面板合计（t3，20 队）** | 1,760 行 / 40 | **1,761 行** / 2 | +0.06% | **−95.0%** |
+| 球队详情页 `/:id/context` | 95 行 / 4 / 2 波 | **95 行** / 1 | 0% | −75.0% |
+
+单队基准（实放）：`GET /api/admin/teams/:id` = 62 行（含 1 行队名，前端其实不用）、
+`GET /api/admin/injuries?teamId=` = 26 行。N 取生产参赛队数（t1 12 队、t3 20 队）。
+
+**为什么伤停批量反而更贵**：`missesForTournament` 要把整个赛事的伤停缺席按
+`stage.sort_order, round, slot, leg, id` 排序，单队版本只排该队那几行；赛事作用域下参与排序的行数变多。
+绝对量很小（t1 408 行），换掉 11 个请求，按「请求配额比行读更早撞墙」的判据划算。
+
+**顺带修掉一个真 bug**：`src/pages/MatchesTab.tsx` 伤停 effect 的 deps 原来含 `matches`，
+面板开着时每次事件增删触发 `refetch()` 都会把全部队伤停重拉一遍（12~20 个请求）。
+改成赛事作用域端点后 deps 收成 `[panelActive, detail.tournament.id]`，这条重复扇出消失。
+
+### 二、球队详情页四请求合 1
+
+`GET /api/admin/teams/:id/context` 返回 `{ team, players, codes, members, injuries }`，
+本地 D1 三条 + 认证中心两条并行 1 波。实放 **95 行 / 6 条语句**，与四个原端点之和 **95 行完全相等**。
+收益面比「少 3 个请求」大：`reload()` 有 7 个触发点（挂载 + 6 处 mutation 后），每次改名/传 logo 都省 3 个请求。
+`codes`/`members` 走 `env.AUTH_DB` 只读镜像（`worker/lib/authClient.ts`，**不是**认证中心机器通道），
+与本地读同一失败域，合并不引入新失败面。
+
+### 三、feed 周报 8 周回退：8 次串行往返 → 最多 2 条查询
+
+`buildWeekly` 在「本周无比赛」时原来 `for (i = 1..8) await weekMatches(...)` 串行回退，最坏 8 次往返。
+改成先跑一条探针（`WEEKLY_LATEST_FINISHED_SQL`，走 `idx_match_status (status, finished_at DESC)` 反向扫 + `LIMIT 1`）
+拿 8 周窗口内最新一场完赛的时间，再对那一周调一次 `weekMatches`。
+
+**为什么不用「一条 8 周窗口全量查询」**：常见情形是「上一周非空」，循环本来就只跑 1 次，
+而全量查询要固定读 69 行索引扫 + 8 周全部 join 行；探针在两种情形下都 ≤2 条查询。
+探针的过滤条件必须与 `weekMatches` 逐条对齐（含 `entry` 的 INNER JOIN），否则队伍待定的场次会被选中却取不出比赛。
+
+### 四、顺手：`src/pages/PublicTournament.tsx` 陈旧注释
+
+注释写「30s 轮询」，实际 `POLL_MS = 60_000`（`src/lib/polling.ts:10`）。已改正并注明「与 pubCache 的 60s TTL 对齐」。
+
+### 实测否决（别再试）
+
+| 位置 | 否决理由 |
+|---|---|
+| `worker/routes/admin/schedule.ts` `buildAutoFillStmts` | 每次终场的常见路径只有 1 条固有 `COUNT(*)`（≈133 行）就 `return []`，且这条已计入终场 284 行的拆解；全循环只在阶段收官时跑（每赛事约 4 次）。增量 38 A/B 已实测「合并两次 133 行阶段扫描」为 +99.2%（133→265）⇒ 连那条 COUNT 也删不掉 |
+| `worker/routes/admin/tournaments.ts` `checkRankZoneScope` | 唯一调用点是排名段设置 PUT，两个循环各一条点查 ⇒ 罕见写路径 |
+| `worker/lib/clubRoster.ts` 逐行 DELETE | 注释已写明故意不批量：外键拦下一条不该回滚整批，且逐条才知道是哪一行被拦 |
+| 合并 `PublicTournament` 的两条 60s 端点 | 行读中性（rounds 158 + summary 876），只省直播观众每 60s 一个请求，代价是多一个与两条既有端点重复的公开端点 |
+
+---
+
+## 12. 剩余机会清单（增量 40 排查后）
+
+增量 39 清单里的四项已全部处理完（三项落地、一项实测否决）。当前**没有**够得上「必做」的读消耗项，
+剩下的都属「延迟 / 请求数」且量级很小：
+
+| 位置 | 问题 | 量级 | 状态 |
+|---|---|---|---|
+| `worker/routes/admin/schedule.ts` `buildAutoFillStmts` | 阶段收官时每阶段串行 4 条 | 每赛事约 4 次 | 实测否决（见上节） |
+| `worker/routes/admin/tournaments.ts` `checkRankZoneScope` | 逐 stage/group 点查 | 仅保存排名段设置时 | 实测否决 |
+| `worker/lib/clubRoster.ts` 逐行 DELETE | 每小时同步逐行删 | 每小时一次 | 故意不批量 |
+| `src/pages/PublicTournament.tsx` 直播轮询 | 每 60s 4 个请求（rounds + summary + announcement + 当前轮） | 直播观众每 60s | 合并收益太小，不做 |
+
+下次做 D1 治理时，**先跑形状普查**（§1）确认 `match` 表规模与读面是否变化，而不是直接挑上表。
 
 ### 本轮新增的读面（未纳入普查基线）
 
-`/api/public/home` 与 `/api/coach/bootstrap` 是新增端点，尚未写进 `surface-measurements.json`
-（用 `measure-live.mts --extra=` 单独量）。下次全量普查会把它们收进去。
+`/api/public/home`、`/api/coach/bootstrap`（增量 39）与 `/api/admin/tournaments/:id/team-players`、
+`/api/admin/tournaments/:id/team-injuries`、`/api/admin/teams/:id/context`（增量 40）是新增端点，
+尚未写进 `surface-measurements.json`（用 `measure-live.mts --extra=` 单独量）。
+下次全量普查会把它们收进去。
 
 ---
 
