@@ -141,6 +141,15 @@ type PStat = {
   inj: { injury: string | null; rest: number; pct: number } | null; // 伤停中：剩余缺阵场 / 恢复进度
 };
 
+// 教练首屏聚合端点 /api/coach/bootstrap 的响应（增量 39）。
+// 只声明本页用到的字段：team 只要 name/players，其余段沿用既有 DTO。
+type CoachBootstrap = {
+  team: { name: string; players: TeamPlayer[] } | null;
+  tactics: TacticArchiveDTO[];
+  matches: CoachPendingMatchDTO[];
+  sessions: ProxySessionDTO[];
+};
+
 export default function Tactics() {
   const { user } = useAuth();
   const [sp, setSp] = useSearchParams();
@@ -229,76 +238,56 @@ export default function Tactics() {
   useEffect(() => {
     if (scope === wantScope) saveLS(dk.assign, assign);
   }, [dk.assign, scope, wantScope, assign]);
-  // 登录用户尝试拉本队名单：教练可选本队球员，其余（游客/未绑队）手输名字。
-  // 下面几个取数 effect 一律以 user 为门（谁都不等谁），所以名单 / 比赛 / 伤停 / 存档是并行到达的。
+  // 教练首屏取数（增量 39）：本队名单 / 战术存档 / 待选比赛 / 代打授权 四段合成一次请求
+  // （原来 4 个 effect 各发一次），四段的队伍归属与账号名在服务端只算一次。
+  // 这四段本就是同一次「教练首屏」加载，故任一段失败时四段一起报错，不再分段标错。
   useEffect(() => {
     if (!user) {
       setSelfPlayers(null);
+      setSelfTeamName(null);
+      setArchives(null);
+      setSubMatches(null);
+      setSubMatchId(null);
+      setProxySessions(null);
+      setProxyOn(false);
+      setProxyMid(null);
       return;
     }
     let dead = false;
-    api<{ team: { name: string; players: TeamPlayer[] } | null }>("/api/coach/me/team")
+    api<CoachBootstrap>("/api/coach/bootstrap")
       .then((b) => {
         if (dead) return;
         markLoadErr("本队名单", null);
+        markLoadErr("战术存档", null);
+        markLoadErr("待选比赛", null);
+        markLoadErr("代打授权", null);
         setSelfPlayers(b.team?.players ?? null);
         setSelfTeamName(b.team?.name ?? null);
-      })
-      .catch((e: unknown) => {
-        if (dead) return;
-        markLoadErr("本队名单", e instanceof Error ? e.message : "加载失败");
-        setSelfPlayers(null);
-        setSelfTeamName(null);
-      });
-    return () => {
-      dead = true;
-    };
-  }, [user, markLoadErr]);
-
-  // 存档登录后即可拉（未绑队端点返回空列表）：不再等本队名单那一跳
-  useEffect(() => {
-    if (!user) {
-      setArchives(null);
-      return;
-    }
-    let dead = false;
-    api<{ tactics: TacticArchiveDTO[] }>("/api/coach/tactics")
-      .then((b) => {
-        if (dead) return;
-        markLoadErr("战术存档", null);
         setArchives(b.tactics ?? []);
-      })
-      .catch((e: unknown) => {
-        if (dead) return;
-        markLoadErr("战术存档", e instanceof Error ? e.message : "加载失败");
-        setArchives([]);
-      });
-    return () => {
-      dead = true;
-    };
-  }, [user, markLoadErr]);
-
-  // 待选比赛：登录后即拉，默认选中未开赛的第一场（端点只返 pending 场）
-  useEffect(() => {
-    if (!user) {
-      setSubMatches(null);
-      setSubMatchId(null);
-      return;
-    }
-    let dead = false;
-    api<{ matches: CoachPendingMatchDTO[] }>("/api/coach/me/matches")
-      .then((b) => {
-        if (dead) return;
         const list = b.matches ?? [];
         matchesAt.current = Date.now();
-        markLoadErr("待选比赛", null);
         setSubMatches(list);
         setSubMatchId((cur) => (cur != null && list.some((m) => m.id === cur) ? cur : list[0]?.id ?? null));
+        const sessions = b.sessions ?? [];
+        setProxySessions(sessions);
+        setProxyMid((cur) =>
+          cur != null && sessions.some((s) => s.matchId === cur) ? cur : sessions[0]?.matchId ?? null,
+        );
+        // 授权被撤销/比赛开打后清单会空掉，这时自动切回本队身份
+        if (sessions.length === 0) setProxyOn(false);
       })
       .catch((e: unknown) => {
         if (dead) return;
-        markLoadErr("待选比赛", e instanceof Error ? e.message : "加载失败");
+        const text = e instanceof Error ? e.message : "加载失败";
+        markLoadErr("本队名单", text);
+        markLoadErr("战术存档", text);
+        markLoadErr("待选比赛", text);
+        markLoadErr("代打授权", text);
+        setSelfPlayers(null);
+        setSelfTeamName(null);
+        setArchives([]);
         setSubMatches([]);
+        setProxySessions([]);
       });
     return () => {
       dead = true;
@@ -402,34 +391,7 @@ export default function Tactics() {
     };
   }, [user, pickedTid, proxyOn, markLoadErr]);
 
-  // 代打授权清单：登录后即拉（没授权返空数组）；有授权才出现身份切换器
-  useEffect(() => {
-    if (!user) {
-      setProxySessions(null);
-      setProxyOn(false);
-      setProxyMid(null);
-      return;
-    }
-    let dead = false;
-    api<{ sessions: ProxySessionDTO[] }>("/api/coach/proxy/sessions")
-      .then((b) => {
-        if (dead) return;
-        const list = b.sessions ?? [];
-        markLoadErr("代打授权", null);
-        setProxySessions(list);
-        setProxyMid((cur) => (cur != null && list.some((s) => s.matchId === cur) ? cur : list[0]?.matchId ?? null));
-        // 授权被撤销/比赛开打后清单会空掉，这时自动切回本队身份
-        if (list.length === 0) setProxyOn(false);
-      })
-      .catch((e: unknown) => {
-        if (dead) return;
-        markLoadErr("代打授权", e instanceof Error ? e.message : "加载失败");
-        setProxySessions([]);
-      });
-    return () => {
-      dead = true;
-    };
-  }, [user, markLoadErr]);
+  // 代打授权清单：已并入上面的 /api/coach/bootstrap（增量 39），不再单独发请求
 
   // 代打板：目标队名单 + 伤停停赛 + 该场已交阵容，一次整包取回（口径全由服务端定）
   useEffect(() => {

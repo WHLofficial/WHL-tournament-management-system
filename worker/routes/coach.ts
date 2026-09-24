@@ -68,24 +68,20 @@ app.post("/bind", async (c) => {
   }
 });
 
-// 我的球队（未绑定时 team 为 null）
-app.get("/me/team", async (c) => {
-  const user = c.get("user")!;
-  const tm = await boundTeamId(c.env, user.id);
-  if (!tm) return c.json({ team: null });
-
-  const team = await c.env.DB.prepare("SELECT id, name FROM team WHERE id = ?")
+// 本队名单（抽成函数供 /me/team 与教练首屏聚合 /bootstrap 共用）
+async function buildMeTeam(env: AppEnv["Bindings"], tm: number) {
+  const team = await env.DB.prepare("SELECT id, name FROM team WHERE id = ?")
     .bind(tm)
     .first<{ id: number; name: string }>();
   const [players, members, entries] = await Promise.all([
-    c.env.DB.prepare(
+    env.DB.prepare(
       `SELECT id, name, number FROM player WHERE team_id = ?
        ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id`
     )
       .bind(tm)
       .all<{ id: number; name: string; number: string | null }>(),
-    teamMembers(c.env, tm),
-    c.env.DB.prepare(
+    teamMembers(env, tm),
+    env.DB.prepare(
       `SELECT e.id, t.name AS tournament_name, t.status, g.name AS group_name, e.seed
        FROM entry e
        JOIN tournament t ON t.id = e.tournament_id
@@ -101,29 +97,35 @@ app.get("/me/team", async (c) => {
         seed: number;
       }>(),
   ]);
-  return c.json({
-    team: {
-      id: team?.id ?? tm,
-      name: team?.name ?? "",
-      players: players.results.map((p) => ({
-        id: p.id,
-        name: p.name,
-        number: p.number,
-      })),
-      members: members.map((m) => ({
-        id: m.userId,
-        name: m.name,
-        joinedAt: m.joinedAt,
-      })),
-      entries: entries.results.map((e) => ({
-        id: e.id,
-        tournamentName: e.tournament_name,
-        status: e.status,
-        groupName: e.group_name,
-        seed: e.seed,
-      })),
-    },
-  });
+  return {
+    id: team?.id ?? tm,
+    name: team?.name ?? "",
+    players: players.results.map((p) => ({
+      id: p.id,
+      name: p.name,
+      number: p.number,
+    })),
+    members: members.map((m) => ({
+      id: m.userId,
+      name: m.name,
+      joinedAt: m.joinedAt,
+    })),
+    entries: entries.results.map((e) => ({
+      id: e.id,
+      tournamentName: e.tournament_name,
+      status: e.status,
+      groupName: e.group_name,
+      seed: e.seed,
+    })),
+  };
+}
+
+// 我的球队（未绑定时 team 为 null）
+app.get("/me/team", async (c) => {
+  const user = c.get("user")!;
+  const tm = await boundTeamId(c.env, user.id);
+  if (!tm) return c.json({ team: null });
+  return c.json({ team: await buildMeTeam(c.env, tm) });
 });
 
 // 教练侧写入口约定：阵容提交是唯一的教练写赛事数据端点（一赛一队一份，重复提交覆盖）。
@@ -156,12 +158,10 @@ export const COACH_ME_MATCHES_SQL = `SELECT m.id, m.round, m.leg, m.note,
             OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
      ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`;
 
-// 本队待开的比赛：选一场提交阵容用。轮空场排除（没有对阵意义）
-app.get("/me/matches", async (c) => {
-  const user = c.get("user")!;
-  const teamId = await teamIdOf(c.env, user.id);
-  if (!teamId) return c.json({ matches: [] });
-  const rows = await c.env.DB.prepare(COACH_ME_MATCHES_SQL)
+// 本队待开的比赛（抽成函数供 /me/matches 与教练首屏聚合 /bootstrap 共用）
+async function buildMeMatches(db: D1Database, teamId: number) {
+  const rows = await db
+    .prepare(COACH_ME_MATCHES_SQL)
     .bind(teamId, teamId, teamId, teamId)
     .all<{
       id: number;
@@ -178,25 +178,31 @@ app.get("/me/matches", async (c) => {
       sub_id: number | null;
       grant_id: number | null;
     }>();
-  return c.json({
-    matches: (rows.results ?? []).map((r) => {
-      const side: "home" | "away" = r.home_tid === teamId ? "home" : "away";
-      return {
-        id: r.id,
-        tournamentId: r.tournament_id,
-        tournamentName: r.tournament_name,
-        stageName: r.stage_name,
-        stageKind: r.stage_kind,
-        round: r.round,
-        leg: r.leg,
-        side,
-        opponentName: side === "home" ? r.away_team_name : r.home_team_name,
-        submitted: r.sub_id !== null,
-        // 本场本队的阵容已授权别人代打：本队教练此时交不了，板上要说清缘由
-        proxyGranted: r.grant_id !== null,
-      };
-    }),
+  return (rows.results ?? []).map((r) => {
+    const side: "home" | "away" = r.home_tid === teamId ? "home" : "away";
+    return {
+      id: r.id,
+      tournamentId: r.tournament_id,
+      tournamentName: r.tournament_name,
+      stageName: r.stage_name,
+      stageKind: r.stage_kind,
+      round: r.round,
+      leg: r.leg,
+      side,
+      opponentName: side === "home" ? r.away_team_name : r.home_team_name,
+      submitted: r.sub_id !== null,
+      // 本场本队的阵容已授权别人代打：本队教练此时交不了，板上要说清缘由
+      proxyGranted: r.grant_id !== null,
+    };
   });
+}
+
+// 本队待开的比赛：选一场提交阵容用。轮空场排除（没有对阵意义）
+app.get("/me/matches", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env, user.id);
+  if (!teamId) return c.json({ matches: [] });
+  return c.json({ matches: await buildMeMatches(c.env.DB, teamId) });
 });
 
 // 某队在某赛事下的停赛清单（口径与录入端一致）。战术板的「本队状态」与代打板都要用，
@@ -396,6 +402,25 @@ app.get("/proxy/sessions", async (c) => {
   return c.json({ sessions });
 });
 
+// 教练首屏聚合端点（增量 39）：战术板首屏原本 4 个 effect 各发一次请求
+// （本队名单 / 战术存档 / 待选比赛 / 代打授权），四段的队伍归属与账号名取自同一组 auth 查询，
+// 合成一个端点后这几跳只算一次，前端首屏请求从 4 降到 1。
+// 段间口径与 /me/team、/tactics、/me/matches、/proxy/sessions 完全一致（共用同一批构造器，不重抄）。
+app.get("/bootstrap", async (c) => {
+  const user = c.get("user")!;
+  const [tm, acct] = await Promise.all([
+    boundTeamId(c.env, user.id),
+    boundAccounts(c.env).then(accountNames),
+  ]);
+  const [team, tactics, matches, sessions] = await Promise.all([
+    tm ? buildMeTeam(c.env, tm) : Promise.resolve(null),
+    tm ? buildTactics(c.env.DB, tm) : Promise.resolve([]),
+    tm ? buildMeMatches(c.env.DB, tm) : Promise.resolve([]),
+    listGranteeSessions(c.env.DB, user.id, acct),
+  ]);
+  return c.json({ team, tactics, matches, sessions });
+});
+
 // 代打板取数：目标队的名单、伤停、停赛与已提交阵容一次取全（口径与 /me/team、/me/status 完全一致，
 // 只把 teamId 换成被代打的那支队，这样战术板的校验与提示无需另写一套）
 app.get("/proxy/:mid/board", async (c) => {
@@ -531,14 +556,13 @@ function parseRoster(raw: string): Record<string, string> {
   }
 }
 
-app.get("/tactics", async (c) => {
-  const user = c.get("user")!;
-  const teamId = await teamIdOf(c.env, user.id);
-  if (!teamId) return c.json({ tactics: [] });
-  const rows = await c.env.DB.prepare(
-    `SELECT id, code, form, buildup, line_height, note, roster_json, assign_json, created_at
+// 战术存档列表（抽成函数供 /tactics 与教练首屏聚合 /bootstrap 共用）
+async function buildTactics(db: D1Database, teamId: number): Promise<TacticArchiveDTO[]> {
+  const rows = await db
+    .prepare(
+      `SELECT id, code, form, buildup, line_height, note, roster_json, assign_json, created_at
      FROM tactic WHERE team_id = ? ORDER BY created_at DESC, id DESC LIMIT ${TACTIC_CAP}`,
-  )
+    )
     .bind(teamId)
     .all<{
       id: number;
@@ -551,7 +575,7 @@ app.get("/tactics", async (c) => {
       assign_json: string;
       created_at: string;
     }>();
-  const tactics: TacticArchiveDTO[] = rows.results.map((r) => ({
+  return rows.results.map((r) => ({
     id: r.id,
     code: r.code,
     form: r.form,
@@ -562,7 +586,13 @@ app.get("/tactics", async (c) => {
     assign: parseAssignJson(r.assign_json),
     createdAt: r.created_at,
   }));
-  return c.json({ tactics });
+}
+
+app.get("/tactics", async (c) => {
+  const user = c.get("user")!;
+  const teamId = await teamIdOf(c.env, user.id);
+  if (!teamId) return c.json({ tactics: [] });
+  return c.json({ tactics: await buildTactics(c.env.DB, teamId) });
 });
 
 app.post("/tactics", async (c) => {
