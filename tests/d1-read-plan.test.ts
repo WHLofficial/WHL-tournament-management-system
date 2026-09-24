@@ -7,14 +7,15 @@ import { describe, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { createTestDb, sqlAll } from "./d1";
 import { FINISHED_COLS, FINISHED_FROM_ROUND } from "../worker/lib/context";
-import { TEAM_MISS_CANDIDATES_SQL, ACTIVE_INJURY_PLAYER_IDS_SQL } from "../worker/lib/injury";
+import { TEAM_MISS_CANDIDATES_SQL, ACTIVE_INJURY_PLAYER_IDS_SQL, TOURNAMENT_TEAM_INJURIES_SQL } from "../worker/lib/injury";
 import { COACH_DEFAULT_TOURNAMENT_SQL, COACH_ME_MATCHES_SQL } from "../worker/routes/coach";
+import { TOURNAMENT_TEAM_PLAYERS_SQL } from "../worker/routes/admin/tournaments";
 import {
   H2H_FORM_SQL,
   H2H_MEETINGS_SQL,
   TEAM_TACTICS_MATCHES_SQL,
 } from "../worker/routes/public";
-import { filterRecapByCutoff } from "../worker/lib/feedNews";
+import { filterRecapByCutoff, WEEKLY_LATEST_FINISHED_SQL } from "../worker/lib/feedNews";
 
 // EXPLAIN QUERY PLAN 不绑参数也能跑，把每个计划步骤的 detail 拼成一行方便断言
 function planOf(sqlite: DatabaseSync, sql: string): string {
@@ -177,5 +178,33 @@ describe("增量 39：端点合并与剩余 OR 改写的执行计划回归", () 
     const plan = planOf(sqlite, ACTIVE_INJURY_PLAYER_IDS_SQL);
     expect(plan).not.toMatch(/SCAN im\b/);
     expect(plan).toContain("injury_miss");
+  });
+});
+
+describe("增量 40：管理端批量端点与周报探针的执行计划回归", () => {
+  const { sqlite } = createTestDb();
+
+  it("赛事作用域批量名单：参赛队子查询驱动，不许扫 player 全表", () => {
+    // 逐队版是 `WHERE team_id = ?` 走 idx_player_team；批量版必须是同一条索引 + entry 子查询，
+    // 若退化成 SCAN player 就是全表（生产 player 570 行，且随球队数线性涨）。
+    const plan = planOf(sqlite, TOURNAMENT_TEAM_PLAYERS_SQL);
+    expect(plan).not.toMatch(/SCAN p\b/);
+    expect(plan).toContain("idx_player_team");
+    // entry 侧走 UNIQUE(tournament_id, team_id) 的覆盖索引（比 idx_entry_tournament 更省一次回表）
+    expect(plan).toMatch(/idx_entry_tournament|sqlite_autoindex_entry_1/);
+  });
+
+  it("赛事作用域批量伤停：injury 按 idx_injury_team 取，不许扫 injury 全表", () => {
+    const plan = planOf(sqlite, TOURNAMENT_TEAM_INJURIES_SQL);
+    expect(plan).not.toMatch(/SCAN i\b/);
+    expect(plan).toContain("idx_injury_team");
+  });
+
+  it("周报回退探针：按 idx_match_status 反向扫且能提前停，不许扫 match 全表", () => {
+    // 探针是 `ORDER BY m.finished_at DESC LIMIT 1`，靠 (status, finished_at DESC) 索引的反向扫
+    // 才能在第一场完赛处停下；退化成正向扫或临时排序就把「一次探针」变成「全表一遍」。
+    const plan = planOf(sqlite, WEEKLY_LATEST_FINISHED_SQL);
+    expect(plan).not.toMatch(/SCAN m\b/);
+    expect(plan).toContain("idx_match_status");
   });
 });
