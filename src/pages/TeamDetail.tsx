@@ -25,7 +25,7 @@ interface MemberRow {
   joinedAt: string;
 }
 
-// /api/admin/teams/:id/context 的响应（增量 40）：把原来 4 个请求合成一次。
+// /api/admin/teams/:id/context 的响应（v5.0.3）：把原来 4 个请求合成一次。
 // 字段名沿用四个原端点的口径，服务端保证与逐端点取回的结果一致。
 interface TeamContext extends TeamDetail {
   codes: AuthCodeRow[];
@@ -51,7 +51,7 @@ export function TeamDetailPage() {
 
   async function reload() {
     try {
-      // 一次取齐（增量 40）：原来先取 /:id、再并行取 auth-codes/members/injuries，
+      // 一次取齐（v5.0.3）：原来先取 /:id、再并行取 auth-codes/members/injuries，
       // 共 4 请求 2 波往返；而本页生成认证码/解绑/改名/传删队徽/伤停保存都会重发这一组。
       const d = await api<TeamContext>(`/api/admin/teams/${teamId}/context`);
       setData(d);
@@ -144,7 +144,7 @@ export function TeamDetailPage() {
     });
   }
 
-  // 增量 33：名单改为只读（真源在俱乐部平台，由定时同步拉进来），
+  // v4.0.0：名单改为只读（真源在俱乐部平台，由定时同步拉进来），
   // 录入 / 批量导入 / 改名改号 / 删除四个写入口已从后端一并下线。
 
   return (

@@ -121,7 +121,7 @@ export function Home() {
 
   const load = useCallback(async () => {
     try {
-      // 聚合端点（增量 39）：首屏 5 段合成 1 个请求，reactions 由服务端从 feed ids 现算，
+      // 聚合端点（v5.0.2）：首屏 5 段合成 1 个请求，reactions 由服务端从 feed ids 现算，
       // 省掉原先那次串行往返。/live 保持独立（60s 实时性），故一轮共 2 个请求。
       const [h, l] = await Promise.all([
         api<{

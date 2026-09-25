@@ -141,7 +141,7 @@ type PStat = {
   inj: { injury: string | null; rest: number; pct: number } | null; // 伤停中：剩余缺阵场 / 恢复进度
 };
 
-// 教练首屏聚合端点 /api/coach/bootstrap 的响应（增量 39）。
+// 教练首屏聚合端点 /api/coach/bootstrap 的响应（v5.0.2）。
 // 只声明本页用到的字段：team 只要 name/players，其余段沿用既有 DTO。
 type CoachBootstrap = {
   team: { name: string; players: TeamPlayer[] } | null;
@@ -238,7 +238,7 @@ export default function Tactics() {
   useEffect(() => {
     if (scope === wantScope) saveLS(dk.assign, assign);
   }, [dk.assign, scope, wantScope, assign]);
-  // 教练首屏取数（增量 39）：本队名单 / 战术存档 / 待选比赛 / 代打授权 四段合成一次请求
+  // 教练首屏取数（v5.0.2）：本队名单 / 战术存档 / 待选比赛 / 代打授权 四段合成一次请求
   // （原来 4 个 effect 各发一次），四段的队伍归属与账号名在服务端只算一次。
   // 这四段本就是同一次「教练首屏」加载，故任一段失败时四段一起报错，不再分段标错。
   useEffect(() => {
@@ -391,7 +391,7 @@ export default function Tactics() {
     };
   }, [user, pickedTid, proxyOn, markLoadErr]);
 
-  // 代打授权清单：已并入上面的 /api/coach/bootstrap（增量 39），不再单独发请求
+  // 代打授权清单：已并入上面的 /api/coach/bootstrap（v5.0.2），不再单独发请求
 
   // 代打板：目标队名单 + 伤停停赛 + 该场已交阵容，一次整包取回（口径全由服务端定）
   useEffect(() => {

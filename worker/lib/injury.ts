@@ -74,7 +74,7 @@ export async function listTeamInjuries(
   return assemble(injuries.results ?? [], misses.results ?? [], (r) => `${r.from_tournament_name} · 第${r.from_round}轮`);
 }
 
-// 赛事作用域：全部参赛队的登记，按 team_id 分组（增量 40）。
+// 赛事作用域：全部参赛队的登记，按 team_id 分组（v5.0.3）。
 // 管理端比赛 tab 原来逐队打一次 ?teamId=，12~20 队就是 12~20 次请求；这里一次拉齐。
 // SQL 与 listTeamInjuries 同形，只把「单队等值」换成「参赛队子查询」，DTO 形状保持一致。
 export const TOURNAMENT_TEAM_INJURIES_SQL = `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
@@ -321,7 +321,7 @@ export async function listActiveInjuries(
 
 // 伤病榜「伤停中」徽标用：全平台仍在伤停中的球员 id 集合（跨赛事，球员在哪儿伤的都算）。
 // 调用方只要一个 Set，所以别走 listActiveInjuries——那条路要 7 表 join 全 injury + 全 injury_miss 扫描
-// （增量 39 实测 436 行/次）只为 map 出 player_id。这条 EXISTS 半连接只回 id，
+// （v5.0.2 实测 436 行/次）只为 map 出 player_id。这条 EXISTS 半连接只回 id，
 // 走 injury_miss 的唯一索引 + match 主键点查，实测 106 行。
 // 口径等价：missesAll 也是 INNER JOIN match（match_id 为空的缺阵记录同样不计），
 // 「伤停中」= 缺阵场次里存在 status != 'finished' 的。
@@ -561,7 +561,7 @@ function missesForTeams(db: D1Database, teamIds: number[]): Promise<D1Result<Mis
     .all<MissRow>();
 }
 
-// 赛事作用域版：参赛队由 entry 子查询给出（增量 40，供 listTournamentTeamInjuries 用）
+// 赛事作用域版：参赛队由 entry 子查询给出（v5.0.3，供 listTournamentTeamInjuries 用）
 function missesForTournament(db: D1Database, tournamentId: number): Promise<D1Result<MissRow>> {
   return db
     .prepare(

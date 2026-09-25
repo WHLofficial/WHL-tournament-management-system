@@ -18,7 +18,7 @@
       "database_name": "whl",
       "database_id": "ec3cc695-70bc-47ab-a454-5ca62ec22dd6"
     },
-    // 增量 7：认证中心库只读绑定（球队目录/绑定关系派生读）。写路径走 HMAC 机器通道
+    // v1.0.0：认证中心库只读绑定（球队目录/绑定关系派生读）。写路径走 HMAC 机器通道
     // （worker/lib/authClient.ts），密钥用 secret：npx wrangler secret put AUTH_BIND_SECRET
     // （与 auth 服务的 BIND_SECRET 同值；不配则派生读为空、绑定端点报「认证中心未配置」）
     {
@@ -40,18 +40,18 @@
       "bucket_name": "whl-media"
     }
   ],
-  // 统一认证中心（生产）：AUTH_MODE="oidc" 显式开启 RP 模式（增量 9 显式化，登录跳 auth /authorize，
+  // 统一认证中心（生产）：AUTH_MODE="oidc" 显式开启 RP 模式（v3.0.0 显式化，登录跳 auth /authorize，
   // 会话存本地 oidc_session 表 + __Host-tour_session cookie）；撤掉 AUTH_MODE 重新部署即回兼容模式。
   // 注意与上一段的 COOKIE_DOMAIN 不同：这些值是有意写进配置的（部署可复现、可回滚），不是 secret。
   "vars": {
     "AUTH_MODE": "oidc",
     "OIDC_ISSUER": "https://auth.whleague.win",
     "OIDC_CLIENT_ID": "tour",
-    // 增量 33：俱乐部平台基址。名册同步（cron + POST /api/admin/sync-rosters）从这里拉 /api/squads；
+    // v4.0.0：俱乐部平台基址。名册同步（cron + POST /api/admin/sync-rosters）从这里拉 /api/squads；
     // 撤掉这一行 = 同步整体跳过（球员表随即退回「手工录入」的旧行为，可作回滚开关）
     "CLUB_API_BASE": "https://club.whleague.win"
   },
-  // 增量 33：每小时拉一次俱乐部平台一线队名册。写库只在真有差异时发生，稳态下这个 cron 是纯读；
+  // v4.0.0：每小时拉一次俱乐部平台一线队名册。写库只在真有差异时发生，稳态下这个 cron 是纯读；
   // 立即同步不等下一小时，用 POST /api/admin/sync-rosters（先加 ?dryRun=1 核对预期）。
   "triggers": {
     "crons": ["0 * * * *"]

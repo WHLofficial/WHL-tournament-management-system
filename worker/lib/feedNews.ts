@@ -123,7 +123,7 @@ async function weekMatches(db: D1Database, startISO: string, endISO: string): Pr
 
 const fmtMD = (iso: string): string => iso.slice(5, 7) + "." + iso.slice(8, 10);
 
-// 回退探针（增量 40）：问「这个窗口里最近一场完赛是哪天」，取它所在周即可，
+// 回退探针（v5.0.3）：问「这个窗口里最近一场完赛是哪天」，取它所在周即可，
 // 不必逐周试。走 idx_match_status(status, finished_at DESC) 反向扫且 LIMIT 1 可提前停。
 // 过滤条件与 weekMatches 逐条对齐（含 entry→team 的 INNER JOIN）——否则队伍待定的场次
 // 会被探针选中、却取不出比赛，回退周就空了。
@@ -159,7 +159,7 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
   } else {
     list = await weekMatches(db, weekKey(start), weekKey(new Date(start.getTime() + WEEK_MS)));
     if (list.length === 0) {
-      // 一次探针定周 + 一次取数（增量 40）：原来是逐周串行试，最多 8 次往返。
+      // 一次探针定周 + 一次取数（v5.0.3）：原来是逐周串行试，最多 8 次往返。
       // 探针窗口取回退区间 [nowMonday-8w, nowMonday)，与逐周试的 i=1..8 完全一致；
       // 它命中的那场所在周，就是区间内最近的有比赛周。
       const probeStart = new Date(nowMonday.getTime() - 8 * WEEK_MS);

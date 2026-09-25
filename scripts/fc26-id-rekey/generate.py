@@ -1,4 +1,4 @@
-# FC26 ID 对齐重键 SQL 生成器（增量 8 数据底座，2026-09-16）
+# FC26 ID 对齐重键 SQL 生成器（v2.0.0 数据底座，2026-09-16）
 # 输入：players-dump.json（tour player 生产快照）、player-match.json（名字匹配产物）、teams-map.json（tour team → EA FC 队 ID）
 # 输出：rekey-fc26.sql（两阶段重键，PRAGMA defer_foreign_keys 靠 D1 单批事务）+ multi-report.md（歧义清单，管理组复核）
 # 口径：matched 球员 player.id 换 EA 球员 ID（fc_id 同键）；multi 球员暂留本地 id 待管理组裁决后补迁。

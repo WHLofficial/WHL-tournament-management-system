@@ -1,4 +1,4 @@
-// 增量 40：管理端逐队扇出收口 —— 三个新聚合端点。
+// v5.0.3：管理端逐队扇出收口 —— 三个新聚合端点。
 //
 // 钉两件事：
 //   1. 新端点的每一段与它取代的逐 id 原端点**逐字一致**（共用同一批构造器，防日后只改一边而漂移）；
@@ -105,7 +105,7 @@ const json = async <T>(env: Record<string, unknown>, path: string): Promise<T> =
   return (await res.json()) as T;
 };
 
-describe("赛事作用域批量端点（增量 40）", () => {
+describe("赛事作用域批量端点（v5.0.3）", () => {
   it("team-players：只回本赛事参赛队的名单，且与逐队 /api/admin/teams/:id 逐字一致", async () => {
     const { env } = freshEnv();
     const b = await json<{ playersByTeam: Record<string, { id: number; name: string; number: string | null }[]> }>(
@@ -155,7 +155,7 @@ describe("赛事作用域批量端点（增量 40）", () => {
   });
 });
 
-describe("球队详情一次取齐 /api/admin/teams/:id/context（增量 40）", () => {
+describe("球队详情一次取齐 /api/admin/teams/:id/context（v5.0.3）", () => {
   it("五段与四个原端点逐字一致（team/players/codes/members/injuries）", async () => {
     const { env } = freshEnv();
     const ctx = await json<{

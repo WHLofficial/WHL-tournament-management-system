@@ -27,7 +27,7 @@ import type {
 } from "../../shared/types";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
-// 增量 7：绑定真源在 auth 库（team_binding），本仓只读派生（AUTH_DB）。
+// v1.0.0：绑定真源在 auth 库（team_binding），本仓只读派生（AUTH_DB）。
 const app = new Hono<AppEnv>();
 
 // 教练侧全部端点旧判定 = 仅登录 + 未锁定（观众号也持 tour.team.bind，锁定在 /bind 内拦截）
@@ -53,7 +53,7 @@ app.post("/bind", async (c) => {
     return c.json({ message: "认证码格式不对，应为 8 位字母数字" }, 400);
   }
 
-  // 增量 7：绑定真源在 auth（team_binding），烧码经机器通道写认证中心；
+  // v1.0.0：绑定真源在 auth（team_binding），烧码经机器通道写认证中心；
   // 一次性码、一账号一队并发闸、审计全在 auth 单事务内完成。
   try {
     const { teamId } = await authBindTeam(c.env, { code, accountId: user.id, via: "tour" });
@@ -402,7 +402,7 @@ app.get("/proxy/sessions", async (c) => {
   return c.json({ sessions });
 });
 
-// 教练首屏聚合端点（增量 39）：战术板首屏原本 4 个 effect 各发一次请求
+// 教练首屏聚合端点（v5.0.2）：战术板首屏原本 4 个 effect 各发一次请求
 // （本队名单 / 战术存档 / 待选比赛 / 代打授权），四段的队伍归属与账号名取自同一组 auth 查询，
 // 合成一个端点后这几跳只算一次，前端首屏请求从 4 降到 1。
 // 段间口径与 /me/team、/tactics、/me/matches、/proxy/sessions 完全一致（共用同一批构造器，不重抄）。

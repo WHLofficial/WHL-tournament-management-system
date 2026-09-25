@@ -1,7 +1,7 @@
 // 账号投影（本仓 user 表 = 认证中心 account 的精简投影）。
 //
 // 迁移步骤③收口（auth P0-10）把账号真源搬到 auth 库后，本仓 user 表就再无写入方
-// （见 routes/admin/accounts.ts 顶部注释、增量 9D 提交）。但外键还挂在它上面——生产库共
+// （见 routes/admin/accounts.ts 顶部注释、v3.0.0 提交）。但外键还挂在它上面——生产库共
 // 14 列引用 user(id)：tactic.created_by、tactic_submission.created_by、match_event.created_by、
 // audit_log.actor_user_id、tournament.created_by、announcement.created_by、motm_vote.user_id、
 // injury.created_by、team.created_by、signup_code.created_by、auth_code.used_by/created_by、

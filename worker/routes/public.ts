@@ -667,7 +667,7 @@ const PAIR_COLS = `
     he.team_id AS h_tid, ht.name AS h_name, ht.logo_key AS h_logo,
     ae.team_id AS a_tid, at.name AS a_name, at.logo_key AS a_logo`;
 
-// 增量 39：`he.team_id = ? OR ae.team_id = ?` 改成 match 自身列上的 IN 子查询。
+// v5.0.2：`he.team_id = ? OR ae.team_id = ?` 改成 match 自身列上的 IN 子查询。
 // 原式 OR 作用在 JOIN 出来的列上，规划器用不了 match 上的任何索引 ⇒ 全表扫 match
 // （h2h 单次冷路径实测 1,102 行，见 scripts/d1-read-audit/README.md §12）。
 // 两个 IS NOT NULL 守卫是必需的：PAIR_FROM 用 INNER JOIN entry，本来就把队伍待定的行丢掉；
@@ -867,7 +867,7 @@ app.get("/tournaments/:id/matches/:mid/h2h", pubCache(60), async (c) => {
   return c.json(dto);
 });
 
-// 某队最近场次（用于阵容沿用链）：同款 OR 改 IN 子查询（增量 39）。
+// 某队最近场次（用于阵容沿用链）：同款 OR 改 IN 子查询（v5.0.2）。
 export const TEAM_TACTICS_MATCHES_SQL = `SELECT m.id
        FROM match m
        JOIN stage s ON s.id = m.stage_id

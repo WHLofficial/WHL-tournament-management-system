@@ -17,7 +17,7 @@ export function auditStmt(
     .bind(actorUserId, action, targetId, JSON.stringify(detail ?? null));
 }
 
-// 账号域审计（增量 8）：账号真源已收口 auth，动作本身由 auth 记账（含 IP）。
+// 账号域审计（v2.0.0）：账号真源已收口 auth，动作本身由 auth 记账（含 IP）。
 // 本仓这份是「谁在管理台按了哪个按钮」的本地账，target_type 用 'account'，
 // detail 带上被操作对象的名字（数字 id 在 auth 库里才是真身，本仓只存引用）。
 export function accountAuditStmt(

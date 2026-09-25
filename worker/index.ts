@@ -17,7 +17,7 @@ const app = new Hono<AppEnv>();
 
 // 公开读路由（公开接口 + 媒体 + 快讯表态读/写，均与登录态无关）不读登录态：
 // 跳过会话检查，登录用户每请求省一次 KV+D1 往返
-// /api/internal/ 是增量 37 的机器通道（HMAC 验签，调用方没有会话 cookie），同样跳过
+// /api/internal/ 是 v5.0.0 的机器通道（HMAC 验签，调用方没有会话 cookie），同样跳过
 const PUBLIC_PATHS = ["/api/public/", "/api/media/", "/api/interact/reactions", "/api/internal/"];
 app.use("/api/*", (c, next) =>
   PUBLIC_PATHS.some((p) => c.req.path.startsWith(p)) ? next() : attachUser(c, next)
@@ -35,13 +35,13 @@ app.route("/api/public", portalRoutes); // #13 头版门户：公告/快讯/周�
 app.route("/api/interact", interactRoutes); // #13 互动层：MOTM（需登录）+ 快讯表态（匿名）
 app.route("/api/coach", coachRoutes);
 app.route("/api/media", mediaRoutes);
-app.route("/api/internal", internalRoutes); // 增量 37：机器间通道（俱乐部平台推建队过来）
+app.route("/api/internal", internalRoutes); // v5.0.0：机器间通道（俱乐部平台推建队过来）
 
 // run_worker_first 只把 /api/* 送进 Worker，其余路径由静态资产处理
 // （未命中按 SPA 规则回退 index.html），这里只兜底 API 的未知路径。
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
-// 未捕获异常的兜底（增量 36）。Hono 默认把它压成 text/plain 的 "Internal Server Error"，
+// 未捕获异常的兜底（v4.1.0）。Hono 默认把它压成 text/plain 的 "Internal Server Error"，
 // 于是前端 src/api.ts 的 res.json() 解析失败、只剩一句「请求失败（500）」——报错无明细，
 // 用户报过来也查不出是哪一步炸的（2026-09-23 那次只能靠反查 D1 才定位到外键）。
 // 这里统一成与业务错误同形（error 机器码 + message 中文），并把方法/路径/堆栈写进日志。

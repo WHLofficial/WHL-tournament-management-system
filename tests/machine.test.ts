@@ -1,4 +1,4 @@
-// 增量 7 球队绑定改造测试：烧码/发码/解绑走伪认证中心机器端点（stub 全局 fetch + HMAC 验签），
+// v1.0.0 球队绑定改造测试：烧码/发码/解绑走伪认证中心机器端点（stub 全局 fetch + HMAC 验签），
 // 派生读（teamId/members/codes/账号映射）走 AUTH_DB 内存库（手工建 auth 侧最小表面）。
 // 用兼容模式会话驱动路由，重点钉死：错误映射（400/409/502）、HMAC 契约、本地不再读写 auth_code/team_member。
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -117,7 +117,7 @@ afterEach(() => {
   captures.length = 0;
 });
 
-describe("增量 7：球队绑定真源上收认证中心（tour 侧）", () => {
+describe("v1.0.0：球队绑定真源上收认证中心（tour 侧）", () => {
   it("烧码经机器通道写 auth：HMAC 契约正确，错误逐类映射", async () => {
     const { env } = freshEnv();
 

@@ -68,11 +68,11 @@
 > 2026-09-24 更正（Workers 请求行）：原估算按「每次轮询 1 个请求」算，但首页一轮就发 **6 个请求**
 > （`src/pages/Home.tsx:121-143` 的 `Promise.all`：tournaments / upcoming / live / announcement / feed
 > + reactions），所以原口径低估约 6 倍。按 30s 轮询算，30 人 × 4 小时 = 14,400 轮 × 6 = **8.6 万请求/天**，
-> 余量只剩 1.16 倍——这比 D1 读更早撞墙。增量 38 步骤 13 把三处公开页轮询统一降到 60s（`src/lib/polling.ts`
+> 余量只剩 1.16 倍——这比 D1 读更早撞墙。v5.0.1 步骤 13 把三处公开页轮询统一降到 60s（`src/lib/polling.ts`
 > 的 `POLL_MS`），同样场景降到 4.3 万、余量 2.3 倍。要再降只有两条路：抬服务端 TTL，或把首页的 6 个
 > 请求合并成一个聚合端点。
 
-### 3.1 D1 读消耗规约（增量 38 起）
+### 3.1 D1 读消耗规约（v5.0.1 起）
 
 **计费口径**：D1 按**扫描行数**计费，索引扫描同样计入；免费档 500 万行读/日、10 万行写/日，UTC 零点归零；
 额度**按账号**分配（本账号 `whl`/`whl-club`/`whl-auth`/`whl-guess` 四库共享同一个池子）。
@@ -89,7 +89,7 @@
    （同表同 `LIMIT 4`：按索引序 4 行 vs 按未索引列排序 136 行，差 136 倍；`LIMIT` 本身不省读）。
 2. `OR` 不要作用在 JOIN 出来的列上（如 `he.team_id = ? OR ae.team_id = ?`）。规划器无法用索引，
    退化为全表 × 每张 join 表。改写为对驱动表自身列做 `IN (SELECT ...)` 可省约 70–90%
-   （增量 39 实测：伤停候选 −88%、教练待打赛 −66%、代打战术 −58%）。
+   （v5.0.2 实测：伤停候选 −88%、教练待打赛 −66%、代打战术 −58%）。
    **但先看它是否在驱动扫描**：若外层已有 `WHERE m.id IN (...)`（rowid 列表），`OR` 只是在已取回的行上求值，
    改写是无效功（`worker/routes/admin/injuries.ts` 的两处即属此类，实测否决）。
    改用 `IN (SELECT id FROM entry WHERE team_id = ?)` 时，原本靠 `JOIN entry`（INNER）隐式完成的
@@ -111,11 +111,11 @@
 8. **同一资源集合的逐项请求必须给批量形参**。前端对一个集合的每个成员各发一次请求（典型是
    `Promise.all(ids.map((id) => api(`…/${id}`)))`）时，服务端必须提供集合形参版本
    （`?ids=` 或赛事作用域路由），前端改一次请求。判据同上：**省的是请求数与往返，不是行读**
-   （增量 40 实测：批量伤停/名单的行读与 N × 单队相当），但请求配额（10 万/日）比行读更早撞墙。
+   （v5.0.3 实测：批量伤停/名单的行读与 N × 单队相当），但请求配额（10 万/日）比行读更早撞墙。
    实现上优先复用已有的「收数组」的下层函数（如 `missesForTeams(db, teamIds)`），
    避免新写一份 SQL；新 SQL 的排序表达式要与单成员版本**逐字一致**。
    注意区分两种「逐项」：**按用户操作**触发的逐项请求（点一下发一次）不算问题；
-   **挂载 / 定时 / 打开面板**触发的逐项扇出才是（增量 40 的三处都在后者）。
+   **挂载 / 定时 / 打开面板**触发的逐项扇出才是（v5.0.3 的三处都在后者）。
 
 **缓存侧**：TTL 与单价要一起看。`pubCache` 只缓存 2xx，多 isolate 共享、无项目级 purge；
 feed 另有 KV SWR（过期先回旧值、`waitUntil` 后台重算）。公开面 TTL 的**唯一作用**是把重算频率钉在窗口数上。
@@ -188,11 +188,11 @@ standing     积分榜（纯重算结果，可随时全量重建）
 user         账号
   id, name, email?, password_hash,   -- PBKDF2
   role                 -- guest 不落库（未登录即 guest）| coach | admin（录入员）| superadmin
-  -- 增量 8 起：本表账号属性只读。账号真源 2026-09-14 已收口 auth
+  -- v2.0.0 起：本表账号属性只读。账号真源 2026-09-14 已收口 auth
   -- （account/credential/user_role），管理台的角色改动、解锁、重置密码、注册码、
   -- 开放注册开关全部改调 auth 管理端点（worker/lib/authAdmin.ts，X-Sign HMAC，
   -- 12 条 /api/admin/*）；本表的 role/locked/password_hash 不再被应用写入
-  -- 增量 36 起：上面「不再被写入」不再成立——本表改由账号投影补齐行。
+  -- v4.1.0 起：上面「不再被写入」不再成立——本表改由账号投影补齐行。
   -- 登录回调把 auth account 的 id/name/locked/created_at 带进来（worker/lib/accountMirror.ts，
   -- 与建会话同批提交），cron 每小时对账再补没登录过的账号、同步改名。要投影的理由是外键：
   -- 本库 14 列指向 user(id)（tactic.created_by、match_event.created_by、audit_log.actor_user_id…），
@@ -204,7 +204,7 @@ team         球队（跨赛事复用的实体）
 
 player       球员（只挂队伍，不挂账号）
   id, team_id →team, name, number
-  -- 增量 33 起：本表是**只读镜像**，真源在俱乐部平台（club.whleague.win）。
+  -- v4.0.0 起：本表是**只读镜像**，真源在俱乐部平台（club.whleague.win）。
   -- name（FC26 存档派生的显示名）与 number（球衣号）都由 clubRoster 拉取同步写入，
   -- 本仓不再有任何球员写端点；player.id 就是 FC26 playerid（两库早前一起 rekey 过），
   -- 所以对账按 id 认人，绝不按姓名匹配（tour 存完整人名、平台存官方缩写名，写法会不同）
@@ -215,12 +215,12 @@ auth_code    队伍认证码（谈判插件同款规则）
   expires_at,          -- 默认 24h，可指定
   used_by? →user,      -- 用后作废
   created_by →user
-  -- 增量 7 起休眠：码真源上收认证中心 team_bind_code（tour/club 双入口共表）
+  -- v1.0.0 起休眠：码真源上收认证中心 team_bind_code（tour/club 双入口共表）
 
 team_member  绑定关系（教练 = 在这张表里）
   id, team_id →team, user_id →user
   -- 应用层约束：一账号一队；同队多人可绑；仅超管可解绑
-  -- 增量 7 起休眠：绑定真源上收认证中心（auth 库 team/team_bind_code/team_binding），
+  -- v1.0.0 起休眠：绑定真源上收认证中心（auth 库 team/team_bind_code/team_binding），
   -- 本表存量随 scripts/migrate-team-bindings.mjs 迁移后不再读写；发码/烧码/解绑
   -- 经 worker/lib/authClient.ts 走 auth 机器 API（X-Sign HMAC），派生读走只读 AUTH_DB
 
@@ -228,7 +228,7 @@ signup_code  注册码（注册验证：无码不能注册）
   id, code_hash, expires_at?,
   max_uses, used_count,        -- 一次 / 多次有效
   created_by →user             -- 仅超管可生成
-  -- 增量 8 起休眠：注册码真源上收认证中心 signup_code（auth 库主键是 code_hash，
+  -- v2.0.0 起休眠：注册码真源上收认证中心 signup_code（auth 库主键是 code_hash，
   -- 无自增 id；管理台发码/列表改调 auth，列表只回哈希前 12 位指纹，明码不可回查）
 ```
 
@@ -239,10 +239,10 @@ identity      id, user_id →user, provider, provider_uid
               -- 外部身份留位；聚合登录已确定不接，但表在，将来 OAuth 不动账号体系
 organization  id, name
               -- 多组织预留：org→tournament→stage→match 归属链第一天就通
-              -- 增量 8 起：开放注册开关（allow_open_reg）真源上收 auth 的 organization 表，
+              -- v2.0.0 起：开放注册开关（allow_open_reg）真源上收 auth 的 organization 表，
               -- 管理台读写改调 auth；本表这一列不再被应用读写
 audit_log     (P1) id, actor_user_id, action, target, detail_json, created_at
-              -- 改分留痕、解绑留痕；增量 8 起管理动作也记一份（target_type='account'，
+              -- 改分留痕、解绑留痕；v2.0.0 起管理动作也记一份（target_type='account'，
               -- 与 auth 侧审计双写：auth 记业务事实，本表记「哪个管理员干的」）
 match_event   (P0) id, match_id →match, player_id? →player, type, minute?
               -- 进球/红黄牌：live 实时录入 + 赛后补录；进球驱动实时比分；支撑射手榜与停赛
@@ -253,7 +253,7 @@ match_event   (P0) id, match_id →match, player_id? →player, type, minute?
 - 加多组织：`organization` 表 + 各实体的 `org_id` 已在，把"全局 admin"升级为"org 级 admin"只动权限判断层。
 - 加赛制：`match` 表对赛制无感知（见第 5 节）。
 
-### 4.4 名册同步（增量 33 起：球员表是俱乐部平台的只读镜像）
+### 4.4 名册同步（v4.0.0 起：球员表是俱乐部平台的只读镜像）
 
 **真源归位**：球员的姓名与球衣号真源在俱乐部平台（`club.whleague.win`）——签约、解约、定号、改号都在那边操作。本仓的 `player` 表降级为镜像，只由同步写入。原先本仓的四个球员写端点（`POST /:id/players`、`POST /:id/players/bulk`、`PATCH /:id/players/:pid`、`DELETE /:id/players/:pid`）已删除，管理端球队详情页的名单区改为只读。队级端点（建队 / 批量建队 / 改名 / 删队 / 队徽）不受影响。
 
@@ -278,11 +278,11 @@ match_event   (P0) id, match_id →match, player_id? →player, type, minute?
 
 **已知后果（评审查出，本轮不改）**：自动删除球员后，`tactic.roster_json` / `tactic_submission.assign_json` 里会留下悬挂的球员 id（JSON 文本无外键），教练下次保存战术时 `validateAssign` 会抛 400「队长与定位球里点到了不属于该球队的球员」——手工删除时代同样存在，要修得动教练子系统。伤停的 `ON DELETE CASCADE` 实际不可达：伤停必须挂在一条 `match_event` 上，而 `match_event.player_id` 无 `ON DELETE`（NO ACTION）⇒ 有伤停的球员必然删不掉、行进 `kept`。另外手动同步端点没有 UI、`/api/health` 不含上次同步时间 ⇒ 每小时静默失败无处发现；分批 `batch` 无原子性（代码注释已声明）。
 
-### 4.5 球队与俱乐部双向同步（增量 37：只对「建档」这一个写动作对称）
+### 4.5 球队与俱乐部双向同步（v5.0.0：只对「建档」这一个写动作对称）
 
 **要解决的问题**：球队（`team.id`）与俱乐部（`clubs.id`）是**同一个号**——游戏内球队编号，两库早前一起 rekey 过。但两边原先只能各建各的：赛事系统建队不登记俱乐部，俱乐部平台建俱乐部又硬性要求「赛事系统里先有这支队」（否则 404），于是谁先建都得手工去另一侧补一次，漏补就出现「有队无俱乐部」或「有俱乐部无队」。
 
-**为什么这里破例「推」**（增量 33 的边界调整，原文在 `worker/lib/clubRoster.ts` 顶部注释）：名册仍然严格只拉不推；只有「球队建档」这一个动作两侧都对称。理由有三条——① 建档是一次性事件，不是持续数据流；② 两侧管理端都可能先发起，纯拉取要等 1 小时 cron，而「我刚建的队去哪了」是当场就要答案的事；③ 赛事系统读不到俱乐部平台库（只有单向只读），反向拉不出「俱乐部有、赛事无」。代价是多一个写入凭据，用一条专用密钥把爆炸半径限死在「建队」上。
+**为什么这里破例「推」**（v4.0.0 的边界调整，原文在 `worker/lib/clubRoster.ts` 顶部注释）：名册仍然严格只拉不推；只有「球队建档」这一个动作两侧都对称。理由有三条——① 建档是一次性事件，不是持续数据流；② 两侧管理端都可能先发起，纯拉取要等 1 小时 cron，而「我刚建的队去哪了」是当场就要答案的事；③ 赛事系统读不到俱乐部平台库（只有单向只读），反向拉不出「俱乐部有、赛事无」。代价是多一个写入凭据，用一条专用密钥把爆炸半径限死在「建队」上。
 
 **对称契约**：`POST /api/internal/team-upsert`，体 `{ id, name, operator? }`，语义是**幂等建档**——已有同 id 就 200 回 `{ created: false, nameDiffers }` 且**不覆写**；没有才建。两侧各实现一份入站端点，出站基址复用既有变量（本仓用 `CLUB_API_BASE`，俱乐部平台用 `TOUR_API_BASE`），签名共用一把 `TEAM_SYNC_SECRET`。
 
@@ -366,7 +366,7 @@ COMMIT;
 - 注册验证：凭 `signup_code`（超管生成，批量、一次/多次有效、可限时，发群里一次即可）；密码最低 8 位且含字母与数字；注册接口加 IP 限流。不接邮件服务（无域名依赖，找回密码走超管手动重置）。
 - 认证码：8 位码明码只在生成响应里出现一次，库存 `code_hash`；绑定接口限流（5 次失败锁 10 分钟，KV 计数器实现）。
 - 权限中间件：`requireSuperadmin` / `requireAdmin`（录入员）/ `requireCoach(team_id)` 三层。
-- 错误响应：未捕获异常由 `worker/index.ts` 的 `app.onError` 统一兜成 500 + `{"error":"internal","message":"服务异常，请稍后重试"}`（增量 36）。不兜的话 Hono 会回 text/plain 的 "Internal Server Error"，前端 `res.json()` 解析失败、界面只剩「请求失败（500）」，线上排查要反查库；前端 `src/api.ts` 同时把非 JSON 错误与 `TypeError`（网络断了）也归一成中文文案。
+- 错误响应：未捕获异常由 `worker/index.ts` 的 `app.onError` 统一兜成 500 + `{"error":"internal","message":"服务异常，请稍后重试"}`（v4.1.0）。不兜的话 Hono 会回 text/plain 的 "Internal Server Error"，前端 `res.json()` 解析失败、界面只剩「请求失败（500）」，线上排查要反查库；前端 `src/api.ts` 同时把非 JSON 错误与 `TypeError`（网络断了）也归一成中文文案。
 
 | 操作 | 管理员（录入员） | 超管 |
 |---|---|---|

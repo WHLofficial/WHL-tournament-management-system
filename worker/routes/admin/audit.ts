@@ -9,7 +9,7 @@ const app = new Hono<AppEnv>();
 
 app.use("*", requirePermission("tour.accounts.manage", "superadmin"));
 
-// 审计日志（增量 10，PRD P1-3）：界面在本仓，数据真源在 auth audit_log，这里只做
+// 审计日志（v3.1.0，PRD P1-3）：界面在本仓，数据真源在 auth audit_log，这里只做
 // 查询参数 → auth /api/admin/audit/query 的转发。GET + query string，纯读不记审计。
 // 筛选：account（auth account.id）、event、since/until（ISO 8601）、limit（≤100）、cursor（翻页）。
 app.get("/", async (c) => {

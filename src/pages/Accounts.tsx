@@ -4,7 +4,7 @@ import { api } from "../api";
 import { Page } from "../components/ui";
 import { useAuth } from "../auth";
 
-// 增量 8：账号真源在认证中心（auth）。本页只出界面——列表/角色/权限点/会话/停用全部经
+// v2.0.0：账号真源在认证中心（auth）。本页只出界面——列表/角色/权限点/会话/停用全部经
 // /api/admin/accounts/* 转发给 auth，本仓不再有自己的 user 表可写。
 
 interface RoleRef {

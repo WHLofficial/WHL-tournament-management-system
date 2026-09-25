@@ -1,4 +1,4 @@
-// 跨服务实联冒烟（增量 8）：tour 的管理能力打真实 auth 的 /api/admin/*，验证机器通道真的通。
+// 跨服务实联冒烟（v2.0.0）：tour 的管理能力打真实 auth 的 /api/admin/*，验证机器通道真的通。
 //
 // 与 tests/oidc.test.ts 的区别：那边把 fetch 换成伪 auth，只验本仓逻辑；这边不换 fetch，
 // 用真实 HMAC 签名打一个真的在跑的认证中心——路径拼错、字段名对不上、密钥不符都会在这里翻出来，
@@ -41,7 +41,7 @@ describe("管理能力实联：tour → 真实 auth 的机器通道", () => {
     expect(cat.rolePermissions.filter((rp) => rp.roleId === superRole!.id)).toHaveLength(16);
   });
 
-  live("审计查询（增量 10）：真实通道返回事件数组与游标，续翻页严格更旧", async () => {
+  live("审计查询（v3.1.0）：真实通道返回事件数组与游标，续翻页严格更旧", async () => {
     const out = await authAdminAuditQuery(env, { limit: 10 });
     expect(Array.isArray(out.events)).toBe(true);
     for (const e of out.events) {

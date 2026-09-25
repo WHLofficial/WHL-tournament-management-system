@@ -121,7 +121,7 @@ export default function MatchesTab({
     };
   }, [panelActive, detail.tournament.id, suspTick]);
 
-  // 参赛队名单：开 tab 一次拉齐（增量 40）。原来逐队打 teams/:id，12~20 队的赛事就是
+  // 参赛队名单：开 tab 一次拉齐（v5.0.3）。原来逐队打 teams/:id，12~20 队的赛事就是
   // 12~20 次请求；现在一个端点按 team_id 分组给全部参赛队，playersCache 一次填满。
   // 失败不置位，下次 matches 变化时重试（与原「自驱动补拉」的收敛行为一致）。
   // 记「已加载哪个赛事」而不是布尔量：本 tab 不随 detail 变化重挂，切换赛事时必须重拉。
@@ -146,7 +146,7 @@ export default function MatchesTab({
     };
   }, [matches, detail.tournament.id]);
 
-  // 伤停登记：面板打开才拉（增量 40，同样一次拉齐全部参赛队）。
+  // 伤停登记：面板打开才拉（v5.0.3，同样一次拉齐全部参赛队）。
   // 不再依赖 matches/entryById —— 原写法在面板开着时，每次事件增删触发 refetch 都会把
   // 全部队的伤停重拉一遍；赛事内的参赛队集合本身不会变。
   useEffect(() => {

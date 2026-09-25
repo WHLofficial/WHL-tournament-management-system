@@ -1,4 +1,4 @@
-// 公开端首页聚合端点 /api/public/home（增量 39）：
+// 公开端首页聚合端点 /api/public/home（v5.0.2）：
 // 把首页原来 6 个请求（tournaments / upcoming / live / announcement / feed / reactions）
 // 里的 5 个合成一次往返，live 仍单独走 60s（见 worker/routes/portal.ts 的反例注释）。
 // 这里钉的是聚合本身没改变任何一段的口径：段名齐、草稿赛事不漏、只回 active 公告、

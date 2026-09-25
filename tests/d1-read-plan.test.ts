@@ -1,4 +1,4 @@
-// 增量 38 步骤 11：把「省读」的成果钉成可执行的回归断言。
+// v5.0.1 步骤 11：把「省读」的成果钉成可执行的回归断言。
 // 量化方法、读数与判据见 scripts/d1-read-audit/README.md 与 TECH_DESIGN.md §3.1。
 //
 // 这里断言的是**执行计划**而不是行读量——行读量要打生产库才能量，不适合进单测；
@@ -55,7 +55,7 @@ const ENTRY_PLAYER_COUNT_SQL = `SELECT e.id, e.team_id, e.seed, e.group_id, e.po
        WHERE e.tournament_id = ?
        ORDER BY e.seed, e.id`;
 
-describe("增量 38：D1 读消耗——关键查询的执行计划回归", () => {
+describe("v5.0.1：D1 读消耗——关键查询的执行计划回归", () => {
   const { sqlite } = createTestDb();
 
   it("索引仍在：idx_match_stage / idx_match_status / idx_match_home / idx_match_away", () => {
@@ -114,7 +114,7 @@ describe("增量 38：D1 读消耗——关键查询的执行计划回归", () =
   });
 });
 
-describe("增量 38：综述按 cap 截断（纯函数，输出等价）", () => {
+describe("v5.0.1：综述按 cap 截断（纯函数，输出等价）", () => {
   type Row = { stage_id: number; round: number; last_at: string | null };
   const row = (stage_id: number, round: number, last_at: string | null): Row => ({
     stage_id,
@@ -159,7 +159,7 @@ describe("增量 38：综述按 cap 截断（纯函数，输出等价）", () =>
   });
 });
 
-describe("增量 39：端点合并与剩余 OR 改写的执行计划回归", () => {
+describe("v5.0.2：端点合并与剩余 OR 改写的执行计划回归", () => {
   const { sqlite } = createTestDb();
 
   it("h2h 两条 + 阵容沿用链：OR 换成 match 自身列上的 IN 子查询后不再全表扫 match", () => {
@@ -181,7 +181,7 @@ describe("增量 39：端点合并与剩余 OR 改写的执行计划回归", () 
   });
 });
 
-describe("增量 40：管理端批量端点与周报探针的执行计划回归", () => {
+describe("v5.0.3：管理端批量端点与周报探针的执行计划回归", () => {
   const { sqlite } = createTestDb();
 
   it("赛事作用域批量名单：参赛队子查询驱动，不许扫 player 全表", () => {

@@ -1,4 +1,4 @@
-// 账号管理能力（增量 8）：auth 侧 12 条 /api/admin/* 机器端点。
+// 账号管理能力（v2.0.0）：auth 侧 12 条 /api/admin/* 机器端点。
 //
 // 背景：账号真源 2026-09-14 已收口 auth（account / credential / user_role），本仓管理台原本直写自己的
 // user / organization / signup_code 表，收口后那些写全部变成「死写」——改了没效果（改角色不影响鉴权、
@@ -27,7 +27,7 @@ export interface AdminAccountRow {
   /** 观众号（无码注册）：解锁前不能绑队，但仍可正常登录 */
   locked: boolean;
   mustChangePassword: boolean;
-  /** 停用（增量 8 新语义，与 locked 无关）：登录被拒 + 会话全吊销 */
+  /** 停用（v2.0.0 新语义，与 locked 无关）：登录被拒 + 会话全吊销 */
   disabled: boolean;
   isSuper: boolean;
   createdAt: string;
@@ -296,7 +296,7 @@ export interface AdminAuditQuery {
   cursor?: number | null;
 }
 
-/** 审计日志查询（增量 10，PRD P1-3）：真源在 auth audit_log，本仓只转发筛选条件。
+/** 审计日志查询（v3.1.0，PRD P1-3）：真源在 auth audit_log，本仓只转发筛选条件。
  *  auth 端按 id 倒序返回并带 next_cursor（翻页），单次一条 SELECT 不做 COUNT。 */
 export async function authAdminAuditQuery(
   env: AppEnv["Bindings"],

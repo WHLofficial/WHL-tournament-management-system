@@ -1,4 +1,4 @@
-// 周报回退（增量 40）：原来是「本周空则逐周串行试，最多 8 次往返」，
+// 周报回退（v5.0.3）：原来是「本周空则逐周串行试，最多 8 次往返」，
 // 现在改成「一次探针定周 + 一次取数」。这里钉回退语义与 8 周边界都逐字不变。
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
@@ -45,7 +45,7 @@ function freshDb(weekOffset: number | null) {
   return createTestD1(sqlite);
 }
 
-describe("周报回退（增量 40：探针定周）", () => {
+describe("周报回退（v5.0.3：探针定周）", () => {
   it("本周有比赛：不回退，weekStart 是本周一", async () => {
     const wk = await buildWeekly(freshDb(0));
     expect(wk.isFallback).toBe(false);

@@ -230,7 +230,7 @@ oidcRoutes.get("/callback", async (c) => {
   const now = new Date().toISOString();
   await c.env.DB.prepare("DELETE FROM oidc_session WHERE expires_at < ?").bind(now).run();
   const token = randomB64url(32);
-  // 账号投影与建会话同批提交（增量 36）：要么登录成功且本库 user 行存在，要么这次登录如实失败。
+  // 账号投影与建会话同批提交（v4.1.0）：要么登录成功且本库 user 行存在，要么这次登录如实失败。
   // 收口后本库 user 表没有写入方，而 14 列外键仍指向它（tactic.created_by / match_event.created_by /
   // audit_log.actor_user_id …，见 lib/accountMirror.ts 顶部）。不同批的下场就是「登录一切正常、
   // 进站写存档或报分才撞外键 500」，且前端只看到「请求失败（500）」——2026-09-23 事故即此形状。

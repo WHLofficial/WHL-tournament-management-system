@@ -1,6 +1,6 @@
 -- 一次性数据修复：认证中心已存在、但本仓 user 表缺行的账号补进来
 --
--- 背景（2026-09-23 排查）：账号真源收口到认证中心后（增量 8 / 9D，commit c69b8ee「user 表自此代码零写入」），
+-- 背景（2026-09-23 排查）：账号真源收口到认证中心后（v2.0.0 / v3.0.0D，commit c69b8ee「user 表自此代码零写入」），
 -- 新注册账号不再在本仓 user 表留行。而 migrations/0009_tactics.sql:6/20 的 tactic.created_by、
 -- tactic_submission.created_by 与 migrations/0015_interact.sql:8 的 motm_vote.user_id 都是
 -- REFERENCES user(id)，D1 强制外键（PRAGMA foreign_keys = 1），于是这些账号的任何写入都

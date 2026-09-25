@@ -18,11 +18,11 @@ function clientIp(c: { req: { header(name: string): string | undefined } }): str
 }
 
 async function teamIdOf(c: Context<AppEnv>, userId: number): Promise<number | null> {
-  // 增量 7：绑定真源在 auth 库（team_binding），本仓只读派生
+  // v1.0.0：绑定真源在 auth 库（team_binding），本仓只读派生
   return boundTeamId(c.env, userId);
 }
 
-// 注册收口到认证中心（增量 9D 残留清理：兼容模式直写 user 表的分支已删，user 表转只读；
+// 注册收口到认证中心（v3.0.0 残留清理：兼容模式直写 user 表的分支已删，user 表转只读；
 // 兼容模式下本端点返回 410，注册走认证中心）
 app.post("/register", (c) =>
   isOidc(c.env)
@@ -78,7 +78,7 @@ app.post("/logout", async (c) => {
   return c.json({ ok: true });
 });
 
-// 修改自己的密码：收口到认证中心（增量 9D 残留清理：兼容模式直写 user 表 password_hash
+// 修改自己的密码：收口到认证中心（v3.0.0 残留清理：兼容模式直写 user 表 password_hash
 // 的分支已删，user 表转只读；兼容模式下本端点返回 410）
 app.post("/password", requireUser, (c) =>
   isOidc(c.env)

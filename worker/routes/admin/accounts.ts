@@ -20,7 +20,7 @@ const app = new Hono<AppEnv>();
 
 app.use("*", requirePermission("tour.accounts.manage", "superadmin"));
 
-// 增量 8：账号真源在 auth（account / credential / user_role）。本仓不再读写自己的 user 表——
+// v2.0.0：账号真源在 auth（account / credential / user_role）。本仓不再读写自己的 user 表——
 // 收口后那些写是死写（改角色不影响鉴权、重置出的临时密码登不进去）。这里只做两件事：
 // 转发到 auth 的 /api/admin/*，以及记一条本地审计（谁在管理台按了哪个按钮）。
 //

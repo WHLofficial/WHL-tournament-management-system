@@ -43,7 +43,7 @@ app.route("/audit", auditRoutes);
 app.route("/announcements", announcementsRoutes);
 app.route("/injuries", injuriesRoutes);
 app.route("/proxy-grants", proxyGrantsRoutes);
-// 增量 33：POST /api/admin/sync-rosters —— 从俱乐部平台强制拉一次名册（定时任务走同一套 lib）
+// v4.0.0：POST /api/admin/sync-rosters —— 从俱乐部平台强制拉一次名册（定时任务走同一套 lib）
 app.route("/", rostersRoutes);
 
 // 认证中心通道错误的统一分流：业务码原样给前端文案，未配置/不可达归为 502
@@ -65,7 +65,7 @@ function authFail(c: Context<AppEnv>, e: unknown) {
 }
 
 // 组织级设置：允许无码注册（建锁定观众号）。改开关仅超管。
-// 增量 8：真源在认证中心 organization 表（收口前这里读写本仓 organization，
+// v2.0.0：真源在认证中心 organization 表（收口前这里读写本仓 organization，
 // 改开关对 auth 注册路径零影响 = 死写）。读写都转发 auth，本地留审计。
 app.get("/org-settings", async (c) => {
   try {
@@ -123,7 +123,7 @@ app.get("/signup-codes", async (c) => {
 
 // ---- 球队认证码（教练绑定用）：一次有效，默认 24h ----
 // ---- 球队认证码（教练绑定用）：一次有效，默认 24h。
-// 增量 7：码表与烧码收口认证中心；这里只代理发码。目录缺行时自愈登记后重试一次。 ----
+// v1.0.0：码表与烧码收口认证中心；这里只代理发码。目录缺行时自愈登记后重试一次。 ----
 app.post("/teams/:id/auth-codes", async (c) => {
   const teamId = Number(c.req.param("id"));
   const team = await c.env.DB.prepare("SELECT id, name FROM team WHERE id = ?")

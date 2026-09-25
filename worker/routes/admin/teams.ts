@@ -27,7 +27,7 @@ app.get("/", async (c) => {
   return c.json({ teams });
 });
 
-// 新建球队（增量 37：显式指定游戏球队 ID，建完推给俱乐部平台建档）
+// 新建球队（v5.0.0：显式指定游戏球队 ID，建完推给俱乐部平台建档）
 app.post("/", async (c) => {
   const body = await c.req.json<{ gameTeamId?: unknown; name?: unknown }>().catch(() => null);
   const gameTeamId = Number(body?.gameTeamId);
@@ -41,7 +41,7 @@ app.post("/", async (c) => {
   const taken = await c.env.DB.prepare("SELECT id FROM team WHERE id = ?").bind(gameTeamId).first();
   if (taken) return c.json({ message: `球队 ID #${gameTeamId} 已被占用` }, 409);
   try {
-    // 显式写 id：本仓 team.id = 游戏球队 ID = club.clubs.id，三处同号（增量 37 的前提）
+    // 显式写 id：本仓 team.id = 游戏球队 ID = club.clubs.id，三处同号（v5.0.0 的前提）
     await c.env.DB.prepare("INSERT INTO team (id, org_id, name, created_by) VALUES (?, 1, ?, ?)")
       .bind(gameTeamId, name, c.get("user")!.id)
       .run();
@@ -148,7 +148,7 @@ app.get("/:id", async (c) => {
   return c.json({ team, players });
 });
 
-// 球队详情一次取齐（增量 40）：队 + 名单 + 认证码 + 已绑定教练 + 伤停登记。
+// 球队详情一次取齐（v5.0.3）：队 + 名单 + 认证码 + 已绑定教练 + 伤停登记。
 // 前端原来先取 /:id 再并行取三个（4 请求、2 波往返），而它不只在挂载时跑 ——
 // 生成认证码/解绑/改队名/传删队徽/伤停登记保存共 7 处都会重发这 4 个请求。
 // 这里 6 条查询并行、1 波返回；认证码与教练名单读 AUTH_DB（只读镜像绑定），与本地读同一失败域。
@@ -178,7 +178,7 @@ app.get("/:id/context", async (c) => {
   });
 });
 
-// 改队名（增量 37 边界：改名不联动俱乐部平台，只在对账页显示两边不一致）
+// 改队名（v5.0.0 边界：改名不联动俱乐部平台，只在对账页显示两边不一致）
 app.patch("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const body = await c.req.json<{ name?: string }>().catch(() => null);
@@ -196,7 +196,7 @@ app.patch("/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-// 手动重推建档（增量 37）：建队时同步失败的补救入口，幂等
+// 手动重推建档（v5.0.0）：建队时同步失败的补救入口，幂等
 app.post("/:id/sync-club", async (c) => {
   const id = Number(c.req.param("id"));
   const team = await c.env.DB.prepare("SELECT id, name FROM team WHERE id = ? AND org_id = 1")
@@ -223,7 +223,7 @@ app.delete("/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-// 增量 33：球员写入（录入 / 批量导入 / 改名改号 / 删除）四个端点已下线。
+// v4.0.0：球员写入（录入 / 批量导入 / 改名改号 / 删除）四个端点已下线。
 // 球员名与球衣号的真源在俱乐部平台（名字由 FC26 存档派生、号码由所属俱乐部在球员卡上设定），
 // 本仓 player 表是它的镜像，只由 worker/lib/clubRoster.ts 的拉取同步写。
 // 保留双写路径的后果不是「多一个入口」而是「两个写者互相覆盖」——同步每跑一次就把手工改动抹掉，

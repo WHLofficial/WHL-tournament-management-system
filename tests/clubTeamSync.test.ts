@@ -1,4 +1,4 @@
-// 增量 37：球队建档双向同步（tour 侧）测试。
+// v5.0.0：球队建档双向同步（tour 侧）测试。
 //
 // 覆盖三块：
 //   ① 入站机器端点 POST /api/internal/team-upsert —— 验签矩阵（错签/缺头/过期/未配密钥 fail-closed）、
@@ -184,7 +184,7 @@ afterEach(() => {
 });
 
 // =====================================================================================
-describe("增量 37：入站机器端点 POST /api/internal/team-upsert", () => {
+describe("v5.0.0：入站机器端点 POST /api/internal/team-upsert", () => {
   it("正签建档：显式 id 落库、created_by 留空、认证中心登记，且不需要会话 cookie", async () => {
     const { env, sqlite } = freshEnv();
     const res = await inbound(env, { id: 700, name: "推来的队" });
@@ -339,7 +339,7 @@ describe("增量 37：入站机器端点 POST /api/internal/team-upsert", () => 
 });
 
 // =====================================================================================
-describe("增量 37：出站 pushTeamToClub 契约", () => {
+describe("v5.0.0：出站 pushTeamToClub 契约", () => {
   const clubEnv = { CLUB_API_BASE: CLUB_BASE, TEAM_SYNC_SECRET: SECRET } as never;
 
   it("未配基址 / 未配密钥：只回报不抛（本地建队优先，失败是可重试的旁路）", async () => {
@@ -403,7 +403,7 @@ describe("增量 37：出站 pushTeamToClub 契约", () => {
 });
 
 // =====================================================================================
-describe("增量 37：建队端点（游戏球队 ID + 队名）", () => {
+describe("v5.0.0：建队端点（游戏球队 ID + 队名）", () => {
   it("201：显式 id 落库、created_by 记管理员、推给俱乐部平台并回报 clubSyncError:null", async () => {
     const { env, sqlite } = freshEnv();
     const res = await post(env, "/api/admin/teams", { gameTeamId: 700, name: "Arsenal" });
@@ -513,7 +513,7 @@ describe("增量 37：建队端点（游戏球队 ID + 队名）", () => {
 });
 
 // =====================================================================================
-describe("增量 37：批量建队 POST /api/admin/teams/bulk", () => {
+describe("v5.0.0：批量建队 POST /api/admin/teams/bulk", () => {
   it("每行「游戏球队 ID 队名」：显式 id 落库并逐支推送", async () => {
     const { env, sqlite } = freshEnv();
     const res = await post(env, "/api/admin/teams/bulk", { lines: ["700 Arsenal", "701 Chelsea"] });
@@ -578,7 +578,7 @@ describe("增量 37：批量建队 POST /api/admin/teams/bulk", () => {
 });
 
 // =====================================================================================
-describe("增量 37：批量报名 POST /api/admin/tournaments/:id/entries/bulk", () => {
+describe("v5.0.0：批量报名 POST /api/admin/tournaments/:id/entries/bulk", () => {
   it("行里的队库里没有 → 自动建队（显式 id）并报名，新队推给俱乐部平台", async () => {
     const { env, sqlite } = freshEnv();
     seedTournament(sqlite);
@@ -667,7 +667,7 @@ describe("增量 37：批量报名 POST /api/admin/tournaments/:id/entries/bulk"
 });
 
 // =====================================================================================
-describe("增量 37：行解析 parseBulkLine（建队与批量报名共用）", () => {
+describe("v5.0.0：行解析 parseBulkLine（建队与批量报名共用）", () => {
   it("接受空格 / tab / 中英文逗号分隔，队名保留内部空格", () => {
     expect(parseBulkLine("1 Arsenal")).toEqual({ id: 1, name: "Arsenal" });
     expect(parseBulkLine("1\tArsenal")).toEqual({ id: 1, name: "Arsenal" });
@@ -689,7 +689,7 @@ describe("增量 37：行解析 parseBulkLine（建队与批量报名共用）",
 // 同样的 secret / ts / raw，同样的十六进制常量。这个常量是独立算出来的死值
 // （node:crypto，输入见下），不是用被测代码算的——所以两侧任何一方偷改算法、路径或
 // 签名串，这一节都会红；而如果两侧同时改，两份文件里的死值就对不上仓里的实现。
-describe("增量 37：跨仓签名契约金标准（与 club 仓逐字同值）", () => {
+describe("v5.0.0：跨仓签名契约金标准（与 club 仓逐字同值）", () => {
   const GOLDEN_SECRET = "increment-37-golden-secret";
   const GOLDEN_TS = 1767225600; // 2026-01-01T00:00:00Z
   const GOLDEN_RAW = '{"id":700,"name":"Arsenal","operator":1}';

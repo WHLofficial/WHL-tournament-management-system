@@ -1,7 +1,7 @@
 // #13 头版门户公开端点：公告 / 快讯流 / 周报 / 单场战报。
 // 全部 GET-only + pubCache：读时现算的派生口径见 lib/feedNews.ts 头注释，
 // 缓存保证重算频率与访客数无关（每边缘节点每 TTL 至多算一次，其余访客边缘直出）。
-// 增量 39 起本文件还承载首页聚合端点 /home：它 import routes/public.ts 的两个列表构造器
+// v5.0.2 起本文件还承载首页聚合端点 /home：它 import routes/public.ts 的两个列表构造器
 // 与 routes/interact.ts 的反应计数构造器，同源复用，不在本文件重抄口径。
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -71,7 +71,7 @@ app.get("/feed", pubCache(300), async (c) => {
   return c.json({ items: await feedWithSwr(c, limit, before) });
 });
 
-// 首页聚合端点（增量 39）：把首屏 5 个公开读面合成一个响应，前端一轮从 6 个请求降到 2 个
+// 首页聚合端点（v5.0.2）：把首屏 5 个公开读面合成一个响应，前端一轮从 6 个请求降到 2 个
 // （/home + /live），并消掉原先 reactions 那次串行往返。
 // TTL 必须按最慢的那段分组：/live 保持独立 60s，其余 5 段统一 300s。
 // 反例（不要做）：把 /live 也并进来、给整个 /home 挂 60s——feed 单段冷重算 4,315 行，

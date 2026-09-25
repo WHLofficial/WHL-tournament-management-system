@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { api } from "../api";
 import { Page } from "../components/ui";
 
-// 增量 10（PRD P1-3）：审计日志查询。数据真源在认证中心 audit_log，本页经
+// v3.1.0（PRD P1-3）：审计日志查询。数据真源在认证中心 audit_log，本页经
 // /api/admin/audit（worker 侧转发 auth /api/admin/audit/query）只读检索：
 // 按账号 / 事件类型 / 时间窗筛选，id 倒序游标分页（「加载更多」）。
 

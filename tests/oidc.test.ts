@@ -95,14 +95,14 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       headers: { "content-type": "application/json" },
     });
   }
-  // 管理能力（增量 8）：账号管理台经机器通道转发认证中心。这里只需要 org-settings 读一条
+  // 管理能力（v2.0.0）：账号管理台经机器通道转发认证中心。这里只需要 org-settings 读一条
   // （真身是 auth 的 organization 表；返回固定值即可，本仓库已不再有自己的开关可读）
   if (url.pathname.endsWith("/api/admin/org-settings")) {
     return new Response(JSON.stringify({ allow_open_reg: false }), {
       headers: { "content-type": "application/json" },
     });
   }
-  // 审计查询（增量 10）：转发 /api/admin/audit/query，body 供断言筛选透传
+  // 审计查询（v3.1.0）：转发 /api/admin/audit/query，body 供断言筛选透传
   if (url.pathname.endsWith("/api/admin/audit/query")) {
     lastAuditBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
     return new Response(
@@ -224,7 +224,7 @@ function freshEnv(oidc: boolean): Fixture {
     KV: createTestKV(kv) as unknown as KVNamespace,
     MEDIA: {} as never,
     ASSETS: {} as never,
-    // 管理台转认证中心用（增量 8）：OIDC 模式下生产必配，未配则管理台的 org-settings/注册码一律 500
+    // 管理台转认证中心用（v2.0.0）：OIDC 模式下生产必配，未配则管理台的 org-settings/注册码一律 500
     ...(oidc ? { AUTH_MODE: "oidc", OIDC_ISSUER: ISSUER, OIDC_CLIENT_ID: CLIENT_ID, AUTH_BIND_SECRET: "test-bind-secret" } : {}),
   };
   return { env, sqlite };
@@ -294,7 +294,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(out.ok).toBe(true);
     expect(out.redirect).toBeUndefined();
 
-    // 增量 9D：注册直写 user 表已删，兼容模式一律 410（改密同理，但需登录态才到 410 判定）
+    // v3.0.0：注册直写 user 表已删，兼容模式一律 410（改密同理，但需登录态才到 410 判定）
     const reg = await app.request(
       "/api/auth/register",
       { method: "POST", body: JSON.stringify({ name: "x", password: "TestPass123" }), headers: { "content-type": "application/json" } },
@@ -399,10 +399,10 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(((await legacy.json()) as { user: unknown }).user).toBeNull();
   });
 
-  // 增量 36：收口后本库 user 表没有写入方，但 14 列外键仍指向它（tactic.created_by、
+  // v4.1.0：收口后本库 user 表没有写入方，但 14 列外键仍指向它（tactic.created_by、
   // match_event.created_by、audit_log.actor_user_id …）。回调不投影账号行，新账号的第一次
   // 写入就撞 FOREIGN KEY constraint failed → 500，而前端只看到「请求失败（500）」
-  it("新账号登录：回调把账号投影进本库 user 表，此后写档不再撞外键（增量 36）", async () => {
+  it("新账号登录：回调把账号投影进本库 user 表，此后写档不再撞外键（v4.1.0）", async () => {
     vi.stubGlobal("fetch", fakeFetch);
     const { env, sqlite } = freshEnv(true);
     // 账号 14 在认证中心存在、本库 user 表没有行——收口后的新账号就是这个形状
@@ -457,7 +457,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     ).toEqual({ name: "改名后的管理", role: "admin", locked: 1, password_hash: userHash });
   });
 
-  it("定时对账：补上没登录过的账号、同步改名与注册时间，不删行（增量 36）", async () => {
+  it("定时对账：补上没登录过的账号、同步改名与注册时间，不删行（v4.1.0）", async () => {
     const { env, sqlite } = freshEnv(true);
     const authSqlite = new DatabaseSync(":memory:");
     authSqlite.exec(
@@ -532,7 +532,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
   // 线上教训（2026-09-23 用户反馈「500 报错」却查不出原因）：Hono 默认的未捕获异常处理是
   // console.error + text/plain 的 "Internal Server Error"，前端 res.json() 拿不到东西，
   // 于是只剩「请求失败（500）」——既没有给用户任何解释，也没有给排查留下路径。
-  it("未捕获异常：500 回 JSON 带中文 message，并在日志里留下方法与路径（增量 36）", async () => {
+  it("未捕获异常：500 回 JSON 带中文 message，并在日志里留下方法与路径（v4.1.0）", async () => {
     vi.stubGlobal("fetch", fakeFetch);
     const { env, sqlite } = freshEnv(true);
     const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
@@ -562,7 +562,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     logged.mockRestore();
   });
 
-  it("账号管理台：端点经机器通道转发认证中心，snake_case 映射成前端要的 camelCase（增量 8）", async () => {
+  it("账号管理台：端点经机器通道转发认证中心，snake_case 映射成前端要的 camelCase（v2.0.0）", async () => {
     vi.stubGlobal("fetch", fakeFetch);
     const { env } = freshEnv(true);
     const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
@@ -606,7 +606,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(forbidden.status).toBe(403);
   });
 
-  it("审计日志：筛选参数透传认证中心 + snake_case 映射 camelCase，无权限点拦下（增量 10）", async () => {
+  it("审计日志：筛选参数透传认证中心 + snake_case 映射 camelCase，无权限点拦下（v3.1.0）", async () => {
     vi.stubGlobal("fetch", fakeFetch);
     const { env } = freshEnv(true);
     const admin = await oidcLogin(env, { sub: "1", sid: "sid-admin" });
