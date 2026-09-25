@@ -9,6 +9,7 @@ import PublicMatchDetail from "./pages/PublicMatchDetail";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import Tactics from "./pages/Tactics";
+import { APP_VERSION } from "./lib/version";
 
 // 管理端/个人页按路由拆包：公开访客不再下载管理端代码（主 bundle 402KB→瘦身）
 const AdminTournaments = lazy(() =>
@@ -174,6 +175,7 @@ function AppShell() {
           </Routes>
         </Suspense>
       )}
+      <footer className="app-footer">WHL 赛事系统 · v{APP_VERSION}</footer>
     </>
   );
 }

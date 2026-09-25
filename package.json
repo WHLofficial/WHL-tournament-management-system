@@ -2,6 +2,7 @@
   "name": "whl-tournament",
   "private": true,
   "type": "module",
+  "version": "5.0.3",
   "scripts": {
     "dev": "wrangler dev --port 8790",
     "dev:oidc": "wrangler dev --port 8797 --var AUTH_MODE:oidc --var OIDC_ISSUER:http://127.0.0.1:8792 --var OIDC_CLIENT_ID:tour",

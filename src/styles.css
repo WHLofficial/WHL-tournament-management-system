@@ -35,6 +35,14 @@ body {
   padding: 16px;
 }
 
+.app-footer {
+  padding: 20px 16px 26px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
 :focus-visible {
   outline: 2px solid var(--pitch);
   outline-offset: 2px;
@@ -343,7 +351,7 @@ button.btn-ghost:hover:not(:disabled) {
   color: #6d28d9;
 }
 
-/* 账号管理（增量 8）：多角色 / 多权限点的勾选面板 */
+/* 账号管理（v2.0.0）：多角色 / 多权限点的勾选面板 */
 .st-locked {
   background: #fee2e2;
   color: #b91c1c;
