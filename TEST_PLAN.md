@@ -6,7 +6,7 @@
 | 应用版本 | v5.0.4（`package.json.version`，页脚显示同值）；全量盘点的代码基线为 v5.0.3 |
 | 文档版本 | v1（首版，全量盘点） |
 | 生产域名 | https://tour.whleague.win |
-| 关联文档 | `PRD.md` / `TECH_DESIGN.md` / `VERSIONS.md` / `PERF_PLAN.md` / `MOBILE_PLAN.md` |
+| 关联文档 | `PRD.md` / `TECH_DESIGN.md` / `VERSIONS.md` / `PERF_PLAN.md` / `MOBILE_PLAN.md` / `BUG_REPORTS.md`（缺陷详情报告） |
 | 本次交付 | 本文件 + 4 个新增自动化测试文件（106 用例） |
 
 ---
@@ -506,13 +506,16 @@
 
 ### 11.3 已知行为缺陷（BUG 预登记）
 
+> 完整报告（环境、前置条件、复现步骤、根因、修复建议、修复后应改成的验收断言）见根目录 **`BUG_REPORTS.md`**；下表是索引，严重度以那份报告为准（BUG-004 已从初判 Medium 下调为 Low）。
+
 | ID | 标题 | 严重度 | 关联断言 | 状态 |
 | --- | --- | --- | --- | --- |
-| BUG-001 | 自动回填用混合代数据决定淘汰赛对阵（D1） | Critical | `tests/scoring.finish.routes.test.ts`「autoFill 取人当前使用旧积分榜快照」 | 已钉住，待修 |
-| BUG-002 | 报分失败回滚残留 `finished_at`（D2） | Medium | 同上「409 回滚不复原 finished_at」 | 已钉住，待修 |
-| BUG-003 | 循环赛与小组赛并存时榜单 rank 按组重复编号（D3） | Medium | `tests/standings.rebuild.test.ts`「D3：group_id 泄漏到循环赛阶段」 | 已钉住，待修 |
-| BUG-004 | `tiebreakers` 全非法值时不回退默认链（D4） | Medium | 同上「非法决胜链不回退默认」 | 已钉住，待修 |
+| BUG-001 | 自动回填用混合代数据决定淘汰赛对阵（D1） | Critical | `tests/scoring.finish.routes.test.ts`「阶段收官自动生成下一阶段首轮：取人读的是陈旧积分榜快照（缺陷 D1）」 | 已钉住，待修 |
+| BUG-002 | 报分失败回滚残留 `finished_at`（D2） | Medium | 同上「下游场次已开打且需换人 → 409，且终场写入回滚、审计不落」 | 已钉住，待修 |
+| BUG-003 | 循环赛与小组赛并存时榜单 rank 按组重复编号（D3） | Medium | `tests/standings.rebuild.test.ts`「缺陷 D3：同赛事既有小组又有循环赛时，循环赛榜单按 entry.group_id 分子块编号」 | 已钉住，待修 |
+| BUG-004 | `tiebreakers` 全非法值时不回退默认链（D4） | Low | 同上「同分规则可配置：链可缩减；全为非法值时链变空而不是回落默认（缺陷 D4）」 | 已钉住，待修 |
 | BUG-005 | 同阶段多组 (round, slot) 重号（D5） | Low | `tests/schedule.generate.routes.test.ts`「两组各自 slot 从 1 起」 | 已钉住，待修 |
+| BUG-006 | 积分榜页脚同分规则说明硬编码，与实际配置不符 | Low | 无（展示层，见缺口 G1） | 待修（未钉住） |
 
 ---
 
