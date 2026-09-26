@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | 被检应用 | `whl-tournament`（Cloudflare Worker + React SPA 同仓同部署） |
-| 应用版本 | v5.0.3（`package.json.version`，页脚显示同值） |
+| 应用版本 | v5.0.4（`package.json.version`，页脚显示同值）；全量盘点的代码基线为 v5.0.3 |
 | 文档版本 | v1（首版，全量盘点） |
 | 生产域名 | https://tour.whleague.win |
 | 关联文档 | `PRD.md` / `TECH_DESIGN.md` / `VERSIONS.md` / `PERF_PLAN.md` / `MOBILE_PLAN.md` |
