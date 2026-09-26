@@ -399,7 +399,7 @@ describe("scoring 报分（finish）", () => {
     expect(matchOf(sqlite, 820).finished_at).not.toBeNull();
   });
 
-  it("阶段收官自动生成下一阶段首轮：取人读的是陈旧积分榜快照（缺陷 D1）", async () => {
+  it("阶段收官自动生成下一阶段首轮：取人读的是重算后的最新积分榜", async () => {
     const { env, sqlite } = freshEnv();
     // 循环赛阶段只留 4 场（不做完整单循环，代码只校验「全部完赛」）
     sqlite.prepare("DELETE FROM match WHERE stage_id IN (70, 72)").run();
@@ -442,10 +442,36 @@ describe("scoring 报分（finish）", () => {
       "SELECT home_entry_id, away_entry_id FROM match WHERE stage_id = 72"
     );
     expect(created.length).toBe(1);
-    // 现状：autoFill 的取人在「本场 finished」之后、但积分重算语句执行之前跑，
-    // 读到的 standing 表还停在上一次重建的快照，刚完赛这一场（503 3:0）没被算进去，
-    // 于是第 2 名被算成 501 —— 错队被写进季后赛对阵（用户可见后果）。
-    // 修好后此处应为 away_entry_id: 503。缺陷 D1 记入 TEST_PLAN.md。
+    // 回填取人必须发生在积分重算落库之后：末轮 503 3:0 反超 501 的净胜球，
+    // 第 2 名是 503 —— 若读到重算前的旧快照会把 501 写进季后赛对阵（缺陷 D1）。
+    expect(created[0]).toMatchObject({ home_entry_id: 500, away_entry_id: 503 });
+  });
+
+  it("阶段收官但末轮不改变取人区间名次：回填结果不受重算时序影响", async () => {
+    const { env, sqlite } = freshEnv();
+    sqlite.prepare("DELETE FROM match WHERE stage_id IN (70, 72)").run();
+    sqlite.prepare("UPDATE stage SET config_json = ? WHERE id = 72").run('{"source":{"take":2}}');
+    const m = sqlite.prepare(
+      `INSERT INTO match (id, stage_id, round, slot, leg, home_entry_id, away_entry_id, status, winner_entry_id, note, walkover_side)
+       VALUES (?, 70, ?, ?, NULL, ?, ?, 'pending', NULL, NULL, '')`
+    );
+    m.run(800, 1, 1, 500, 501);
+    m.run(801, 1, 2, 500, 503);
+    m.run(802, 2, 1, 502, 501);
+    m.run(803, 2, 2, 502, 503);
+
+    await finish(env, 800, { scoreHome: 1, scoreAway: 0 });
+    await finish(env, 801, { scoreHome: 1, scoreAway: 0 });
+    await finish(env, 802, { scoreHome: 0, scoreAway: 1 }); // 501 胜 → 501 稳居第 2
+    // 收官场打平：501 仍第 2（500=6 分 → 501=3 分 → 502/503 各 1 分）
+    const last = await finish(env, 803, { scoreHome: 0, scoreAway: 0 });
+    expect((await last.json()).regenerated).toBe(true);
+
+    const created = sqlAll<{ home_entry_id: number | null; away_entry_id: number | null }>(
+      sqlite,
+      "SELECT home_entry_id, away_entry_id FROM match WHERE stage_id = 72"
+    );
+    expect(created.length).toBe(1);
     expect(created[0]).toMatchObject({ home_entry_id: 500, away_entry_id: 501 });
   });
 });

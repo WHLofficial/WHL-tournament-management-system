@@ -276,16 +276,23 @@ app.post("/:id/finish", async (c) => {
     try {
       if (ctx.stageKind === "elim") {
         followUp = await buildAdvanceStmts(c.env.DB, m.stage_id);
+        // 审计随重算/晋级批次提交（batch 恒非空）；晋级冲突 409 回滚时审计一并落空
+        followUp.push(auditStmt(c.env.DB, c.get("user")!.id, action, id, auditDetail));
+        await c.env.DB.batch(followUp);
       } else {
+        // 2a) 先提交积分重算 + 审计：回填取人必须读到含末场的最新快照，
+        //     否则末轮改变的名次会被旧快照覆盖（错队进入淘汰赛）
         followUp = await buildStandingsStmts(c.env.DB, m.stage_id);
-        // 小组/循环阶段全部完赛：按下一阶段的取人规则（cross 模板 / topN）自动生成首轮赛程
+        followUp.push(auditStmt(c.env.DB, c.get("user")!.id, action, id, auditDetail));
+        await c.env.DB.batch(followUp);
+        // 2b) 小组/循环阶段全部完赛：按下一阶段的取人规则（cross 模板 / topN）自动生成首轮赛程；
+        //     非空才追加第三次 batch（buildAutoFillStmts 不抛 AdvancerError，无需回滚语义）
         const autoStmts = await buildAutoFillStmts(c.env, ctx.tournamentId, m.stage_id);
-        followUp.push(...autoStmts);
-        if (autoStmts.length > 0) regenerated = true;
+        if (autoStmts.length > 0) {
+          regenerated = true;
+          await c.env.DB.batch(autoStmts);
+        }
       }
-      // 审计随重算/晋级批次提交（batch 恒非空）；晋级冲突 409 回滚时审计一并落空
-      followUp.push(auditStmt(c.env.DB, c.get("user")!.id, action, id, auditDetail));
-      await c.env.DB.batch(followUp);
     } catch (e) {
       if (e instanceof AdvancerError) {
         // 回滚终场写入，保持一致性

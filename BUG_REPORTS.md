@@ -30,7 +30,7 @@ npx vitest run tests/scoring.finish.routes.test.ts tests/standings.rebuild.test.
 
 | ID | 对应 | 标题 | 严重度 | 优先级 | 类型 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| BUG-001 | D1 | 阶段收官自动生成淘汰赛对阵时，取人读到的是陈旧积分榜快照 → **晋级对阵写错队** | Critical | P1 | 功能 / 数据正确性 | 待修（已钉住） |
+| BUG-001 | D1 | 阶段收官自动生成淘汰赛对阵时，取人读到的是陈旧积分榜快照 → **晋级对阵写错队** | Critical | P1 | 功能 / 数据正确性 | 已修（v5.0.6） |
 | BUG-002 | D2 | 报分 409 回滚未复原 `finished_at` → 比赛退回 pending 却留着终场时间戳 | Medium | P2 | 数据一致性 | 待修（已钉住） |
 | BUG-003 | D3 | 小组赛与循环赛阶段并存时，循环赛榜单名次按 `entry.group_id` 分桶重复编号 | Medium | P2 | 功能 / 展示 | 待修（已钉住） |
 | BUG-004 | D4 | `tiebreakers` 为空数组或全非法值时退化成一整条空决胜链，不回退默认链 | Low | P2 | 功能 / 契约 | 待修（已钉住） |
@@ -55,7 +55,7 @@ npx vitest run tests/scoring.finish.routes.test.ts tests/standings.rebuild.test.
 
 ## BUG-001：阶段收官自动生成的淘汰赛对阵使用陈旧积分榜快照，会写错晋级球队
 
-**严重度：** Critical　**优先级：** P1　**类型：** 功能 / 数据正确性　**状态：** 待修（已钉住）
+**严重度：** Critical　**优先级：** P1　**类型：** 功能 / 数据正确性　**状态：** 已修（v5.0.6：重算语句先落库、回填取人改读最新快照；钉住断言已改为期望行为，并新增「末轮不改名次」回归用例）
 
 ### 环境
 - 应用版本：v5.0.4（`package.json.version`）
