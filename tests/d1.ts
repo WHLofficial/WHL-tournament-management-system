@@ -37,14 +37,29 @@ export function createTestD1(sqlite: DatabaseSync): D1Database {
           const r = sqlite.prepare(sql).run(...(args as never[]));
           return { meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid) } };
         },
+        // batch 专用：真实 D1 的 batch 对 SELECT 会带回结果行，
+        // 只调 run() 会把 batch 里的尾 SELECT 变成空结果（读不到刚写入的行）。
+        // 注意：桩件的 last_row_id 取自连接上最近一次 INSERT，对 UPDATE/DELETE 不可信
+        // （真实 D1 这类语句返回 0）；目前平台代码只在 INSERT 后读 last_row_id。
+        async __exec() {
+          const exec = sqlite.prepare(sql);
+          if (/^\s*(select|with)/i.test(sql)) {
+            return { meta: { changes: 0, last_row_id: 0 }, results: exec.all(...(args as never[])) };
+          }
+          const r = exec.run(...(args as never[]));
+          return { meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid) } };
+        },
       };
       return stmt;
     },
-    async batch(statements: { run(): Promise<{ meta: { changes: number } }> }[]) {
+    async batch(statements: unknown[]) {
       sqlite.exec("BEGIN IMMEDIATE");
       try {
-        const out: { meta: { changes: number } }[] = [];
-        for (const s of statements) out.push(await s.run());
+        const out: unknown[] = [];
+        for (const s of statements) {
+          const st = s as { __exec?: () => Promise<unknown>; run?: () => Promise<unknown> };
+          out.push(st.__exec ? await st.__exec() : await st.run!());
+        }
         sqlite.exec("COMMIT");
         return out;
       } catch (err) {
