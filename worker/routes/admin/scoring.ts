@@ -39,6 +39,7 @@ type MatchRow = {
   winner_entry_id: number | null;
   note: string | null;
   walkover_side: string | null;
+  finished_at: string | null;
 };
 
 type MatchCtx = {
@@ -263,6 +264,8 @@ app.post("/:id/finish", async (c) => {
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
         ).bind(scoreHome, scoreAway, penHome, penAway, winner, walkoverSide ?? "", nextNote, id),
     ];
+    // 写入与 409 回滚两处 UPDATE 的列必须一一对应（finished_at 用 now vs 原值），
+    // 新增列时两处同步改，漏一边就会留下半回滚的脏行（BUG-002 教训）。
 
     let regenerated = false;
 
@@ -295,10 +298,10 @@ app.post("/:id/finish", async (c) => {
       }
     } catch (e) {
       if (e instanceof AdvancerError) {
-        // 回滚终场写入，保持一致性
+        // 回滚终场写入，保持一致性（含 finished_at：退回 pending 不得残留终场时间戳）
         await c.env.DB.prepare(
           `UPDATE match SET score_home = ?, score_away = ?, pen_home = ?, pen_away = ?,
-           status = ?, winner_entry_id = ?, walkover_side = ?, note = ? WHERE id = ?`
+           status = ?, winner_entry_id = ?, walkover_side = ?, note = ?, finished_at = ? WHERE id = ?`
         ).bind(
           m.score_home,
           m.score_away,
@@ -308,6 +311,7 @@ app.post("/:id/finish", async (c) => {
           m.winner_entry_id,
           m.walkover_side ?? "",
           m.note,
+          m.finished_at ?? null,
           id
         ).run();
         return fail(c, 409, e.message);

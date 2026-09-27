@@ -394,9 +394,34 @@ describe("scoring 报分（finish）", () => {
     });
     expect(matchOf(sqlite, 822)).toMatchObject({ home_entry_id: 503, away_entry_id: 502, status: "live" });
     expect(sqlGet<{ n: number }>(sqlite, "SELECT COUNT(*) AS n FROM audit_log")!.n).toBe(0);
-    // 缺陷 D2：补偿回滚没有复原 finished_at（只有比分/状态/winner/note），
-    // 于是比赛退回 pending 却留着终场时间戳。此处钉住现状，见 TEST_PLAN.md D2。
-    expect(matchOf(sqlite, 820).finished_at).not.toBeNull();
+    // 缺陷 D2 已修：回滚逐列复原，含 finished_at —— 比赛回到「从未完赛」的干净状态
+    expect(matchOf(sqlite, 820).finished_at).toBeNull();
+  });
+
+  it("改判冲突回滚：finished_at 恢复改动前的旧时间戳", async () => {
+    const { env, sqlite } = freshEnv();
+    // 820 已完赛（曾有终场时间戳），822 已开打且场上与晋级方（500）不同
+    sqlite.prepare("DELETE FROM match WHERE stage_id = 72").run();
+    const m = sqlite.prepare(
+      `INSERT INTO match (id, stage_id, round, slot, leg, home_entry_id, away_entry_id, status,
+                          winner_entry_id, note, walkover_side, score_home, score_away, finished_at)
+       VALUES (?, 72, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    m.run(820, 1, 1, 500, 501, "finished", 500, null, "", 2, 0, "2026-01-01T00:00:00.000Z");
+    m.run(821, 1, 2, 502, null, "pending", 502, null, "", null, null, null);
+    m.run(822, 2, 1, 503, 502, "live", null, null, "", null, null, null);
+
+    const res = await finish(env, 820, { scoreHome: 1, scoreAway: 0 });
+    expect(res.status).toBe(409);
+
+    // 改判失败 = 从未发生过这次改判：比分/状态/时间戳全部回到写前状态
+    expect(matchOf(sqlite, 820)).toMatchObject({
+      status: "finished",
+      score_home: 2,
+      score_away: 0,
+      winner_entry_id: 500,
+      finished_at: "2026-01-01T00:00:00.000Z",
+    });
   });
 
   it("阶段收官自动生成下一阶段首轮：取人读的是重算后的最新积分榜", async () => {
