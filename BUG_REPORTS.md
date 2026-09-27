@@ -32,9 +32,9 @@ npx vitest run tests/scoring.finish.routes.test.ts tests/standings.rebuild.test.
 | --- | --- | --- | --- | --- | --- | --- |
 | BUG-001 | D1 | 阶段收官自动生成淘汰赛对阵时，取人读到的是陈旧积分榜快照 → **晋级对阵写错队** | Critical | P1 | 功能 / 数据正确性 | 已修（v5.0.6） |
 | BUG-002 | D2 | 报分 409 回滚未复原 `finished_at` → 比赛退回 pending 却留着终场时间戳 | Medium | P2 | 数据一致性 | 已修（v5.0.7） |
-| BUG-003 | D3 | 小组赛与循环赛阶段并存时，循环赛榜单名次按 `entry.group_id` 分桶重复编号 | Medium | P2 | 功能 / 展示 | 待修（已钉住） |
+| BUG-003 | D3 | 小组赛与循环赛阶段并存时，循环赛榜单名次按 `entry.group_id` 分桶重复编号 | Medium | P2 | 功能 / 展示 | 已修（v5.0.8） |
 | BUG-004 | D4 | `tiebreakers` 为空数组或全非法值时退化成一整条空决胜链，不回退默认链 | Low | P2 | 功能 / 契约 | 已修（v5.0.7，哨兵方案） |
-| BUG-005 | D5 | 小组赛阶段内每组 `slot` 从 1 重新计数 → 同阶段 `(round, slot)` 重号 | Low | P3 | 数据模型 / 展示 | 待修（已钉住） |
+| BUG-005 | D5 | 小组赛阶段内每组 `slot` 从 1 重新计数 → 同阶段 `(round, slot)` 重号 | Low | P3 | 数据模型 / 展示 | 已修（v5.0.8） |
 | BUG-006 | 本轮新发现 | 积分榜页脚的同分规则说明是硬编码，与赛事实际配置不符 | Low | P3 | 展示 / 文案 | 已修（v5.0.7） |
 
 **严重度定义**（沿用 `TEST_PLAN.md`，赛事系统对「竞赛结果正确性」按最高档处理）：
@@ -208,7 +208,7 @@ npx vitest run tests/scoring.finish.routes.test.ts -t "下游场次已开打且�
 
 ## BUG-003：小组赛与循环赛阶段并存时，循环赛榜单名次按 `entry.group_id` 分桶重复编号
 
-**严重度：** Medium　**优先级：** P2　**类型：** 功能 / 展示　**状态：** 待修（已钉住）
+**严重度：** Medium　**优先级：** P2　**类型：** 功能 / 展示　**状态：** 已修（v5.0.8：`readStandings` 主查询 JOIN stage 带出阶段类型，零新增查询——group 阶段保持桶内编号，非 group 阶段整表单桶、名次唯一 1..N；不动历史数据）
 
 ### 环境
 - 应用版本：v5.0.4　**触发角色：** 任意（公开页可见，无需登录）
@@ -360,7 +360,7 @@ npx vitest run tests/standings.rebuild.test.ts -t "同分规则可配置"
 
 ## BUG-005：小组赛阶段内每组 `slot` 从 1 重新计数，同阶段 `(round, slot)` 重号
 
-**严重度：** Low　**优先级：** P3　**类型：** 数据模型 / 展示　**状态：** 待修（已钉住）
+**严重度：** Low　**优先级：** P3　**类型：** 数据模型 / 展示　**状态：** 已修（v5.0.8：`slotOf` 计数器提出小组循环，同阶段共享——`(round, slot)` 恢复唯一，组内轮次顺序不变；两处唯一键隐性假设随之消除）
 
 ### 环境
 - 应用版本：v5.0.4　**触发角色：** `admin`　**触发入口：** `POST /api/admin/tournaments/:id/stages/:stageId/generate`（小组赛阶段）

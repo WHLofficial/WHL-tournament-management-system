@@ -425,6 +425,11 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       byGroup.set(e.group_id, arr);
     }
     const skipped: string[] = [];
+    // 轮内序号计数器放在小组循环外：同阶段 (round, slot) 必须唯一——
+    // byRS（standings.ts）与单回合 COUNT 判定（scoring.ts）都拿它当唯一键，
+    // 且列表 ORDER BY round, slot 时重号会导致组间交错（缺陷 D5）。
+    // 组内轮次顺序不变；每轮内场次按组循环顺序聚簇（A 组在前、B 组在后）。
+    const slotOf = new Map<number, number>();
     for (const g of groups.results ?? []) {
       const members = shuffle(byGroup.get(g.id) ?? []);
       if (members.length < 2) {
@@ -433,7 +438,6 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       }
       const sched = roundRobinSchedule(members.length, loops);
       rounds = Math.max(rounds, sched.matches.reduce((mx, m) => Math.max(mx, m.round), 0));
-      const slotOf = new Map<number, number>();
       for (const m of sched.matches) {
         const slot = (slotOf.get(m.round) ?? 0) + 1;
         slotOf.set(m.round, slot);

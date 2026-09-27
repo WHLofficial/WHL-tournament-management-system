@@ -466,7 +466,7 @@ describe("赛程生成：小组赛", () => {
     expect(rows.every((r) => r.leg === null && r.winner_entry_id === null)).toBe(true);
   });
 
-  it("同批多个小组共用 (round, slot) 编号（现状钉住：靠 group_id 区分，库内无唯一约束）", async () => {
+  it("同批多个小组共用阶段级 (round, slot) 编号：同轮 slot 不再重号（缺陷 D5）", async () => {
     const { env, sqlite } = freshEnv();
     mkTournament(sqlite, 47);
     mkEntries(sqlite, 47, [470, 471, 472, 473, 474, 475]);
@@ -478,7 +478,21 @@ describe("赛程生成：小组赛", () => {
     await generate(env, 47, 470);
     const round1 = rowsOf(sqlite, 470).filter((r) => r.round === 1);
     expect(round1).toHaveLength(2);
-    expect(round1.map((r) => r.slot)).toEqual([1, 1]); // 两个小组各自的第 1 轮第 1 场
+    expect(round1.map((r) => r.slot)).toEqual([1, 2]); // A 组第 1 场、B 组第 1 场依次编号
+  });
+
+  it("小组赛程全阶段 (round, slot) 组合两两不重复", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 47);
+    mkEntries(sqlite, 47, [470, 471, 472, 473, 474, 475]);
+    mkStage(sqlite, 470, 47, "group", 1, { group_count: 2, group_size: 3, loops: 1, qualify_per_group: 2 });
+    mkGroups(sqlite, 470, ["A", "B"]);
+    for (const e of [470, 471, 472]) setGroup(sqlite, e, 900);
+    for (const e of [473, 474, 475]) setGroup(sqlite, e, 901);
+
+    await generate(env, 47, 470);
+    const keys = rowsOf(sqlite, 470).map((r) => `${r.round}:${r.slot}`);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("所有组都凑不出比赛：400 且不清空已有场次", async () => {
