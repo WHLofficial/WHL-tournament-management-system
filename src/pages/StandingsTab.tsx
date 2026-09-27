@@ -3,7 +3,7 @@ import { api } from "../api";
 import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawTableCard } from "../lib/share";
-import type { StageStandingDTO, RankZone, RankZoneSettings } from "../../shared/types";
+import type { StageStandingDTO, RankZone, RankZoneSettings, TiebreakerKey } from "../../shared/types";
 import { formatRankRange, matchRankZone, zonesForTable } from "../../shared/rankZones";
 
 // 积分榜：小组/循环阶段各一张表，行序已由后端排好（积分→净胜→进球→相互战绩）。
@@ -12,15 +12,19 @@ import { formatRankRange, matchRankZone, zonesForTable } from "../../shared/rank
 export default function StandingsTab({ tournamentId }: { tournamentId: number }) {
   const [standings, setStandings] = useState<StageStandingDTO[] | null>(null);
   const [rankZones, setRankZones] = useState<RankZoneSettings | null>(null);
+  const [tiebreakers, setTiebreakers] = useState<TiebreakerKey[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ standings: StageStandingDTO[]; rankZones: RankZoneSettings | null }>(
-      `/api/admin/tournaments/${tournamentId}/standings`
-    )
+    api<{
+      standings: StageStandingDTO[];
+      rankZones: RankZoneSettings | null;
+      tiebreakers?: TiebreakerKey[];
+    }>(`/api/admin/tournaments/${tournamentId}/standings`)
       .then((b) => {
         setStandings(b.standings);
         setRankZones(b.rankZones ?? null);
+        setTiebreakers(b.tiebreakers ?? null);
       })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : "加载积分榜失败"));
   }, [tournamentId]);
@@ -30,17 +34,20 @@ export default function StandingsTab({ tournamentId }: { tournamentId: number })
   if (standings.length === 0)
     return <p className="muted card">还没有积分榜。循环赛或小组赛阶段产生比分后，这里会自动出现排名。</p>;
 
-  return <StandingsTables standings={standings} rankZones={rankZones} />;
+  return <StandingsTables standings={standings} rankZones={rankZones} tiebreakers={tiebreakers} />;
 }
 
 export function StandingsTables({
   standings,
   share,
   rankZones,
+  tiebreakers,
 }: {
   standings: StageStandingDTO[];
   share?: { tournamentName: string; url: string; coverUrl?: string | null } | null;
   rankZones?: RankZoneSettings | null;
+  /** 生效的同分决胜链（后端归一化后）：undefined = 旧接口未返回；[] = 未启用其他规则 */
+  tiebreakers?: TiebreakerKey[] | null;
 }) {
   const stageTitle = { group: "小组赛", round_robin: "循环赛" } as const;
   const zoneStyle = rankZones?.style ?? "strip";
@@ -143,10 +150,24 @@ export function StandingsTables({
         );
       })}
       <p className="muted standings-note">
-        * 积分：胜 3、平 1、负 0；平局后点球决胜的点球胜者记 2 分、负者记 1 分。排名依次比较积分、净胜球、进球数、相互战绩。
+        * 积分：胜 3、平 1、负 0；平局后点球决胜的点球胜者记 2 分、负者记 1 分。
+        {tiebreakerNote(tiebreakers)}
       </p>
     </>
   );
+}
+
+// 页脚同分说明按赛事实际生效的决胜链渲染（缺陷 D6）：
+// 链空 = 未启用其他规则，同分按报名顺序；接口未返回（旧缓存）时保持原默认文案。
+const TB_LABEL: Record<TiebreakerKey, string> = {
+  gd: "净胜球",
+  gf: "进球数",
+  h2h: "相互战绩",
+};
+function tiebreakerNote(chain?: TiebreakerKey[] | null): string {
+  if (chain === undefined || chain === null) return "排名依次比较积分、净胜球、进球数、相互战绩。";
+  if (chain.length === 0) return "当前未启用其他同分规则，同分按报名顺序排列。";
+  return `排名依次比较积分、${chain.map((t) => TB_LABEL[t]).join("、")}。`;
 }
 
 // 单张积分表：排名段渲染（strip=左缘色条+图例；divider=区间分隔线）与普通行共用一套列。

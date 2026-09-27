@@ -364,7 +364,8 @@ function SettingsTab({
     void tbForm.run(async () => {
       await api(`/api/admin/tournaments/${t.id}`, {
         method: "PATCH",
-        body: { tiebreakers: chain },
+        // 全部「不启用」用哨兵 ["none"] 落库（空数组会被后端回退成默认链）
+        body: { tiebreakers: chain.length > 0 ? chain : ["none"] },
       });
       await reload();
     });

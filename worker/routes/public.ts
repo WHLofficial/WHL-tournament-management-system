@@ -16,7 +16,7 @@ import type {
   TeamTacticsDTO,
   TacticXIPlayerDTO,
 } from "../../shared/types";
-import { readStageStandings } from "../lib/standings";
+import { readStageStandings, tiebreakersFromConfigJson } from "../lib/standings";
 import { parseRankZoneSettings } from "../../shared/rankZones";
 import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
@@ -1261,6 +1261,7 @@ app.get("/tournaments/:id/standings", pubCache(300), async (c) => {
   return c.json({
     standings,
     rankZones: parseRankZoneSettings(t.config_json),
+    tiebreakers: tiebreakersFromConfigJson(t.config_json),
   });
 });
 

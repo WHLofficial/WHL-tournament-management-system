@@ -435,16 +435,44 @@ export async function readStandings(
 // h2h 只在"其余项全同"的并列块内做小循环重排（积分/净胜，点球决胜按点胜 2 / 点负 1）。
 export const DEFAULT_TIEBREAKERS: TiebreakerKey[] = ["gd", "gf", "h2h"];
 
-export function normalizeTiebreakers(v: unknown): TiebreakerKey[] {
+// 「不启用任何同分规则」的存储哨兵：PATCH 全选「不启用」时落库为 ["none"]。
+// 排序层永不接触哨兵——读侧一律经 effectiveTiebreakers 映射为空链（积分 → 种子位）。
+const NONE_SENTINEL = "none";
+
+// 存储形态：合法链 | 哨兵。空数组/全非法值回退默认链（缺陷 D4：不再退化为空链）。
+export type StoredTiebreakers = TiebreakerKey[] | ["none"];
+
+export function normalizeTiebreakers(v: unknown): StoredTiebreakers {
   if (!Array.isArray(v)) return DEFAULT_TIEBREAKERS;
   const out: TiebreakerKey[] = [];
   for (const x of v) {
     if ((x === "gd" || x === "gf" || x === "h2h") && !out.includes(x)) out.push(x);
   }
+  if (out.length === 0) {
+    return v.includes(NONE_SENTINEL) ? ["none"] : DEFAULT_TIEBREAKERS;
+  }
   return out.slice(0, 3);
 }
 
-// 读赛事的同分规则配置；缺省回退默认链
+// 读侧口径：哨兵 → 空链；排序（sortStandRows 对空链 = 积分 → 种子位）与展示共用
+export function effectiveTiebreakers(v: unknown): TiebreakerKey[] {
+  const chain = normalizeTiebreakers(v);
+  if (chain.length === 1 && chain[0] === NONE_SENTINEL) return [];
+  // 排除哨兵后剩余形态即合法链（normalizeTiebreakers 不会产出含 "none" 的混合数组）
+  return chain as TiebreakerKey[];
+}
+
+export function tiebreakersFromConfigJson(configJson: string | null): TiebreakerKey[] {
+  let cfg: { tiebreakers?: unknown } = {};
+  try {
+    cfg = (JSON.parse(configJson || "{}") ?? {}) as { tiebreakers?: unknown };
+  } catch {
+    return DEFAULT_TIEBREAKERS;
+  }
+  return effectiveTiebreakers(cfg.tiebreakers);
+}
+
+// 读赛事的同分规则配置；缺省回退默认链；哨兵 ["none"] → 空链（仅积分 → 种子位）
 export async function getTiebreakers(
   db: D1Database,
   tid: number
@@ -454,13 +482,7 @@ export async function getTiebreakers(
     .bind(tid)
     .first<{ config_json: string | null }>();
   if (!t) return DEFAULT_TIEBREAKERS;
-  let cfg: { tiebreakers?: unknown } = {};
-  try {
-    cfg = (JSON.parse(t.config_json || "{}") ?? {}) as { tiebreakers?: unknown };
-  } catch {
-    return DEFAULT_TIEBREAKERS;
-  }
-  return normalizeTiebreakers(cfg.tiebreakers);
+  return tiebreakersFromConfigJson(t.config_json);
 }
 
 export function sortStandRows(

@@ -14,6 +14,7 @@ import {
   normalizeTiebreakers,
   readStageStandings,
   buildStandingsStmts,
+  tiebreakersFromConfigJson,
 } from "../../lib/standings";
 import { buildStats } from "../../lib/topstats";
 import {
@@ -249,6 +250,7 @@ app.get("/:id/standings", async (c) => {
   return c.json({
     standings,
     rankZones: parseRankZoneSettings(t.config_json),
+    tiebreakers: tiebreakersFromConfigJson(t.config_json),
   });
 });
 

@@ -22,6 +22,7 @@ import type {
   StageRoundsDTO,
   StageStandingDTO,
   RankZoneSettings,
+  TiebreakerKey,
   TournamentDetailDTO,
 } from "../../shared/types";
 
@@ -449,15 +450,19 @@ function PublicStandings({
 }) {
   const [standings, setStandings] = useState<StageStandingDTO[] | null>(null);
   const [rankZones, setRankZones] = useState<RankZoneSettings | null>(null);
+  const [tiebreakers, setTiebreakers] = useState<TiebreakerKey[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ standings: StageStandingDTO[]; rankZones: RankZoneSettings | null }>(
-      `/api/public/tournaments/${tid}/standings`
-    )
+    api<{
+      standings: StageStandingDTO[];
+      rankZones: RankZoneSettings | null;
+      tiebreakers?: TiebreakerKey[];
+    }>(`/api/public/tournaments/${tid}/standings`)
       .then((b) => {
         setStandings(b.standings);
         setRankZones(b.rankZones ?? null);
+        setTiebreakers(b.tiebreakers ?? null);
       })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : "加载积分榜失败"));
   }, [tid]);
@@ -470,6 +475,7 @@ function PublicStandings({
     <StandingsTables
       standings={standings}
       rankZones={rankZones}
+      tiebreakers={tiebreakers}
       share={{
         tournamentName,
         url: `${window.location.origin}/t/${tid}?tab=standings`,

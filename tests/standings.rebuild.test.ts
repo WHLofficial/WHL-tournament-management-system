@@ -291,7 +291,7 @@ describe("积分榜重建：排序链", () => {
     expect(await orderOf(env, 80)).toEqual([602, 601, 600, 603, 604, 605]);
   });
 
-  it("同分规则可配置：链可缩减；全为非法值时链变空而不是回落默认（缺陷 D4）", async () => {
+  it("同分规则可配置：链可缩减；全非法值/空数组回退默认链，哨兵 [\"none\"] 表达不启用（缺陷 D4）", async () => {
     const { env, sqlite } = freshEnv();
     await shoot(env, addMatch(sqlite, 80, 600, 601), 0, 1);
     await shoot(env, addMatch(sqlite, 80, 600, 602), 2, 1);
@@ -301,10 +301,45 @@ describe("积分榜重建：排序链", () => {
     expect(res.status).toBe(200);
     expect((await orderOf(env, 80)).slice(0, 3)).toEqual([602, 600, 601]);
 
-    // 非法项被逐项丢弃。注意 normalizeTiebreakers 只对「非数组」回退默认链，
-    // 数组里全是非法值时得到空链（D4）：同分只剩种子位兜底，h2h 也一起失效。
+    // 缺陷 D4 修复（哨兵方案）：
+    // - 全非法值 / 空数组 → 回退默认链（与 normalizeTiebreakers 注释契约一致，不再退化空链）；
+    // - 显式「不启用」用哨兵 ["none"] 表达 → 空链，同分只剩种子位兜底。
+    await patch(env, "/api/admin/tournaments/8", { tiebreakers: ["gd", "gf", "h2h"] });
+    const byDefault = await orderOf(env, 80);
+
     await patch(env, "/api/admin/tournaments/8", { tiebreakers: ["nonsense", "nope"] });
+    expect(await orderOf(env, 80)).toEqual(byDefault);
+    await patch(env, "/api/admin/tournaments/8", { tiebreakers: [] });
+    expect(await orderOf(env, 80)).toEqual(byDefault);
+
+    await patch(env, "/api/admin/tournaments/8", { tiebreakers: ["none"] });
     expect((await orderOf(env, 80)).slice(0, 3)).toEqual([600, 601, 602]);
+  });
+
+  it("榜单接口返回生效的同分链（缺陷 D6：默认 / 自定义 / 哨兵三态）", async () => {
+    const { env } = freshEnv();
+
+    const adminTb = async () => {
+      const res = await app.request("/api/admin/tournaments/8/standings", { headers: AUTH }, env);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { tiebreakers: string[] }).tiebreakers;
+    };
+
+    // 缺省配置 → 默认链；响应带 tiebreakers 字段供页脚渲染
+    expect(await adminTb()).toEqual(["gd", "gf", "h2h"]);
+    await patch(env, "/api/admin/tournaments/8", { tiebreakers: ["h2h"] });
+    expect(await adminTb()).toEqual(["h2h"]);
+    // 哨兵「不启用」→ 空数组；公开端与管理端口径一致
+    await patch(env, "/api/admin/tournaments/8", { tiebreakers: ["none"] });
+    expect(await adminTb()).toEqual([]);
+    // 公开端 pubCache 需要 caches.default + executionCtx，测试环境补最小桩（同 assign.test）
+    (globalThis as unknown as { caches: unknown }).caches ??= {
+      default: { match: async () => undefined, put: async () => {} },
+    };
+    const execCtx = { waitUntil: () => {}, passThroughOnException: () => {} } as never;
+    const pub = await app.request("/api/public/tournaments/8/standings", {}, env, execCtx);
+    expect(pub.status).toBe(200);
+    expect(((await pub.json()) as { tiebreakers: string[] }).tiebreakers).toEqual([]);
   });
 
   it("只配 h2h 时，互相咬住的循环小圈回落到种子位", async () => {
