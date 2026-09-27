@@ -390,7 +390,7 @@ describe("积分榜重建：小组、循环赛共存与扣分", () => {
     expect(bb.rows[0]).toMatchObject({ goalsFor: 1, goalsAgainst: 0 });
   });
 
-  it("缺陷 D3：同赛事既有小组又有循环赛时，循环赛榜单按 entry.group_id 分子块编号", async () => {
+  it("缺陷 D3：同赛事既有小组又有循环赛时，循环赛榜单名次全表唯一 1..N，不受 entry.group_id 残留影响", async () => {
     const { env, sqlite } = freshEnv();
     await shoot(env, addMatch(sqlite, 84, 610, 611), 3, 0);
 
@@ -398,13 +398,11 @@ describe("积分榜重建：小组、循环赛共存与扣分", () => {
     expect(b?.kind).toBe("round_robin");
     expect(b?.groups).toHaveLength(1); // 对外只呈现一组
     const rows = b!.groups[0].rows;
-    // 但 rank 是按 entry.group_id 分桶后各自从 1 起编号 → 六支球队里出现三个第 1 名、三个第 2 名
-    expect(rows.map((r) => r.rank).sort((x, y) => x - y)).toEqual([1, 1, 1, 2, 2, 2]);
-    // 分块依据是 entry.group_id 而不是全局积分序：同组两队必定占据该块的第 1、2 名
-    const ranksOf = (ids: number[]) =>
-      rows.filter((r) => ids.includes(r.entryId)).map((r) => r.rank).sort((x, y) => x - y);
-    expect(ranksOf([610, 611])).toEqual([1, 2]); // 610 以 3:0 胜 611，同组内分列 1、2
-    expect(ranksOf([612, 613])).toEqual([1, 2]); // 两队未交手、积分相同，按 seed 分列 1、2
+    // 读侧按阶段类型分桶：round_robin 阶段整表单桶，名次唯一 1..6（修复前是 1,1,1,2,2,2）
+    expect(rows.map((r) => r.rank)).toEqual([1, 2, 3, 4, 5, 6]);
+    // 顺序是全局积分序：610 三分居首；其余 0 分比同分链，611 净胜 -3 垫底
+    expect(rows.map((r) => r.entryId)).toEqual([610, 612, 613, 614, 615, 611]);
+    // group_id 仍原样写库——改的只是读侧分桶，不动历史数据
     expect(dbRow(sqlite, 610, 84)).toMatchObject({ pts: 3, group_id: 900 });
   });
 

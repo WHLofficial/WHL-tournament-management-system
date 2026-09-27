@@ -359,10 +359,12 @@ export async function readStandings(
     .prepare(
       `SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,
               s.played, s.won, s.drawn, s.lost,
-              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted
+              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted,
+              st.kind AS stage_kind
        FROM standing s
        JOIN entry e ON e.id = s.entry_id
        JOIN team t ON t.id = e.team_id
+       JOIN stage st ON st.id = s.stage_id
        WHERE s.stage_id = ?`
     )
     .bind(stageId)
@@ -382,6 +384,7 @@ export async function readStandings(
       pen_lost: number;
       pts: number;
       points_deducted: number;
+      stage_kind: string;
     }>();
   const rows: StandRow[] = (res.results ?? []).map((r) => ({
     entryId: r.entry_id,
@@ -402,6 +405,8 @@ export async function readStandings(
     rank: 0,
   }));
   if (rows.length === 0) return [];
+  // 同一 stage_id 的行必然同阶段，kind 取第一行即可
+  const stageKind = res.results![0].stage_kind;
 
   // 相互战绩数据：该 stage 全部完赛场次（块内小循环重排时用）
   const finished = await db
@@ -414,19 +419,26 @@ export async function readStandings(
     .all<FinishedMatchRow>();
   const finishedRows = finished.results ?? [];
 
-  // 分组内按同分链排序
-  const byGroup = new Map<number | null, StandRow[]>();
-  for (const r of rows) {
-    const key = r.groupId ?? 0;
-    if (!byGroup.has(key)) byGroup.set(key, []);
-    byGroup.get(key)!.push(r);
+  // 分桶策略按阶段类型决定（缺陷 D3）：standing.group_id 对所有阶段都复制 entry.group_id
+  // （抽签写入），只有 group 阶段它是合法的分桶键；其余阶段（round_robin）必须整表单桶，
+  // 否则循环赛榜单会被上一阶段残留的 group_id 切成多块、名次重复 1,1,1,2,2,2。
+  // group 阶段桶内编号语义不能动：takeRangePool（schedule.ts）与小组出线器都按桶内名次取人。
+  if (stageKind === "group") {
+    const byGroup = new Map<number | null, StandRow[]>();
+    for (const r of rows) {
+      const key = r.groupId ?? 0;
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(r);
+    }
+    const out: StandRow[] = [];
+    for (const list of byGroup.values()) {
+      sortStandRows(list, chain ?? DEFAULT_TIEBREAKERS, finishedRows);
+      out.push(...list);
+    }
+    return out;
   }
-  const out: StandRow[] = [];
-  for (const list of byGroup.values()) {
-    sortStandRows(list, chain ?? DEFAULT_TIEBREAKERS, finishedRows);
-    out.push(...list);
-  }
-  return out;
+  sortStandRows(rows, chain ?? DEFAULT_TIEBREAKERS, finishedRows);
+  return rows;
 }
 
 // ---------- 同分规则（可配置决胜链）----------
