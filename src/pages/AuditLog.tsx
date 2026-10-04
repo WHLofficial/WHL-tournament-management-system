@@ -26,10 +26,11 @@ const EVENT_HINTS = [
   "signup_code.create", "org.open_reg", "bind.claim", "team.bind", "team.unbind",
 ];
 
-/** datetime-local 值 → ISO；空/非法返回 null（不进筛选） */
+/** datetime-local 值 → ISO；值不带时区后缀，按北京时间（UTC+8）解析；空/非法返回 null（不进筛选） */
 const toIso = (v: string): string | null => {
   if (!v) return null;
-  const d = new Date(v);
+  // 输入可能是 "YYYY-MM-DDTHH:mm" 或带秒形态，追加 +08:00 后 V8 两种都能解析
+  const d = new Date(`${v}+08:00`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
@@ -129,11 +130,11 @@ export function AuditLog() {
             ))}
           </datalist>
           <label>
-            从{" "}
+            从（北京时间）{" "}
             <input className="input-sm" type="datetime-local" value={since} onChange={(e) => setSince(e.target.value)} />
           </label>
           <label>
-            到{" "}
+            到（北京时间）{" "}
             <input className="input-sm" type="datetime-local" value={until} onChange={(e) => setUntil(e.target.value)} />
           </label>
           <button className="btn btn-sm" type="submit" disabled={busy}>
