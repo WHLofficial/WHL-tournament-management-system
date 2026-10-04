@@ -17,6 +17,8 @@ import type {
   TacticXIPlayerDTO,
 } from "../../shared/types";
 import { readStageStandings, tiebreakersFromConfigJson } from "../lib/standings";
+import { loadQualifierContext } from "../lib/qualifierSource";
+import { firstRoundSeatLabels } from "../lib/qualifiers";
 import { parseRankZoneSettings } from "../../shared/rankZones";
 import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
@@ -322,6 +324,112 @@ const toPubMatch = (
   };
 };
 
+// 淘汰赛空席位的候选占位：后续轮取上一轮两个来源场次的参赛队名（「/」连接），
+// 季军赛取两场半决赛；首轮按来源阶段名次（跨组模板 → 队名或「A 组第 1」；取人区间 → 队名或「阶段 N 第 a–b 名」）。
+// 轮空行不铺占位；非空席位不下发；算不出就缺省（前端回退「待定」）。
+type ElimPlaceholderRow = {
+  id: number;
+  round: number;
+  slot: number;
+  leg: number | null;
+  home_entry_id: number | null;
+  away_entry_id: number | null;
+  note: string | null;
+  home_name: string | null;
+  away_name: string | null;
+};
+
+async function buildElimPlaceholders(
+  db: D1Database,
+  tid: number,
+  stageIds: number[]
+): Promise<Map<number, { home: string | null; away: string | null }>> {
+  const out = new Map<number, { home: string | null; away: string | null }>();
+  for (const stageId of stageIds) {
+    const stage = await db
+      .prepare("SELECT id, kind, name, config_json FROM stage WHERE id = ? AND tournament_id = ?")
+      .bind(stageId, tid)
+      .first<{ id: number; kind: string; name: string | null; config_json: string | null }>();
+    if (!stage || stage.kind !== "elim") continue;
+    const rows =
+      (
+        await db
+          .prepare(
+            `SELECT m.id, m.round, m.slot, m.leg, m.home_entry_id, m.away_entry_id, m.note,
+                    ht.name AS home_name, at.name AS away_name
+             FROM match m
+             LEFT JOIN entry he ON he.id = m.home_entry_id
+             LEFT JOIN team ht ON ht.id = he.team_id
+             LEFT JOIN entry ae ON ae.id = m.away_entry_id
+             LEFT JOIN team at ON at.id = ae.team_id
+             WHERE m.stage_id = ?
+             ORDER BY m.round, m.slot, m.leg`
+          )
+          .bind(stageId)
+          .all<ElimPlaceholderRow>()
+      ).results ?? [];
+    if (rows.length === 0) continue;
+    // 来源场次的参赛队名（bracket 里同一对的两条 leg 行队名相同；轮空来源只有一支队，也算已确定）
+    const participants = (round: number, slot: number): string[] => {
+      const row = rows.find((r) => r.round === round && r.slot === slot && r.leg !== 2);
+      if (!row) return [];
+      return [row.home_name, row.away_name]
+        .map((n) => (typeof n === "string" ? n.trim() : ""))
+        .filter(Boolean);
+    };
+    let cfg: unknown = null;
+    let ctxLoaded = false;
+    let ctx: Awaited<ReturnType<typeof loadQualifierContext>> | null = null;
+    for (const r of rows) {
+      if ((r.note ?? "") === "轮空") continue;
+      if (r.home_entry_id != null && r.away_entry_id != null) continue;
+      const ph: { home: string | null; away: string | null } = { home: null, away: null };
+      if (r.round === 1) {
+        if (!ctxLoaded) {
+          ctxLoaded = true;
+          try {
+            cfg = JSON.parse(stage.config_json || "{}");
+          } catch {
+            cfg = null;
+          }
+          ctx = await loadQualifierContext(db, tid, stageId, stage.config_json);
+        }
+        // 来源阶段没全部完赛时名次不作数（loadQualifierContext 会给空行）→ 一律回退「待定」，
+        // 连 cross 的「A 组第 1」这类模板标签也不下发：席位还没定，标了反而误导
+        if (ctx && ctx.stageKind !== "elim" && ctx.rows.length > 0) {
+          const labels = firstRoundSeatLabels({
+            config: cfg,
+            sourceStageName: ctx.stageName,
+            sourceStageKind: ctx.stageKind,
+            sourceRows: ctx.rows,
+            slot: r.slot,
+          });
+          ph.home = labels.home;
+          ph.away = labels.away;
+        }
+      } else {
+        const isThird = (r.note ?? "") === "季军赛";
+        const f1 = isThird ? 1 : r.slot * 2 - 1;
+        const f2 = isThird ? 2 : r.slot * 2;
+        const names1 = participants(r.round - 1, f1);
+        const names2 = participants(r.round - 1, f2);
+        ph.home = names1.length > 0 ? names1.join("/") : null;
+        ph.away = names2.length > 0 ? names2.join("/") : null;
+      }
+      // 次回合主客对调（与 slotRows / 晋级器同口径）：leg2 行的主队来自下一个来源场次
+      if (r.leg === 2) {
+        const swap = ph.home;
+        ph.home = ph.away;
+        ph.away = swap;
+      }
+      if (r.home_entry_id != null) ph.home = null;
+      if (r.away_entry_id != null) ph.away = null;
+      if (ph.home || ph.away) out.set(r.id, ph);
+    }
+  }
+  return out;
+}
+
 app.get("/tournaments/:id/matches", pubCache(60), async (c) => {
   const tid = Number(c.req.param("id"));
   const pub = await c.env.DB.prepare(
@@ -371,6 +479,17 @@ app.get("/tournaments/:id/matches", pubCache(60), async (c) => {
   ]);
 
   const matches: MatchDTO[] = list.map((r) => toPubMatch(r, liveScores, eventsByMatch));
+  // 淘汰赛空席位占位：整阶段计算（前端按轮懒加载，后续轮占位要读上一轮数据）
+  const elimStageIds = [...new Set(list.filter((r) => r.stage_kind === "elim").map((r) => r.stage_id))];
+  if (elimStageIds.length > 0) {
+    const ph = await buildElimPlaceholders(c.env.DB, tid, elimStageIds);
+    for (const m of matches) {
+      const p = ph.get(m.id);
+      if (!p) continue;
+      m.homePlaceholder = p.home;
+      m.awayPlaceholder = p.away;
+    }
+  }
   return c.json({ matches });
 });
 

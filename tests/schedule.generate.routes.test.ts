@@ -49,7 +49,6 @@ function freshEnv() {
 const post = (env: Env, path: string, body: unknown) =>
   app.request(path, { method: "POST", headers: AUTH, body: JSON.stringify(body) }, env);
 const del = (env: Env, path: string) => app.request(path, { method: "DELETE", headers: AUTH }, env);
-const get = (env: Env, path: string) => app.request(path, { headers: AUTH }, env);
 const msg = async (res: Response) => ((await res.json()) as { message?: string }).message ?? "";
 
 const generate = (env: Env, tid: number, stageId: number) =>
@@ -121,216 +120,33 @@ const pairsOf = (rows: MatchRow[]) =>
     .map((r) => [r.home_entry_id!, r.away_entry_id!] as [number, number]);
 const keyOf = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
 
-describe("赛程生成：淘汰赛", () => {
-  it("8 队：按标准种子位序配对，后续轮次全是待晋级器填充的空壳", async () => {
+describe("赛程生成：淘汰赛已改为手动落位", () => {
+  it("淘汰赛阶段调用自动生成 → 400（不再自动生成对阵）", async () => {
     const { env, sqlite } = freshEnv();
     mkTournament(sqlite, 40);
     mkEntries(sqlite, 40, [400, 401, 402, 403, 404, 405, 406, 407]);
     mkStage(sqlite, 400, 40, "elim", 1, { legs: 1 });
 
     const res = await generate(env, 40, 400);
-    expect(res.status).toBe(200);
-    // 淘汰赛路径不带 balanced 字段（balanced 只有循环赛/小组赛计算）
-    expect(await res.json()).toEqual({ created: 7, rounds: 3 });
-
-    expect(rowsOf(sqlite, 400).map((r) => [r.round, r.slot, r.home_entry_id, r.away_entry_id])).toEqual([
-      [1, 1, 400, 407],
-      [1, 2, 403, 404],
-      [1, 3, 401, 406],
-      [1, 4, 402, 405],
-      [2, 1, null, null],
-      [2, 2, null, null],
-      [3, 1, null, null],
-    ]);
-    const rows = rowsOf(sqlite, 400);
-    expect(rows.every((r) => r.status === "pending" && r.winner_entry_id === null && r.note === null)).toBe(true);
-  });
-
-  it("6 队：补幂产生 2 场轮空（winner 预填、note=轮空），空壳轮次照常生成", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 40);
-    mkEntries(sqlite, 40, [400, 401, 402, 403, 404, 405]);
-    mkStage(sqlite, 400, 40, "elim", 1, { legs: 1 });
-
-    const res = await generate(env, 40, 400);
-    expect(await res.json()).toEqual({ created: 7, rounds: 3 });
-    expect(
-      rowsOf(sqlite, 400)
-        .filter((r) => r.round === 1)
-        .map((r) => [r.slot, r.home_entry_id, r.away_entry_id, r.winner_entry_id, r.note])
-    ).toEqual([
-      [1, 400, null, 400, "轮空"],
-      [2, 403, 404, null, null],
-      [3, 401, null, 401, "轮空"],
-      [4, 402, 405, null, null],
-    ]);
-    // 轮空场以 pending + 预填 winner 落库（不是 finished），这样重生成不会被 started 守卫挡住
-    expect(rowsOf(sqlite, 400).every((r) => r.status === "pending")).toBe(true);
-  });
-
-  it("2 队：只生成 1 场，且 rounds<2 时不生成季军赛", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 49);
-    mkEntries(sqlite, 49, [490, 491]);
-    mkStage(sqlite, 490, 49, "elim", 1, { legs: 1, third_place: true });
-
-    const res = await generate(env, 49, 490);
-    expect(await res.json()).toEqual({ created: 1, rounds: 1 });
-    expect(rowsOf(sqlite, 490).map((r) => [r.home_entry_id, r.away_entry_id, r.note])).toEqual([
-      [490, 491, null],
-    ]);
-  });
-
-  it("报名不足 2 支：400 且不清空已有场次", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 41);
-    mkEntries(sqlite, 41, [410]);
-    mkStage(sqlite, 410, 41, "elim", 1, { legs: 1 });
-    sqlite
-      .prepare("INSERT INTO match (id, stage_id, round, slot, home_entry_id, away_entry_id, status) VALUES (9001, 410, 1, 1, 410, NULL, 'pending')")
-      .run();
-
-    const res = await generate(env, 41, 410);
     expect(res.status).toBe(400);
-    expect(await msg(res)).toBe("报名不足 2 支，无法生成对阵");
-    expect(countOf(sqlite, 410)).toBe(1);
+    expect(await msg(res)).toBe("淘汰赛改为手动落位，不再自动生成对阵");
+    expect(countOf(sqlite, 400)).toBe(0);
   });
 
-  it("seed 乱序写入时按 seed 升序取队（home 取 seed 1）", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 42);
-    mkEntries(sqlite, 42, [420, 421, 422, 423], [4, 1, 3, 2]);
-    mkStage(sqlite, 420, 42, "elim", 1, { legs: 1 });
-
-    await generate(env, 42, 420);
-    expect(rowsOf(sqlite, 420).map((r) => [r.round, r.slot, r.home_entry_id, r.away_entry_id])).toEqual([
-      [1, 1, 421, 420], // seed 1 vs seed 4
-      [1, 2, 423, 422], // seed 2 vs seed 3
-      [2, 1, null, null],
-    ]);
-  });
-
-  it("legs=2：首轮每对两回合且主客对调，决赛轮跟随 legs", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 42);
-    mkEntries(sqlite, 42, [420, 421, 422, 423]);
-    mkStage(sqlite, 420, 42, "elim", 1, { legs: 2 });
-
-    const res = await generate(env, 42, 420);
-    expect(await res.json()).toEqual({ created: 6, rounds: 2 });
-    expect(rowsOf(sqlite, 420).map((r) => [r.round, r.slot, r.leg, r.home_entry_id, r.away_entry_id])).toEqual([
-      [1, 1, 1, 420, 423],
-      [1, 1, 2, 423, 420],
-      [1, 2, 1, 421, 422],
-      [1, 2, 2, 422, 421],
-      [2, 1, 1, null, null],
-      [2, 1, 2, null, null],
-    ]);
-  });
-
-  it("final_legs 覆盖决赛轮回合数", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 42);
-    mkEntries(sqlite, 42, [420, 421, 422, 423]);
-    mkStage(sqlite, 420, 42, "elim", 1, { legs: 2, final_legs: 1 });
-
-    const res = await generate(env, 42, 420);
-    expect(await res.json()).toEqual({ created: 5, rounds: 2 });
-    const final = rowsOf(sqlite, 420).filter((r) => r.round === 2);
-    expect(final.map((r) => [r.slot, r.leg])).toEqual([[1, null]]); // 单回合场不写 leg
-  });
-
-  it("third_place：决赛轮补一场季军赛（note=季军赛）", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 42);
-    mkEntries(sqlite, 42, [420, 421, 422, 423]);
-    mkStage(sqlite, 420, 42, "elim", 1, { legs: 1, third_place: true });
-
-    const res = await generate(env, 42, 420);
-    expect(await res.json()).toEqual({ created: 4, rounds: 2 });
-    expect(
-      rowsOf(sqlite, 420)
-        .filter((r) => r.round === 2)
-        .map((r) => [r.slot, r.note])
-    ).toEqual([
-      [1, null],
-      [2, "季军赛"],
-    ]);
-  });
-
-  it("季军赛回填：两场半决赛决出后，决赛拿两胜者、季军赛拿两位负者", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 53);
-    mkEntries(sqlite, 53, [530, 531, 532, 533, 534, 535, 536, 537]);
-    mkStage(sqlite, 530, 53, "elim", 1, { legs: 1, third_place: true });
-    await generate(env, 53, 530);
-
-    const roundOf = (round: number) =>
-      sqlAll<{ id: number; home_entry_id: number | null; away_entry_id: number | null }>(
-        sqlite,
-        "SELECT id, home_entry_id, away_entry_id FROM match WHERE stage_id = 530 AND round = ? ORDER BY slot",
-        round
-      );
-
-    // 首轮按种子位配对（1v8、4v5、2v7、3v6），主队都是高种子 → 一律主队取胜
-    for (const m of roundOf(1)) await finish(env, m.id, { scoreHome: 1, scoreAway: 0 });
-
-    // 半决赛由晋级器填好：slot1 = 首轮 slot1 胜者 vs slot2 胜者，slot2 = slot3 胜者 vs slot4 胜者
-    expect(roundOf(2).map((m) => [m.home_entry_id, m.away_entry_id])).toEqual([
-      [530, 533],
-      [531, 532],
-    ]);
-
-    for (const m of roundOf(2)) await finish(env, m.id, { scoreHome: 1, scoreAway: 0 });
-
-    // 决赛 = 两场半决赛的胜者；季军赛 = 两场半决赛的负者（533 输给 530、532 输给 531）
-    const last = roundOf(3);
-    expect(last.map((m) => [m.home_entry_id, m.away_entry_id])).toEqual([
-      [530, 531],
-      [533, 532],
-    ]);
-    expect(rowsOf(sqlite, 530).filter((r) => r.round === 3).map((r) => r.note)).toEqual([null, "季军赛"]);
-    expect(rowsOf(sqlite, 530).filter((r) => r.round === 3).map((r) => r.status)).toEqual([
-      "pending",
-      "pending",
-    ]);
-  });
-
-  it("阶段已有开打或完赛场次时 409，且不改动已有数据", async () => {
+  it("已有开打场次的淘汰赛阶段仍先撞 409 结构闸门", async () => {
     const { env, sqlite } = freshEnv();
     mkTournament(sqlite, 40);
-    mkEntries(sqlite, 40, [400, 401, 402, 403, 404, 405, 406, 407]);
+    mkEntries(sqlite, 40, [400, 401]);
     mkStage(sqlite, 400, 40, "elim", 1, { legs: 1 });
-    await generate(env, 40, 400);
-    const target = sqlGet<{ id: number }>(
-      sqlite,
-      "SELECT id FROM match WHERE stage_id = 400 AND round = 1 AND slot = 1"
-    )!;
-    setStatus(sqlite, target.id, "live");
-    const before = rowsOf(sqlite, 400);
+    sqlite
+      .prepare(
+        "INSERT INTO match (id, stage_id, round, slot, home_entry_id, away_entry_id, status, note) VALUES (9998, 400, 1, 1, 400, 401, 'live', NULL)"
+      )
+      .run();
 
     const res = await generate(env, 40, 400);
     expect(res.status).toBe(409);
     expect(await msg(res)).toBe("该阶段已有开打或完赛的场次，不能重新生成");
-    expect(countOf(sqlite, 400)).toBe(7);
-    expect(rowsOf(sqlite, 400)).toEqual(before); // 被守卫挡下，一行都没动
-  });
-
-  it("重复生成 = 清空该阶段全部未开打场次后重建", async () => {
-    const { env, sqlite } = freshEnv();
-    mkTournament(sqlite, 40);
-    mkEntries(sqlite, 40, [400, 401, 402, 403, 404, 405, 406, 407]);
-    mkStage(sqlite, 400, 40, "elim", 1, { legs: 1 });
-    await generate(env, 40, 400);
-    sqlite
-      .prepare("INSERT INTO match (id, stage_id, round, slot, home_entry_id, away_entry_id, status, note) VALUES (9999, 400, 9, 9, 400, 401, 'pending', '手工残留')")
-      .run();
-
-    const res = await generate(env, 40, 400);
-    expect(await res.json()).toEqual({ created: 7, rounds: 3 });
-    const rows = rowsOf(sqlite, 400);
-    expect(rows).toHaveLength(7);
-    expect(rows.some((r) => r.note === "手工残留")).toBe(false);
   });
 
   it("阶段不属于该赛事时 404", async () => {
@@ -344,6 +160,7 @@ describe("赛程生成：淘汰赛", () => {
     expect(await msg(res)).toBe("阶段不存在");
   });
 });
+
 
 describe("赛程生成：循环赛", () => {
   it("8 队单循环：28 场 7 轮，每对恰好一场且无自交手", async () => {
@@ -606,7 +423,8 @@ describe("名次取人（takeRangePool）", () => {
     mkTournament(sqlite, 51);
     mkEntries(sqlite, 51, [510, 511, 512, 513]);
     mkStage(sqlite, 510, 51, "round_robin", 1, { loops: 1 });
-    mkStage(sqlite, 511, 51, "elim", 2, { legs: 1, source: opts.configuredSource ?? { take: 4 } });
+    // 淘汰赛不再自动生成，取人区间只服务非淘汰赛目标（出线标记/占位另见 qualifiers 用例）
+    mkStage(sqlite, 511, 51, "round_robin", 2, { loops: 1, source: opts.configuredSource ?? { take: 4 } });
     return { env, sqlite };
   }
 
@@ -619,31 +437,26 @@ describe("名次取人（takeRangePool）", () => {
     }
   };
 
-  it("来源阶段完赛后按积分榜名次取人，pool 内 seed = 名次", async () => {
+  it("来源阶段完赛后按名次区间取人：取 4 支 → 单循环 6 场（取人顺序另由占位/出线用例覆盖）", async () => {
     const { env, sqlite } = await twoStageFixture();
     await generate(env, 51, 510);
     await finishAll(env, sqlite, 510);
 
     const res = await generate(env, 51, 511);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ created: 3, rounds: 2, source: "topN" });
+    const body = (await res.json()) as { created: number; rounds: number };
+    expect(body.created).toBe(6);
+    expect(body.rounds).toBe(3);
 
-    const board = (await (await get(env, "/api/admin/tournaments/51/standings")).json()) as {
-      standings: Array<{ stageId: number; groups: Array<{ rows: Array<{ entryId: number; rank: number }> }> }>;
-    };
-    const ranked = board.standings
-      .find((s) => s.stageId === 510)!
-      .groups.flatMap((g) => g.rows)
-      .sort((a, b) => a.rank - b.rank)
-      .map((r) => r.entryId);
-    expect(ranked).toHaveLength(4);
-
-    // buildElimPlan(4) 的种子位序是 1-4 / 2-3
-    expect(rowsOf(sqlite, 511).map((r) => [r.round, r.slot, r.home_entry_id, r.away_entry_id])).toEqual([
-      [1, 1, ranked[0], ranked[3]],
-      [1, 2, ranked[1], ranked[2]],
-      [2, 1, null, null],
-    ]);
+    // 目标阶段是循环赛：池子会被 shuffle，故只钉「取到的是哪 4 支」与「两两交手各一次」
+    const rows = rowsOf(sqlite, 511);
+    const ids = new Set<number | null>();
+    for (const r of rows) {
+      ids.add(r.home_entry_id);
+      ids.add(r.away_entry_id);
+    }
+    expect([...ids].sort((a, b) => a! - b!)).toEqual([510, 511, 512, 513]);
+    expect(new Set(rows.map((r) => keyOf(r.home_entry_id!, r.away_entry_id!))).size).toBe(6);
   });
 
   it("来源阶段还没全部完赛 → 400", async () => {
@@ -673,7 +486,7 @@ describe("名次取人（takeRangePool）", () => {
     await finishAll(tooFew.env, tooFew.sqlite, 510);
     const resFew = await generate(tooFew.env, 51, 511);
     expect(resFew.status).toBe(400);
-    expect(await msg(resFew)).toBe("取人后不足 2 支，无法生成对阵");
+    expect(await msg(resFew)).toBe("报名不足 2 支，无法生成赛程");
   });
 
   it("第一阶段配了取人规则 → 400；取人来源是淘汰赛 → 400", async () => {
@@ -689,7 +502,7 @@ describe("名次取人（takeRangePool）", () => {
     mkTournament(elimSource.sqlite, 51);
     mkEntries(elimSource.sqlite, 51, [510, 511, 512, 513]);
     mkStage(elimSource.sqlite, 510, 51, "elim", 1, { legs: 1 });
-    mkStage(elimSource.sqlite, 511, 51, "elim", 2, { legs: 1, source: { take: 2, fromStage: 510 } });
+    mkStage(elimSource.sqlite, 511, 51, "round_robin", 2, { loops: 1, source: { take: 2, fromStage: 510 } });
     const resElim = await generate(elimSource.env, 51, 511);
     expect(resElim.status).toBe(400);
     expect(await msg(resElim)).toBe("取人来源不能是淘汰赛阶段（淘汰赛没有名次）");

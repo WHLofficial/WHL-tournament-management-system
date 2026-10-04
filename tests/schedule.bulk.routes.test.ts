@@ -129,11 +129,11 @@ describe("管理端批量落场", () => {
     expect(((await res.json()) as { message: string }).message).toBe("第 1 场：参赛队伍不存在");
   });
 
-  it("淘汰赛阶段不支持手动落场", async () => {
+  it("淘汰赛阶段不支持批量手动落场，指引到落位端点", async () => {
     const { env } = freshEnv();
     const res = await bulk(env, [pair(500, 501), pair(502, 503)], 1, 72);
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { message: string }).message).toContain("淘汰赛对阵由晋级器按结果填充");
+    expect(((await res.json()) as { message: string }).message).toBe("第 1 场：淘汰赛请在赛程页逐场点选落位");
   });
 
   it("单场路由仍按旧口径分流：本轮/交手冲突回 409，其余 400；成功回 201", async () => {

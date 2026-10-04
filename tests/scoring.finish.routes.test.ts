@@ -428,7 +428,10 @@ describe("scoring 报分（finish）", () => {
     const { env, sqlite } = freshEnv();
     // 循环赛阶段只留 4 场（不做完整单循环，代码只校验「全部完赛」）
     sqlite.prepare("DELETE FROM match WHERE stage_id IN (70, 72)").run();
-    sqlite.prepare("UPDATE stage SET config_json = ? WHERE id = 72").run('{"source":{"take":2}}');
+    // 淘汰赛不再自动生成；把下一阶段设为循环赛，继续覆盖「回填取人必须读重算后的积分榜」这条路径
+    sqlite
+      .prepare("UPDATE stage SET kind = 'round_robin', config_json = ? WHERE id = 72")
+      .run('{"loops":1,"source":{"take":2}}');
     const m = sqlite.prepare(
       `INSERT INTO match (id, stage_id, round, slot, leg, home_entry_id, away_entry_id, status, winner_entry_id, note, walkover_side)
        VALUES (?, 70, ?, ?, NULL, ?, ?, 'pending', NULL, NULL, '')`
@@ -468,14 +471,18 @@ describe("scoring 报分（finish）", () => {
     );
     expect(created.length).toBe(1);
     // 回填取人必须发生在积分重算落库之后：末轮 503 3:0 反超 501 的净胜球，
-    // 第 2 名是 503 —— 若读到重算前的旧快照会把 501 写进季后赛对阵（缺陷 D1）。
-    expect(created[0]).toMatchObject({ home_entry_id: 500, away_entry_id: 503 });
+    // 第 2 名是 503 —— 若读到重算前的旧快照会把 501 写进对阵（缺陷 D1）。
+    // 循环赛目标池子会被 shuffle，故只钉取到的集合。
+    expect([created[0].home_entry_id, created[0].away_entry_id].sort((a, b) => a! - b!)).toEqual([500, 503]);
   });
 
   it("阶段收官但末轮不改变取人区间名次：回填结果不受重算时序影响", async () => {
     const { env, sqlite } = freshEnv();
     sqlite.prepare("DELETE FROM match WHERE stage_id IN (70, 72)").run();
-    sqlite.prepare("UPDATE stage SET config_json = ? WHERE id = 72").run('{"source":{"take":2}}');
+    // 淘汰赛不再自动生成；把下一阶段设为循环赛，继续覆盖「回填取人必须读重算后的积分榜」这条路径
+    sqlite
+      .prepare("UPDATE stage SET kind = 'round_robin', config_json = ? WHERE id = 72")
+      .run('{"loops":1,"source":{"take":2}}');
     const m = sqlite.prepare(
       `INSERT INTO match (id, stage_id, round, slot, leg, home_entry_id, away_entry_id, status, winner_entry_id, note, walkover_side)
        VALUES (?, 70, ?, ?, NULL, ?, ?, 'pending', NULL, NULL, '')`
@@ -497,7 +504,7 @@ describe("scoring 报分（finish）", () => {
       "SELECT home_entry_id, away_entry_id FROM match WHERE stage_id = 72"
     );
     expect(created.length).toBe(1);
-    expect(created[0]).toMatchObject({ home_entry_id: 500, away_entry_id: 501 });
+    expect([created[0].home_entry_id, created[0].away_entry_id].sort((a, b) => a! - b!)).toEqual([500, 501]);
   });
 });
 

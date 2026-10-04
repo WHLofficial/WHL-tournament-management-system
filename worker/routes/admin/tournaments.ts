@@ -422,6 +422,28 @@ async function syncStageConfigs(
       config_json: string | null;
     }>();
   let hasGroup = false;
+  // 淘汰赛阶段一旦有了场次，回合制参数就锁死：场次行的 leg 结构是按当时的 legs/final_legs 铺的，
+  // 改了配置 DB 与配置会不一致（与前端 ScheduleTab 的锁定同口径；要改先「清除赛程」）
+  const elimStages = (stages.results ?? []).filter((s) => s.kind === "elim");
+  if (elimStages.length > 0) {
+    const counts = await env.DB.prepare(
+      `SELECT stage_id, COUNT(*) AS n FROM match
+       WHERE stage_id IN (${elimStages.map(() => "?").join(",")}) GROUP BY stage_id`
+    )
+      .bind(...elimStages.map((s) => s.id))
+      .all<{ stage_id: number; n: number }>();
+    const withMatches = new Set(
+      (counts.results ?? []).filter((r) => r.n > 0).map((r) => r.stage_id)
+    );
+    for (const st of elimStages) {
+      if (!withMatches.has(st.id)) continue;
+      const cur = (JSON.parse(st.config_json || "{}") ?? {}) as Record<string, unknown>;
+      const changed = KEY_BY_KIND.elim.filter((k) => k in patch && patch[k] !== cur[k]);
+      if (changed.length > 0) {
+        return "该淘汰赛阶段已有场次，回合制参数已锁定（要改先清除赛程）";
+      }
+    }
+  }
   for (const st of stages.results ?? []) {
     const keys = KEY_BY_KIND[st.kind];
     if (!keys) continue;

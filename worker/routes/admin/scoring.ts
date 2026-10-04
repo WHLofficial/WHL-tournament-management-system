@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { requirePermission } from "../../middleware/auth";
 import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
+import { firstRoundSizeError, type ManualRow } from "../../lib/manualBracket";
 import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig } from "../../lib/suspension";
 import { fetchMatchLineup, LineupError } from "../../lib/lineup";
@@ -72,6 +73,23 @@ async function loadMatchCtx(db: D1Database, matchId: number): Promise<MatchCtx> 
   return { m: row, stageKind: row.stage_kind, tournamentId: row.tournament_id };
 }
 
+// 淘汰赛结构闸门：首轮场次数不是 2 的幂时后续轮次尚未铺开，开打入口一律拒绝
+async function assertBracketReady(db: D1Database, ctx: MatchCtx) {
+  if (ctx.stageKind !== "elim") return;
+  const rows =
+    (
+      await db
+        .prepare(
+          `SELECT id, round, slot, leg, home_entry_id, away_entry_id, winner_entry_id, status, note
+           FROM match WHERE stage_id = ? AND round = 1 ORDER BY slot, leg`
+        )
+        .bind(ctx.m.stage_id)
+        .all<ManualRow>()
+    ).results ?? [];
+  const err = firstRoundSizeError(rows);
+  if (err) throw new HttpError(409, err);
+}
+
 const LIVE_SCORE_SQL = `SELECT entry_id,
         SUM(CASE WHEN type IN ('goal', 'pen_goal') THEN 1 ELSE 0 END) AS scored,
         SUM(CASE WHEN type = 'own_goal' THEN 1 ELSE 0 END) AS og
@@ -109,6 +127,7 @@ app.post("/:id/start", async (c) => {
   try {
     const ctx = await loadMatchCtx(c.env.DB, id);
     const m = ctx.m;
+    await assertBracketReady(c.env.DB, ctx);
     if (m.note === "轮空") return fail(c, 400, "轮空场无需开赛");
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法开赛");
@@ -141,6 +160,7 @@ app.post("/:id/finish", async (c) => {
   try {
     const ctx = await loadMatchCtx(c.env.DB, id);
     const m = ctx.m;
+    await assertBracketReady(c.env.DB, ctx);
     if (m.note === "轮空") return fail(c, 400, "轮空场无需报分");
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法报分");
