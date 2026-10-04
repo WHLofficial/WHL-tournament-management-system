@@ -26,23 +26,23 @@ awayPlaceholder?: string | null;
 
 | 方法 | 路径 | 请求体 | 语义 |
 | --- | --- | --- | --- |
-| POST | `/api/admin/stages/:stageId/slots` | — | 首轮末尾追加一个空场次（N 上限 16） |
-| PUT | `/api/admin/stages/:stageId/slots/:slot` | `{homeEntryId: number, awayEntryId: number \| null}` | 落位/改位/轮空（away=null）/清空（两者皆 null 时的等价写法：`{homeEntryId:null, awayEntryId:null}`） |
-| DELETE | `/api/admin/stages/:stageId/slots/:slot` | — | 删除首轮场次（后续场次序号前移） |
+| POST | `/api/admin/tournaments/:id/stages/:stageId/slots` | — | 首轮末尾追加一个空场次（N 上限 16） |
+| PUT | `/api/admin/tournaments/:id/stages/:stageId/slots/:slot` | `{homeEntryId: number, awayEntryId: number \| null}` | 落位/改位/轮空（away=null）/清空（两者皆 null 时的等价写法：`{homeEntryId:null, awayEntryId:null}`） |
+| DELETE | `/api/admin/tournaments/:id/stages/:stageId/slots/:slot` | — | 删除首轮场次（后续场次序号前移） |
 
-错误码：非 elim / 后续轮 → 400；`home=null && away≠null` → 400；队伍不属本赛事 / 主队=客队 → 400；首轮 >16 场 → 400；目标场次已开打 / 同轮一队两场 / 轮空已晋级下游 / 阶段已开打时增删 → 409。
+错误码：非 elim → 400；`home=null && away≠null` → 400；队伍不属本赛事 / 主队=客队 → 400；首轮 >16 场 → 400；单场删除端点对 elim → 400；淘汰阶段出现场次后改回合制参数 → 400；不存在的首轮场次号 → 404（路由无 round 参数，`:slot` 只按首轮寻址，后续轮无从表达）；目标场次已开打 / 同轮一队两场 / 阶段已开打时增删 / 后续轮次已开打时调整首轮落位 → 409。
 
 ## 2. 后端任务
 
 - **T1 `worker/lib/manualBracket.ts`（新建）**
-  - `roundsFor(n)`：`log2(n)`；`isPowerOfTwo(n)`。
-  - `layoutShellStmts(stageId, firstRoundCount, cfg)`：首轮 N = 2^k 时铺 r∈[2..k] 空壳（r 轮场次 = N/2^(r-1)；`r === k` 用 `final_legs`，其余用 `legs`；启用季军赛且 k ≥ 2 时加季军赛段）。**必须与 `worker/lib/seeding.ts` 现有空壳布局逐键一致**（round/slot/leg），用测试钉住 `buildElimPlan` 同布局不变式。
-  - `relayLegsStmts(stageId, cfg, firstRoundCount)`：未开打的首轮已落位场次按新的决赛归属重铺 leg 行（保留对阵；两回合 leg1 主/leg2 主客对调；轮空单行 + `winner_entry_id` + `note='轮空'`）。
-  - `clearShellStmts(stageId)`：非 2 的幂时清掉 r ≥ 2 的空壳。
-  - 所有「结构变化」路径收口为一个 `rebuildStage(stage, matches, cfg)`：重建空壳 → 重铺 leg 行 → 返回语句数组；调用方随后补跑 `buildAdvanceStmts`（`worker/lib/standings.ts:167`，幂等）并捕获 `AdvancerError` → 409。
-- **T2 端点实现（`worker/routes/admin/schedule.ts`，与现有手动落场 631-693 并列）**：POST/PUT/DELETE slots；校验按 §1；落位 = 删该场次现有行后按 legs 重铺（轮空单行）；删除 = 删除全部 leg 行 + 后续 slot 前移（`UPDATE match SET slot = slot - 1 ...`）；每次变更后 `rebuildStage` + 补跑晋级器 + `audit`（沿用现有审计写法）。
-- **T3 关闭自动生成**：`POST …/generate` 对 elim → 400「淘汰赛改为手动落位」。
-- **T4 自动补生成跳过 elim 目标**：`buildAutoFillStmts`（`worker/routes/admin/schedule.ts:1100-1256`）在**目标阶段 kind === "elim"** 时 continue（现状只跳来源是 elim 的，需确认后补上）。
+  - `roundsFor(n)`：2 的幂 → `log2(n) + 1`（首轮 N 场 = 满编 2N 队，总轮数 = log2(2N)），否则 0；`isPowerOfTwo(n)`。
+  - `layoutShells(stageId, firstRoundCount, cfg)`：首轮 N = 2^k 时铺 r∈[2..k+1] 空壳（r 轮场次 = N/2^(r-1)；`r === 总轮数` 用 `final_legs`，其余用 `legs`；启用季军赛且总轮数 ≥ 2 时加季军赛段）。**必须与 `worker/lib/seeding.ts` 现有空壳布局逐键一致**（round/slot/leg），用测试钉住 `buildElimPlan` 同布局不变式。
+  - `relayRound1Stmts(stageId, legs, desired, existing)`：未开打的首轮已落位场次按新的决赛归属重铺 leg 行（保留对阵；两回合 leg1 主/leg2 主客对调；轮空单行 + `winner_entry_id` + `note='轮空'`；形状不变时原地 UPDATE 保 `match.id`，形状变才删行重插）。
+  - `shellStmts(stageId, n, cfg, rows)`：后续轮空壳差量对齐（多出的键删除、缺失的插入、键一致但带过期预填的 pending 行置 NULL）；非 2 的幂时清掉 r ≥ 2 的空壳。
+  - 所有「结构变化」路径收口为一个 `rebuildStmts(stageId, n, cfg, desired, rows)`：重建空壳 → 重铺 leg 行 → 返回语句数组；调用方随后补跑 `buildAdvanceStmts`（`worker/lib/standings.ts:167`，幂等）并捕获 `AdvancerError` → 409。
+- **T2 端点实现（`worker/routes/admin/schedule.ts`，与现有手动落场端点并列）**：POST/PUT/DELETE `/api/admin/tournaments/:id/stages/:stageId/slots[/:slot]`；校验按 §1；落位 = 删该场次现有行后按 legs 重铺（轮空单行）；删除 = 删除该 slot 全部 leg 行 + 后续 slot 前移（`UPDATE match SET slot = slot - 1 ...`）；每次变更后 `rebuildStmts` + 补跑晋级器。（`schedule.ts` 无审计写法，故不写 audit。）
+- **T3 关闭自动生成**：`POST …/generate` 对 elim → 400「淘汰赛改为手动落位，不再自动生成对阵」。
+- **T4 自动补生成跳过 elim 目标**：`buildAutoFillStmts`（`worker/routes/admin/schedule.ts`）在**目标阶段 kind === "elim"** 时 continue（现状只跳来源是 elim 的，需确认后补上）。
 - **T5 开打闸门**：`worker/routes/admin/scoring.ts:107-129`（start）与 `:130-340`（finish，含快速报分/弃权/改判分支）在 elim 阶段首轮场次数非 2 的幂时 → 409「首轮场次数需为 2 的幂」。两个入口都要覆盖。
 - **T6 公开占位（`worker/routes/public.ts:266-375`）**：`/tournaments/:id/matches` 为 elim 阶段计算 `homePlaceholder`/`awayPlaceholder`（规则见 spec §3.5）：round ≥ 2 取上一轮 slot 2s-1/2s（季军赛取两场半决赛）已有队名「/」连接；round 1 按来源（cross token → 队名或「A 组第 1」；range → ≤2 支列名、>2 支「阶段 N 第 from–to 名」）；否则「待定」。
 - **T7 管理端 qualifiers**：`GET /api/admin/tournaments/:id/matches` 增补 `qualifiers` 映射（cross token 队 / range 名次区间队；来源未完赛则缺省）。
