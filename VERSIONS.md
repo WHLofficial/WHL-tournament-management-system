@@ -35,7 +35,9 @@
 
 | 47 | v5.2.0 | CPU 队接管向导配套入站端点：`POST /api/internal/team-rename`（HMAC 与 team-upsert 同口径、签名串含路径、同名早退 / 撞名 409 指名）+ 审计 `actor_user_id` 放开可空（迁移 `0025_audit_actor_nullable.sql`）+ `tests/internalTeamRename.test.ts` 8 例 | minor：新增端点（向后兼容） |
 
-**当前版本：v5.2.0**
+| 48 | v5.3.0 | 淘汰赛改手动落位编排（去自动生成）：新接口 `POST/PUT/DELETE …/stages/:stageId/slots[/:slot]`（首轮 2 的幂、上限 16 场、轮空、两回合自动铺 leg 行、结构变更原地 UPDATE 保 `match.id`）+ `generate` 对 elim 400、自动补生成跳过 elim 目标 + 单场删除端点对 elim 400、出现场次后回合制参数锁定 + 开打闸门（首轮非 2 的幂 → start/finish 409）+ 管理端淘汰赛分层列表视图 `src/components/KnockoutStageView.tsx`（点选落位/出线标记/待定来源引用）+ 公开赛程页两回合按回合分区块与空席位候选占位（`homePlaceholder`/`awayPlaceholder`，来源未完赛回退「待定」）+ 管理端 `qualifiers` 出线名单 + `tests/schedule.slots.routes.test.ts` 19 例、`tests/public.placeholder.routes.test.ts` 8 例 | minor：新增用户可见能力（淘汰赛编排方式与赛程展示改版） |
+
+**当前版本：v5.3.0**
 
 ## 落地位置
 
