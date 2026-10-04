@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { ROLE_LABEL, useAuth } from "../auth";
+import { setTzPref, tzLabel, useTzPref, type TzPref } from "../lib/datetime";
 import { GUESS_URL } from "../lib/links";
 import { CreditsButton } from "./Credits";
 
 /** 账号相关的三个工具页收进「账号与审计」下拉；组里只剩一项时直接当普通链接显示 */
 type NavItem = { to: string; label: string };
+
+// 显示时区三档，默认北京时间（偏好持久化在 localStorage，见 lib/datetime.ts）
+const TZ_OPTIONS: readonly [TzPref, string][] = [
+  ["asia/shanghai", "北京时间"],
+  ["utc", "UTC"],
+  ["system", "跟随浏览器"],
+];
 
 export function TopBar() {
   const { user, loading, logout, authMode, authHome } = useAuth();
@@ -38,6 +46,25 @@ export function TopBar() {
       document.removeEventListener("mousedown", onDown);
     };
   }, [menuOpen]);
+  // 时区切换下拉：未登录也可见（公开页的时间显示对所有访客生效），交互与「账号与审计」同款
+  const tz = useTzPref();
+  const [tzOpen, setTzOpen] = useState(false);
+  const tzRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!tzOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setTzOpen(false);
+    }
+    function onDown(e: MouseEvent) {
+      if (!tzRef.current?.contains(e.target as Node)) setTzOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [tzOpen]);
   useEffect(() => {
     setMenuOpen(false);
   }, [pathname]);
@@ -139,6 +166,42 @@ export function TopBar() {
             去竞猜站↗
           </a>
         )}
+        {/* 显示时区切换：时钟图标 + 下拉，偏好本地持久化，全站时间随档即时刷新 */}
+        <div className="tz-wrap" ref={tzRef}>
+          <button
+            type="button"
+            className="tz-btn"
+            aria-label="显示时区"
+            aria-haspopup="menu"
+            aria-expanded={tzOpen}
+            title={`显示时区：${tzLabel(tz)}`}
+            onClick={() => setTzOpen((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+          {tzOpen ? (
+            <div className="tz-pop" role="menu">
+              {TZ_OPTIONS.map(([value, text]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={tz === value}
+                  onClick={() => {
+                    setTzPref(value);
+                    setTzOpen(false);
+                  }}
+                >
+                  {tz === value ? "✓ " : ""}
+                  {text}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         {loading ? null : user ? (
           <span className="userbox">
             {user.name}

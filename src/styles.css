@@ -278,6 +278,59 @@ button.btn-ghost:hover:not(:disabled) {
   justify-content: flex-end;
   gap: 12px;
 }
+/* 显示时区切换（右侧集群）：时钟图标 + 三档下拉，面板样式向 .nav-menu-list 看齐 */
+.tz-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.tz-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: #cfe0d5;
+  cursor: pointer;
+}
+.tz-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.tz-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 12px 32px rgba(26, 36, 32, 0.28);
+}
+.tz-pop button {
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tz-pop button:hover {
+  background: var(--chalk);
+}
+.tz-pop button[aria-checked="true"] {
+  color: var(--pitch);
+  font-weight: 600;
+}
 
 .page-head {
   display: flex;
