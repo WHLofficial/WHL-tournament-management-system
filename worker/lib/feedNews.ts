@@ -23,6 +23,7 @@ import {
   subtractMatchContribution,
 } from "./context";
 import { bestMatchOf, computeMatchFacts, summarizeRound } from "./narrativeFacts";
+import { shanghaiDateOf, shanghaiDateStr, shanghaiMidnightISO } from "./time";
 import { injuriesInRound, injuriesInWindow, type InjuryFact } from "./injury";
 import {
   INJURY_CLEAR_TAIL,
@@ -47,19 +48,32 @@ import {
   weeklyTitle,
 } from "./copybanks";
 
-// ---------- 周报（自然周，周一起算，UTC 口径；本周空回退最近有比赛的一周） ----------
+// ---------- 周报（自然周，周一起算，上海口径；本周空回退最近有比赛的一周） ----------
 
-const WEEK_MS = 7 * 24 * 3600 * 1000;
+const WEEK_DAYS = 7;
 
-function mondayUTC(d: Date): Date {
-  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dow = (t.getUTCDay() + 6) % 7; // 周一=0
-  t.setUTCDate(t.getUTCDate() - dow);
-  return t;
+// 时刻 → 所在上海周的周一（YYYY-MM-DD）
+function shanghaiMonday(d: Date): string {
+  return mondayOfDateStr(shanghaiDateStr(d.getTime()));
 }
 
-function weekKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
+// 日历日（YYYY-MM-DD）→ 所在周的周一；纯日历运算，与时刻无关
+function mondayOfDateStr(dateStr: string): string {
+  const t = new Date(`${dateStr}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+  return t.toISOString().slice(0, 10);
+}
+
+function addDays(dateStr: string, n: number): string {
+  const t = new Date(`${dateStr}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+
+// 上海周 [周一, 次周一) 的 UTC 窗口（左闭右开）：上海周一 00:00 = UTC 周日 16:00。
+// 边界必须是 UTC ISO——SQL 里与 finished_at 做字符串比较，格式要与写入端一致。
+function weekWindow(mondayStr: string): [string, string] {
+  return [shanghaiMidnightISO(mondayStr), shanghaiMidnightISO(addDays(mondayStr, WEEK_DAYS))];
 }
 
 async function weekMatches(db: D1Database, startISO: string, endISO: string): Promise<FinishedMatch[]> {
@@ -149,29 +163,24 @@ async function latestFinishedIn(db: D1Database, startISO: string, endISO: string
 }
 
 export async function buildWeekly(db: D1Database, weekParam?: string): Promise<WeeklyDTO> {
-  const nowMonday = mondayUTC(new Date());
-  let start = weekParam ? mondayUTC(new Date(`${weekParam}T00:00:00Z`)) : nowMonday;
+  const nowMonday = shanghaiMonday(new Date());
+  // weekParam（?week=YYYY-MM-DD）按上海日历日解释，归到所在上海周；周内任意一天都指向同一周
+  let start = weekParam ? mondayOfDateStr(weekParam) : nowMonday;
   // 指定周不强回退（空周就是空态）；「本周」无比赛时回退最近有比赛的一周（最多回溯 8 周）
-  let list: FinishedMatch[] = [];
   let isFallback = false;
-  if (weekParam) {
-    list = await weekMatches(db, weekKey(start), weekKey(new Date(start.getTime() + WEEK_MS)));
-  } else {
-    list = await weekMatches(db, weekKey(start), weekKey(new Date(start.getTime() + WEEK_MS)));
-    if (list.length === 0) {
-      // 一次探针定周 + 一次取数（v5.0.3）：原来是逐周串行试，最多 8 次往返。
-      // 探针窗口取回退区间 [nowMonday-8w, nowMonday)，与逐周试的 i=1..8 完全一致；
-      // 它命中的那场所在周，就是区间内最近的有比赛周。
-      const probeStart = new Date(nowMonday.getTime() - 8 * WEEK_MS);
-      const hit = await latestFinishedIn(db, weekKey(probeStart), weekKey(nowMonday));
-      if (hit) {
-        start = mondayUTC(new Date(hit));
-        list = await weekMatches(db, weekKey(start), weekKey(new Date(start.getTime() + WEEK_MS)));
-        isFallback = true;
-      }
+  let list = await weekMatches(db, ...weekWindow(start));
+  if (!weekParam && list.length === 0) {
+    // 一次探针定周 + 一次取数（v5.0.3）：原来是逐周串行试，最多 8 次往返。
+    // 探针窗口取回退区间 [nowMonday-8w, nowMonday)，与逐周试的 i=1..8 完全一致；
+    // 它命中的那场所在周，就是区间内最近的有比赛周。
+    const hit = await latestFinishedIn(db, shanghaiMidnightISO(addDays(nowMonday, -8 * WEEK_DAYS)), shanghaiMidnightISO(nowMonday));
+    if (hit) {
+      start = mondayOfDateStr(shanghaiDateOf(hit));
+      list = await weekMatches(db, ...weekWindow(start));
+      isFallback = true;
     }
   }
-  const end = new Date(start.getTime() + WEEK_MS);
+  const end = addDays(start, WEEK_DAYS);
 
   // 事件（乌龙数 / 本周射手王）
   const eventsByMatch = await fetchEventRows(db, list.map((m) => m.id));
@@ -224,11 +233,11 @@ export async function buildWeekly(db: D1Database, weekParam?: string): Promise<W
   const matches: WeeklyMatchDTO[] = list.map(toWeeklyMatch);
 
   // 本周伤情：与本周比赛同窗口（左闭右开）；同一人一周内多条伤情按最后一条留（同一人只占一行）
-  const injuries = dedupePlayerFacts(await injuriesInWindow(db, weekKey(start), weekKey(end))).map(toInjuryLine);
+  const injuries = dedupePlayerFacts(await injuriesInWindow(db, ...weekWindow(start))).map(toInjuryLine);
 
   return {
-    weekStart: weekKey(start),
-    label: `${fmtMD(weekKey(start))} – ${fmtMD(weekKey(end))}`,
+    weekStart: start,
+    label: `${fmtMD(start)} – ${fmtMD(end)}`,
     isFallback,
     played: list.length,
     goals,

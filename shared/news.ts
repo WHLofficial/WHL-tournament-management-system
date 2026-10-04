@@ -63,7 +63,7 @@ export interface WeeklyMatchDTO {
 }
 
 export interface WeeklyDTO {
-  weekStart: string; // YYYY-MM-DD（周一，UTC 口径）
+  weekStart: string; // YYYY-MM-DD（周一，上海口径）
   label: string; // 「09.01 – 09.07」
   isFallback: boolean; // 本周无比赛、回退最近有比赛的一周时 true
   played: number;

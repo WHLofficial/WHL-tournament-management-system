@@ -14,3 +14,11 @@ export function shanghaiDateOf(iso: string | null | undefined): string {
   const ms = new Date(iso).getTime();
   return Number.isNaN(ms) ? "" : shanghaiDateStr(ms);
 }
+
+/**
+ * 上海日历日 00:00 对应的 UTC 时刻（ISO，形如 2026-10-04T16:00:00.000Z）。
+ * 上海周一 00:00 = UTC 周日 16:00；供 SQL 里与 finished_at 的 UTC ISO 字符串比较用。
+ */
+export function shanghaiMidnightISO(dateStr: string): string {
+  return new Date(new Date(`${dateStr}T00:00:00Z`).getTime() - TZ_MS).toISOString();
+}
