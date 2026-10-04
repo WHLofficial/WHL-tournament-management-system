@@ -457,6 +457,9 @@ export interface MatchDTO {
   /** 管理端赛程列表附带：双方是否已提交战术阵容（公开端不带） */
   homeLineupSubmitted?: boolean;
   awayLineupSubmitted?: boolean;
+  /** 淘汰赛空席位候选占位（仅公开赛程下发；非空席位或算不出时缺省） */
+  homePlaceholder?: string | null;
+  awayPlaceholder?: string | null;
   events?: PublicMatchEventDTO[];
   stageKind?: "elim" | "round_robin" | "group";
   /** 所属阶段显示名，单轮查询时前端直接用作阶段头 */
