@@ -9,6 +9,7 @@ import { CardIcon } from "./Cards";
 import { FORMS, POS_ZH, formTitle } from "../../shared/tactics";
 import { recoverStageLabel } from "../../shared/injuries";
 import { surname, tilePositions } from "../lib/pitch";
+import { useTimeFmt } from "../lib/datetime";
 import type {
   H2HDTO,
   H2HFormItem,
@@ -389,6 +390,7 @@ function PlayerCol({
 
 // 本场已提交的阵容（教练视角）：赛前只回本队那份，对手阵容既不显示也不提示
 function MyLineupPanel({ l }: { l: TeamLineupDTO }) {
+  const { dateTime } = useTimeFmt();
   const slots: Map<number, MiniSlot> = new Map(
     l.starters.map((s) => [s.lid, { name: s.name, number: s.number }]),
   );
@@ -409,7 +411,7 @@ function MyLineupPanel({ l }: { l: TeamLineupDTO }) {
       )}
       <AssignList assign={l.assign ?? []} />
       <p className="muted pmt-mine-meta">
-        提交于 {l.submittedAt.slice(0, 16).replace("T", " ")}
+        提交于 {dateTime(l.submittedAt)}
         {l.submittedBy ? ` · ${l.submittedBy}` : ""}
         {l.viaProxy && <span className="proxy-badge">代打</span>}
       </p>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { useTimeFmt } from "../lib/datetime";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 
 type SignupCodeRow = {
@@ -12,11 +13,6 @@ type SignupCodeRow = {
   createdAt: string;
 };
 
-function fmt(t: string | null) {
-  if (!t) return "不限";
-  return new Date(t).toLocaleString("zh-CN", { hour12: false });
-}
-
 // 注册码状态：看次数与过期时间，明码不可回查
 function codeStatus(r: SignupCodeRow) {
   const expired = r.expiresAt !== null && new Date(r.expiresAt).getTime() < Date.now();
@@ -26,6 +22,7 @@ function codeStatus(r: SignupCodeRow) {
 }
 
 export function AdminCodes() {
+  const { dateTime } = useTimeFmt();
   const { user } = useAuth();
   const isSuper = user?.role === "superadmin";
   const [rows, setRows] = useState<SignupCodeRow[] | null>(null);
@@ -36,6 +33,8 @@ export function AdminCodes() {
   const [toggleErr, setToggleErr] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const gen = useSubmit();
+  // 「不限」是注册码语义（缺省即不过期/不限次），不是格式化回退，所以保留在组件里
+  const fmt = (t: string | null) => (t ? dateTime(t) : "不限");
 
   async function load() {
     const [d, s] = await Promise.all([

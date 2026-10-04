@@ -5,6 +5,7 @@ import { useAuth } from "../auth";
 import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawNewsCard } from "../lib/share";
+import { useTimeFmt } from "../lib/datetime";
 import type { MatchReportDTO } from "../../shared/news";
 
 type MotmResp = {
@@ -16,6 +17,7 @@ const GOAL_TAG: Record<string, string> = { goal: "⚽", pen_goal: "⚽ 点球", 
 
 // 单场战报文章页：后端预渲染整页直出；完赛场可投全场最佳（MOTM）
 export default function ReportPage() {
+  const { date } = useTimeFmt();
   const { mid } = useParams();
   const midNum = Number(mid);
   const [report, setReport] = useState<MatchReportDTO | null>(null);
@@ -106,9 +108,7 @@ export default function ReportPage() {
   }
 
   const wo = report.walkoverSide !== "";
-  const dateStr = report.finishedAt
-    ? new Date(report.finishedAt).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" })
-    : "";
+  const dateStr = report.finishedAt ? date(report.finishedAt) : "";
   const cntOf = (pid: number) => motm?.totals.find((t) => t.playerId === pid)?.cnt ?? 0;
   const topCnt = motm?.totals[0]?.cnt ?? 0;
 

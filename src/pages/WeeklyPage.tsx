@@ -1,20 +1,23 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api } from "../api";
+import { shanghaiDateStr, useTimeFmt } from "../lib/datetime";
 import type { WeeklyDTO } from "../../shared/news";
 
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 
+// 周界与后端同源（worker/lib/feedNews.ts 上海周一）：mondayOf 的输入已是上海日历日
+// （shanghaiDateStr 的产物或后端返回的 weekStart），按 UTC 午夜归周一即可。
 function mondayOf(iso: string): Date {
   const d = new Date(`${iso}T00:00:00Z`);
   const dow = (d.getUTCDay() + 6) % 7;
   d.setUTCDate(d.getUTCDate() - dow);
   return d;
 }
-const isoDate = (d: Date): string => d.toISOString().slice(0, 10);
 
 // WHL 周报页：本周自动回退最近有比赛的一周；?week=YYYY-MM-DD 往期回看
 export default function WeeklyPage() {
+  const { dateShort } = useTimeFmt();
   const [sp, setSp] = useSearchParams();
   const week = sp.get("week") ?? undefined;
   const [data, setData] = useState<WeeklyDTO | null>(null);
@@ -48,9 +51,9 @@ export default function WeeklyPage() {
   }
 
   const base = mondayOf(data.weekStart);
-  const thisMonday = mondayOf(isoDate(new Date()));
-  const prev = isoDate(new Date(base.getTime() - WEEK_MS));
-  const next = isoDate(new Date(base.getTime() + WEEK_MS));
+  const thisMonday = mondayOf(shanghaiDateStr(Date.now()));
+  const prev = shanghaiDateStr(base.getTime() - WEEK_MS);
+  const next = shanghaiDateStr(base.getTime() + WEEK_MS);
   const canNext = base.getTime() < thisMonday.getTime();
 
   // 卡序轮换：按周种子确定性旋转，破「射手王永远第一张」的固定版式；「本周最佳」为新增卡
@@ -171,11 +174,7 @@ export default function WeeklyPage() {
                     <span className="news-item-title">
                       {m.homeTeamName} {m.scoreHome}:{m.scoreAway} {m.awayTeamName}
                     </span>
-                    <span className="news-item-time">
-                      {m.finishedAt
-                        ? new Date(m.finishedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
-                        : ""}
-                    </span>
+                    <span className="news-item-time">{m.finishedAt ? dateShort(m.finishedAt) : ""}</span>
                   </div>
                 </Link>
               </div>

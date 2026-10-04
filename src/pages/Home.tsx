@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { POLL_MS } from "../lib/polling";
+import { useTimeFmt } from "../lib/datetime";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { EventTimeline } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
@@ -61,14 +62,6 @@ export function itemHref(i: FeedItemDTO): string {
   }
 }
 
-export function fmtTime(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 export type ReactionCounts = Partial<Record<"fire" | "thumb" | "mind" | "cry", number>>;
 
 // 表态按钮组：匿名去重靠 localStorage，点过的一键置亮且不再发请求
@@ -107,6 +100,7 @@ export function ReactionBar({
 
 // 头版门户（公开）：工具入口 + 赛事卡 + 官方公告 + 快讯 ticker + 「WHL 头版」（头条对撞卡 + 快讯流橱窗）
 export function Home() {
+  const { time, dateLong } = useTimeFmt();
   const [list, setList] = useState<TournamentDTO[] | null>(null);
   const [upcoming, setUpcoming] = useState<UpcomingDTO[] | null>(null);
   const [liveList, setLiveList] = useState<LiveDTO[] | null>(null);
@@ -259,7 +253,7 @@ export function Home() {
                       aria-hidden={dup === 1 || undefined}
                       tabIndex={dup === 1 ? -1 : undefined}
                     >
-                      <span className="t">{fmtTime(i.at)}</span>
+                      <span className="t">{time(i.at)}</span>
                       {i.title}
                     </Link>
                   )),
@@ -302,9 +296,7 @@ export function Home() {
           <section className="whl-press">
             <div className="whl-masthead">
               <h2>WHL 头版</h2>
-              <span className="whl-masthead-date">
-                {new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" })}
-              </span>
+              <span className="whl-masthead-date">{dateLong(new Date().toISOString())}</span>
               <Link className="whl-masthead-all" to="/news">
                 查看全部 →
               </Link>
@@ -350,7 +342,7 @@ export function Home() {
                         {KIND_LABEL[i.kind]}
                       </span>
                       <span className="news-item-title">{i.title}</span>
-                      <span className="news-item-time">{fmtTime(i.at)}</span>
+                      <span className="news-item-time">{time(i.at)}</span>
                     </div>
                     <p className="news-item-body">{i.body}</p>
                   </Link>

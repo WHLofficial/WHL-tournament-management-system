@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api } from "../api";
 import { Page } from "../components/ui";
 import { useAuth } from "../auth";
+import { useTimeFmt } from "../lib/datetime";
 
 // v2.0.0：账号真源在认证中心（auth）。本页只出界面——列表/角色/权限点/会话/停用全部经
 // /api/admin/accounts/* 转发给 auth，本仓不再有自己的 user 表可写。
@@ -55,11 +56,10 @@ interface Catalog {
 const APP_LABEL: Record<string, string> = { tour: "赛事", guess: "竞猜", club: "俱乐部", "": "全局" };
 const appName = (id: string | null) => APP_LABEL[id ?? ""] ?? id ?? "全局";
 
-const fmt = (t: string | null) => (t ? t.slice(0, 16).replace("T", " ") : "—");
-
 const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
 export function Accounts() {
+  const { dateTime } = useTimeFmt();
   const { user } = useAuth();
   const [q, setQ] = useState("");
   const [accounts, setAccounts] = useState<Account[] | null>(null);
@@ -365,7 +365,7 @@ export function Accounts() {
             </div>
           </div>
           <p className="muted">
-            注册 {fmt(detail.account.createdAt)}
+            注册 {dateTime(detail.account.createdAt)}
             {detail.account.email ? ` · ${detail.account.email}` : ""}
             {detail.qq ? ` · QQ ${detail.qq}` : ""}
             {detail.account.id === user?.id ? " · （这是你自己，不能停用或重置自己）" : ""}
@@ -469,9 +469,9 @@ export function Accounts() {
                   {detail.sessions.map((s) => (
                     <tr key={s.sessionHash}>
                       <td className="muted">{s.ip ?? "—"}</td>
-                      <td className="muted">{fmt(s.createdAt)}</td>
-                      <td className="muted">{fmt(s.lastSeenAt)}</td>
-                      <td className="muted">{fmt(s.expiresAt)}</td>
+                      <td className="muted">{dateTime(s.createdAt)}</td>
+                      <td className="muted">{dateTime(s.lastSeenAt)}</td>
+                      <td className="muted">{dateTime(s.expiresAt)}</td>
                       <td>
                         <button
                           className="btn btn-ghost btn-sm"

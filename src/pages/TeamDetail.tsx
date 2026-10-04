@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Page, SubmitButton, useSubmit } from "../components/ui";
 import { TeamLogo } from "../components/TeamLogo";
 import { InjuryRegPanel } from "../components/InjuryRegPanel";
+import { useTimeFmt } from "../lib/datetime";
 import type { InjuryStatusDTO, PlayerDTO } from "../../shared/types";
 
 interface TeamDetail {
@@ -34,6 +35,7 @@ interface TeamContext extends TeamDetail {
 }
 
 export function TeamDetailPage() {
+  const { dateTime } = useTimeFmt();
   const { id } = useParams();
   const teamId = Number(id);
   const [data, setData] = useState<TeamDetail | null>(null);
@@ -293,9 +295,9 @@ export function TeamDetailPage() {
             <tbody>
               {codes.slice(0, 5).map((c) => (
                 <tr key={c.id}>
-                  <td>{c.createdAt.slice(0, 16).replace("T", " ")}</td>
-                  <td>{c.expiresAt ? c.expiresAt.slice(0, 16).replace("T", " ") : "—"}</td>
-                  <td>{c.used ? `已使用 ${c.usedAt?.slice(0, 16).replace("T", " ") ?? ""}` : "未使用"}</td>
+                  <td>{dateTime(c.createdAt)}</td>
+                  <td>{dateTime(c.expiresAt)}</td>
+                  <td>{c.used ? `已使用 ${dateTime(c.usedAt)}` : "未使用"}</td>
                 </tr>
               ))}
             </tbody>
@@ -316,7 +318,7 @@ export function TeamDetailPage() {
                 {members.map((m) => (
                   <tr key={m.userId}>
                     <td>{m.name}</td>
-                    <td>{m.joinedAt.slice(0, 16).replace("T", " ")}</td>
+                    <td>{dateTime(m.joinedAt)}</td>
                     <td>
                       <button className="btn btn-ghost btn-sm" onClick={() => void unbind(m)}>
                         解绑

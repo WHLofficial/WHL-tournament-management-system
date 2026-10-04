@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ASSIGN_LABEL, formTitle, POS_ZH } from "../../shared/tactics";
+import { useTimeFmt } from "../lib/datetime";
 import type { LineupAssignDTO, LineupPlayerDTO, TeamLineupDTO } from "../../shared/types";
 
 function playerName(p: LineupPlayerDTO): string {
@@ -69,6 +70,7 @@ function CodeChip({ code }: { code: string }) {
 }
 
 function LineupSide({ label, l, code }: { label: string; l: TeamLineupDTO | null; code?: string }) {
+  const { dateTime } = useTimeFmt();
   if (!l) {
     return (
       <div className="lu-col lu-none">
@@ -100,7 +102,7 @@ function LineupSide({ label, l, code }: { label: string; l: TeamLineupDTO | null
       {l.bench.length > 0 && <p className="lu-bench">替补：{l.bench.map(playerName).join("、")}</p>}
       <AssignList assign={l.assign ?? []} />
       <p className="lu-meta">
-        提交于 {l.submittedAt.slice(0, 16).replace("T", " ")}
+        提交于 {dateTime(l.submittedAt)}
         {l.submittedBy ? ` · ${l.submittedBy}` : ""}
         {l.viaProxy && <span className="proxy-badge">代打</span>}
       </p>

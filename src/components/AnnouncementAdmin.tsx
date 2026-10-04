@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { useTimeFmt } from "../lib/datetime";
 import { SubmitButton, useSubmit } from "./ui";
 import type { AnnouncementDTO } from "../../shared/news";
 
@@ -8,6 +9,7 @@ type FormEventLike = { preventDefault: () => void };
 
 // 管理端公告卡：同一时刻至多一条上线；发布自动下线旧条；历史永久保留可复激活
 export function AnnouncementAdmin() {
+  const { time } = useTimeFmt();
   const [list, setList] = useState<AdminAnnouncement[] | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -110,9 +112,7 @@ export function AnnouncementAdmin() {
               <div className="ann-item-head">
                 <span className={`status-badge ${a.active ? "st-live" : ""}`}>{a.active ? "上线中" : "已下线"}</span>
                 <strong>{a.title}</strong>
-                <span className="muted ann-time">
-                  {new Date(a.updatedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                </span>
+                <span className="muted ann-time">{time(a.updatedAt)}</span>
               </div>
               <p className="ann-body">{a.body}</p>
               <div style={{ display: "flex", gap: 8 }}>

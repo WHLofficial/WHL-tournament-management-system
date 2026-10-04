@@ -52,7 +52,7 @@ function parts(ms: number, opts: Intl.DateTimeFormatOptions) {
     cache.set(key, f);
   }
   const get = (type: string) => f!.formatToParts(ms).find((x) => x.type === type)?.value ?? '';
-  return { y: get('year'), mo: get('month'), d: get('day'), h: get('hour'), mi: get('minute') };
+  return { y: get('year'), mo: get('month'), d: get('day'), h: get('hour'), mi: get('minute'), wd: get('weekday') };
 }
 
 type Join = (p: ReturnType<typeof parts>) => string;
@@ -82,6 +82,21 @@ export function fmtDate(iso: string | null | undefined): string {
   return fmtIn(iso, D, (p) => `${p.y}-${p.mo}-${p.d}`);
 }
 
+/** MM-DD（周报场次行等只给日期的窄处） */
+export function fmtDateShort(iso: string | null | undefined): string {
+  return fmtIn(iso, { month: '2-digit', day: '2-digit' }, (p) => `${p.mo}-${p.d}`);
+}
+
+/** YYYY 年 M 月 D 日 星期X（头版报头等长日期；星期跟随偏好档） */
+export function fmtDateLong(iso: string | null | undefined): string {
+  return fmtIn(iso, { ...D, weekday: 'long' as const }, (p) => `${p.y} 年 ${Number(p.mo)} 月 ${Number(p.d)} 日 ${p.wd}`);
+}
+
+/** 某时刻的上海日历日（YYYY-MM-DD，UTC+8）。与展示偏好无关：周报周界等业务口径永远上海 */
+export function shanghaiDateStr(ms: number): string {
+  return new Date(ms + 8 * 3600_000).toISOString().slice(0, 10);
+}
+
 export function useTzPref(): TzPref {
   const [pref, setPref] = useState<TzPref>(() => getTzPref());
   useEffect(() => {
@@ -101,6 +116,8 @@ export interface TimeFmt {
   time: (iso: string | null | undefined) => string;
   dateTime: (iso: string | null | undefined) => string;
   date: (iso: string | null | undefined) => string;
+  dateShort: (iso: string | null | undefined) => string;
+  dateLong: (iso: string | null | undefined) => string;
 }
 
 /** 消费端唯一入口：渲染时间的组件必须走这个 hook（pref 变化即重渲染） */
@@ -112,6 +129,8 @@ export function useTimeFmt(): TimeFmt {
       time: fmtTime,
       dateTime: fmtDateTime,
       date: fmtDate,
+      dateShort: fmtDateShort,
+      dateLong: fmtDateLong,
     }),
     [pref],
   );

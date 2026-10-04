@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { useTimeFmt } from "../lib/datetime";
 import {
   ASSIGN_GROUPS,
   ASSIGN_KEYS,
@@ -151,6 +152,7 @@ type CoachBootstrap = {
 };
 
 export default function Tactics() {
+  const { dateTime, date } = useTimeFmt();
   const { user } = useAuth();
   const [sp, setSp] = useSearchParams();
   const [state, setState] = useState<TacticState>(() => loadScopeState("ftc26"));
@@ -1309,7 +1311,7 @@ export default function Tactics() {
                     )}
                     {mine && (
                       <p className="tac-hint">
-                        该场已于 {mine.submittedAt.slice(0, 16).replace("T", " ")} 提交（
+                        该场已于 {dateTime(mine.submittedAt)} 提交（
                         {formTitle(mine.form)}）
                         {mine.submittedBy ? `，提交人 ${mine.submittedBy}` : ""}
                         {mine.viaProxy ? "（代打）" : ""}，再次提交将覆盖。
@@ -1502,7 +1504,7 @@ export default function Tactics() {
                           <b>{a.note || "未命名存档"}</b>
                           <small>
                             {formTitle(a.form)} · {BU_ZH[a.buildup as Buildup] ?? a.buildup} · 防线{" "}
-                            {a.lineHeight} · {a.createdAt.slice(0, 10)}
+                            {a.lineHeight} · {date(a.createdAt)}
                           </small>
                         </div>
                         <div className="tac-arch-act">

@@ -8,6 +8,7 @@ import { Toplists } from "../components/Toplists";
 import { StatsDashboard } from "../components/StatsDashboard";
 import { SubmitButton, useSubmit } from "../components/ui";
 import { useAuth } from "../auth";
+import { useTimeFmt } from "../lib/datetime";
 import { FORMAT_LABEL, NEXT_ACTIONS, STATUS_LABEL } from "../labels";
 import type {
   EntryDTO,
@@ -507,6 +508,7 @@ function SettingsTab({
 // 停赛规则卡：参数存 config_json.suspension；软约束——录入时只警告不拦截。
 // 两黄变一红的说明：同场第二张黄牌由系统自动生成事件，停赛档位独立于直红。
 function SuspensionCard({ tid }: { tid: number }) {
+  const { dateTime } = useTimeFmt();
   const [cfg, setCfg] = useState<SuspensionConfig | null>(null);
   const [redBan, setRedBan] = useState("2");
   const [red2yBan, setRed2yBan] = useState("1");
@@ -655,7 +657,7 @@ function SuspensionCard({ tid }: { tid: number }) {
           {arm ? "再点一次确认清零" : "清零黄牌累计"}
         </button>
         {cfg?.yellowResetAt && (
-          <span className="muted">上次清零：{new Date(cfg.yellowResetAt).toLocaleString("zh-CN")}</span>
+          <span className="muted">上次清零：{dateTime(cfg.yellowResetAt)}</span>
         )}
       </div>
       {resetMsg && <p className="muted">{resetMsg}</p>}

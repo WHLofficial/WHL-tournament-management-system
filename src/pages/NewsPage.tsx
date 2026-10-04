@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
-import { KIND_HOT, KIND_LABEL, ReactionBar, fmtTime, itemHref, type ReactionCounts } from "./Home";
+import { KIND_HOT, KIND_LABEL, ReactionBar, itemHref, type ReactionCounts } from "./Home";
+import { useTimeFmt } from "../lib/datetime";
 import type { FeedItemDTO } from "../../shared/news";
 
 const PAGE = 30;
 
 // 快讯档案页：全量快讯倒序回看，「加载更多」按 at 游标翻页
 export default function NewsPage() {
+  const { time } = useTimeFmt();
   const [items, setItems] = useState<FeedItemDTO[]>([]);
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -91,7 +93,7 @@ export default function NewsPage() {
                     {KIND_LABEL[i.kind]}
                   </span>
                   <span className="news-item-title">{i.title}</span>
-                  <span className="news-item-time">{fmtTime(i.at)}</span>
+                  <span className="news-item-time">{time(i.at)}</span>
                 </div>
                 {i.paragraphs?.length ? (
                   <div className="news-item-paras">

@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { fmtDate, fmtDateTime, fmtTime, getTzPref, setTzPref, tzLabel, useTzPref } from "../src/lib/datetime";
+import { fmtDate, fmtDateLong, fmtDateShort, fmtDateTime, fmtTime, getTzPref, setTzPref, shanghaiDateStr, tzLabel, useTzPref } from "../src/lib/datetime";
 
 // React 19 的 act 需要这个全局标记，否则只出警告不出错；显式打开
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -65,6 +65,28 @@ describe("fmtDateTime（确定性格式）", () => {
     expect(fmtDateTime("not-a-date")).toBe("—");
     expect(fmtTime("not-a-date")).toBe("—");
     expect(fmtDate(null)).toBe("—");
+  });
+});
+
+describe("扩展格式（头版长日期 / 周报短日期 / 上海日历日）", () => {
+  it("fmtDateLong：默认北京档输出 YYYY 年 M 月 D 日 星期X，跟随偏好跨日", () => {
+    expect(fmtDateLong("2026-10-03T16:30:00Z")).toBe("2026 年 10 月 4 日 星期日");
+    setTzPref("utc");
+    expect(fmtDateLong("2026-10-03T16:30:00Z")).toBe("2026 年 10 月 3 日 星期六");
+  });
+
+  it("fmtDateShort：MM-DD；非法/空回 —", () => {
+    setTzPref("utc");
+    expect(fmtDateShort("2026-10-03T13:05:00Z")).toBe("10-03");
+    expect(fmtDateShort(null)).toBe("—");
+    expect(fmtDateShort("not-a-date")).toBe("—");
+  });
+
+  it("shanghaiDateStr：+8h 取日期，16:00:00Z 跨到次日；与展示偏好无关", () => {
+    expect(shanghaiDateStr(Date.parse("2026-10-03T15:59:59Z"))).toBe("2026-10-03");
+    expect(shanghaiDateStr(Date.parse("2026-10-03T16:00:00Z"))).toBe("2026-10-04");
+    setTzPref("utc");
+    expect(shanghaiDateStr(Date.parse("2026-10-03T16:00:00Z"))).toBe("2026-10-04");
   });
 });
 

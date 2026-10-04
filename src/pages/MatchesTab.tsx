@@ -5,6 +5,7 @@ import { MatchScore, computeAgg } from "../components/MatchScore";
 import { TeamLogo } from "../components/TeamLogo";
 import { EventDot } from "../components/Cards";
 import { LineupGrid } from "../components/LineupView";
+import { useTimeFmt } from "../lib/datetime";
 import type {
   AuditEntryDTO,
   EntryDTO,
@@ -917,14 +918,6 @@ function auditScoreText(d: {
   return d.walkoverSide ? `${base}（弃权）` : `${base}${pen}`;
 }
 
-// audit_log.created_at 是 UTC ISO，列表里按本地时区显示到分
-const fmtAuditTime = (iso: string) => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(5, 16).replace("T", " ");
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-};
-
 function AuditPanel({
   tid,
   matchId,
@@ -934,6 +927,7 @@ function AuditPanel({
   matchId: number;
   playerById: Map<number, string>;
 }) {
+  const { time } = useTimeFmt();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<AuditEntryDTO[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -1019,7 +1013,7 @@ function AuditPanel({
         <ul className="audit-list">
           {rows.map((a) => (
             <li key={a.id}>
-              <span className="audit-time">{fmtAuditTime(a.createdAt)}</span>
+              <span className="audit-time">{time(a.createdAt)}</span>
               <span className="audit-actor">{a.actorName ?? "—"}</span>
               <span className="audit-action">{AUDIT_ACTION[a.action] ?? a.action}</span>
               <span className="audit-detail">{line(a)}</span>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
 import { Page } from "../components/ui";
+import { useTimeFmt } from "../lib/datetime";
 
 // v3.1.0（PRD P1-3）：审计日志查询。数据真源在认证中心 audit_log，本页经
 // /api/admin/audit（worker 侧转发 auth /api/admin/audit/query）只读检索：
@@ -25,8 +26,6 @@ const EVENT_HINTS = [
   "signup_code.create", "org.open_reg", "bind.claim", "team.bind", "team.unbind",
 ];
 
-const fmt = (t: string) => t.slice(0, 19).replace("T", " ");
-
 /** datetime-local 值 → ISO；空/非法返回 null（不进筛选） */
 const toIso = (v: string): string | null => {
   if (!v) return null;
@@ -41,6 +40,7 @@ const detailText = (d: Record<string, unknown> | null) => {
 };
 
 export function AuditLog() {
+  const { dateTime } = useTimeFmt();
   const [account, setAccount] = useState("");
   const [event, setEvent] = useState("");
   const [since, setSince] = useState("");
@@ -162,7 +162,7 @@ export function AuditLog() {
             <tbody>
               {events.map((e) => (
                 <tr key={e.id}>
-                  <td>{fmt(e.createdAt)}</td>
+                  <td>{dateTime(e.createdAt)}</td>
                   <td>
                     <code>{e.event}</code>
                   </td>
