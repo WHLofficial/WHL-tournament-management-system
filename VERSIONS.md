@@ -33,7 +33,9 @@
 | 45 | v5.0.8 | 修复 BUG-003（循环赛榜单名次全表唯一，读侧按阶段类型分桶）、BUG-005（小组赛 `(round, slot)` 阶段内唯一） | patch：缺陷修补 |
 | 46 | v5.1.0 | 时区口径对齐（club v6.25.0 四仓约定移植）：业务日历日改上海口径（`cnDate`/H2H `dateLabel`/周报周界改上海周一）+ 前端共享时区偏好层 `src/lib/datetime.ts`（默认北京时间，三档可切）+ 19 处展示点收敛 + 时间展示静态锁 | minor：新增用户可见能力（时区偏好切换） |
 
-**当前版本：v5.1.0**
+| 47 | v5.2.0 | CPU 队接管向导配套入站端点：`POST /api/internal/team-rename`（HMAC 与 team-upsert 同口径、签名串含路径、同名早退 / 撞名 409 指名）+ 审计 `actor_user_id` 放开可空（迁移 `0025_audit_actor_nullable.sql`）+ `tests/internalTeamRename.test.ts` 8 例 | minor：新增端点（向后兼容） |
+
+**当前版本：v5.2.0**
 
 ## 落地位置
 
