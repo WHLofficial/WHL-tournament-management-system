@@ -2,19 +2,23 @@
 // 返回 INSERT 语句由调用方并入主 db.batch 同事务提交——审计与业务写入要么同时生效，
 // 要么一起回滚（finish 的 409 场景见 scoring.ts：审计语句放 followUp 批次，
 // 晋级冲突回滚终场时审计一并落空，不记脏账）。
+// v5.2.0：机器调用没有本仓用户身份，actorUserId 放宽到 null（audit_log.actor_user_id
+// 随之放开 NOT NULL，见 migrations/0025_audit_actor_nullable.sql）；targetType 默认
+// 仍是赛事域 'match'，team-rename 显式传 'team'。
 export function auditStmt(
   db: D1Database,
-  actorUserId: number,
+  actorUserId: number | null,
   action: string,
   targetId: number,
-  detail: unknown
+  detail: unknown,
+  targetType: string = "match"
 ): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json)
-       VALUES (?, ?, 'match', ?, ?)`
+       VALUES (?, ?, ?, ?, ?)`
     )
-    .bind(actorUserId, action, targetId, JSON.stringify(detail ?? null));
+    .bind(actorUserId, action, targetType, targetId, JSON.stringify(detail ?? null));
 }
 
 // 账号域审计（v2.0.0）：账号真源已收口 auth，动作本身由 auth 记账（含 IP）。

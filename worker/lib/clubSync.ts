@@ -5,13 +5,17 @@
 // （名册真源在 club，单向拉取没有歧义），但**球队建档是一次性事件、两侧都可能先发起**：
 // 在 club 建俱乐部时 tour 可能还没有这支队，纯拉取要等一小时 cron，而且 tour 读不到 club 的库。
 // 所以只对「建档」这一个写动作破例：两侧各开一个 HMAC 验签的入站端点，互相推送。
-// 名册、报名、赛果、账目一律不动，仍是单向。
+// 名册、报名、赛果、账目一律不动，仍是单向；v5.2.0 补上第二处破例：
+// 队名改动（team-rename）也由 club 推过来，否则对账页会常年挂着 nameDiffers。
 //
 // 签名契约与仓内既有口径逐字一致（auth machine.ts / club notify.ts）：
 // X-Sign = hex(HMAC-SHA256(secret, "POST|path|ts|raw"))，X-Timestamp 秒级 ±300s。
 import type { AppEnv } from "../env";
 
 export const TEAM_UPSERT_PATH = "/api/internal/team-upsert";
+
+// v5.2.0：俱乐部平台改队名后推过来的入站路径（与建档同一套验签口径，只有签名串里的 path 不同）
+export const TEAM_RENAME_PATH = "/api/internal/team-rename";
 
 const TIMEOUT_MS = 10_000;
 const CLOCK_SKEW_S = 300;
@@ -83,18 +87,20 @@ export async function pushTeamToClub(
 /**
  * 入站验签，fail-closed：写端点不能像 cron 那样「密钥没配就默认放行」。
  * 返回 unconfigured / reject 由调用点分别给 503 与 403。
+ * path 是签名串里的那条路径：默认建档端点，team-rename 调用点显式传自己的。
  */
 export async function verifyTeamSyncSignature(
   env: AppEnv["Bindings"],
   rawBody: string,
   tsHeader: string | undefined,
   signHeader: string | undefined,
+  path: string = TEAM_UPSERT_PATH,
 ): Promise<"ok" | "unconfigured" | "reject"> {
   const secret = env.TEAM_SYNC_SECRET ?? "";
   if (!secret) return "unconfigured";
   const ts = Number(tsHeader);
   if (!signHeader || !Number.isFinite(ts)) return "reject";
   if (Math.abs(Date.now() / 1000 - ts) > CLOCK_SKEW_S) return "reject";
-  const expected = await hmacHex(secret, `POST|${TEAM_UPSERT_PATH}|${ts}|${rawBody}`);
+  const expected = await hmacHex(secret, `POST|${path}|${ts}|${rawBody}`);
   return timingSafeEqual(expected, signHeader) ? "ok" : "reject";
 }
