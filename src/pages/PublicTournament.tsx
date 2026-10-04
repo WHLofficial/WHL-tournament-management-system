@@ -19,6 +19,7 @@ import type {
   MatchDTO,
   MatchSummaryDTO,
   RoundMetaDTO,
+  StageDTO,
   StageRoundsDTO,
   StageStandingDTO,
   RankZoneSettings,
@@ -32,6 +33,57 @@ const roundKey = (s: { stageId: number; round: number }) => `${s.stageId}:${s.ro
 type RoundChip = RoundMetaDTO & { stageId: number; stage: StageRoundsDTO };
 const flatRounds = (stages: StageRoundsDTO[]): RoundChip[] =>
   stages.flatMap((st) => st.rounds.map((r) => ({ ...r, stageId: st.stageId, stage: st })));
+
+// ---------- 淘汰赛公开赛程：回合分块 / 空席位占位（手动落位编排 T10） ----------
+
+/** 席位文案：有队名用队名；空席位用后端下发的候选占位（如「1/2」「A 组第 1」），缺省/空串回退「待定」 */
+export function seatLabel(
+  teamName: string | null | undefined,
+  placeholder: string | null | undefined,
+): string {
+  if (teamName) return teamName;
+  const p = placeholder?.trim();
+  return p ? p : "待定";
+}
+
+export type ElimPair = { slot: number; leg1: MatchDTO | null; leg2: MatchDTO | null };
+export type ElimRoundLayout = { twoLeg: boolean; pairs: ElimPair[] };
+
+/**
+ * 淘汰赛轮次布局：轮内存在 leg 行 = 两回合制 → 按 slot 配对（轮空单行只落在 leg1 侧）；
+ * 否则视为单场轮次（如单场决赛），保持整轮平铺、不分块。
+ */
+export function groupElimRound(rows: MatchDTO[]): ElimRoundLayout {
+  if (!rows.some((m) => m.leg != null)) return { twoLeg: false, pairs: [] };
+  const bySlot = new Map<number, ElimPair>();
+  for (const m of rows) {
+    let p = bySlot.get(m.slot);
+    if (!p) {
+      p = { slot: m.slot, leg1: null, leg2: null };
+      bySlot.set(m.slot, p);
+    }
+    if (m.leg === 2) p.leg2 = m;
+    else p.leg1 = m;
+  }
+  return { twoLeg: true, pairs: [...bySlot.values()].sort((a, b) => a.slot - b.slot) };
+}
+
+/** 两回合对局的晋级方：总比分（computeAgg 语义）→ 平局看点球（点球踢在次回合）；判不出返回 null */
+export function matchupWinnerId(leg1: MatchDTO | null, leg2: MatchDTO | null): number | null {
+  if (!leg1 || !leg2) return (leg1 ?? leg2)?.winnerEntryId ?? null;
+  const agg = computeAgg(leg2, [leg1, leg2]);
+  if (!agg) return null;
+  if (agg[0] !== agg[1]) return agg[0] > agg[1] ? leg2.homeEntryId : leg2.awayEntryId;
+  if (leg2.penHome != null && leg2.penAway != null && leg2.penHome !== leg2.penAway)
+    return leg2.penHome > leg2.penAway ? leg2.homeEntryId : leg2.awayEntryId;
+  return null;
+}
+
+/** 淘汰阶段尚无任何场次（rounds 元信息按 match 内连接聚合，零场次阶段不会出现） */
+export function emptyElimStages(stages: StageDTO[], meta: StageRoundsDTO[]): StageDTO[] {
+  const laid = new Set(meta.map((s) => s.stageId));
+  return stages.filter((s) => s.kind === "elim" && !laid.has(s.id));
+}
 
 export default function PublicTournament() {
   const { id } = useParams();
@@ -220,6 +272,7 @@ export default function PublicTournament() {
   const liveElsewhere = chips.filter(
     (c) => c.live > 0 && (!sel || roundKey(c) !== roundKey(sel)),
   );
+  const emptyElims = emptyElimStages(detail.stages, meta);
 
   return (
     <>
@@ -288,7 +341,7 @@ export default function PublicTournament() {
 
       {tab === "schedule" && (
         <div className="matches-tab">
-          {chips.length === 0 && (
+          {chips.length === 0 && emptyElims.length === 0 && (
             <p className="muted card">赛程还没排出来，排好后会显示在这里。</p>
           )}
           {chips.length > 0 && (
@@ -339,17 +392,18 @@ export default function PublicTournament() {
                     }
                   />
                 </h4>
-                {selRows.map((m) => (
-                  <PublicMatchRow
-                    key={m.id}
-                    tid={tid}
-                    match={m}
-                    agg={computeAgg(m, selRows)}
-                  />
-                ))}
+                <RoundMatches tid={tid} stageKind={selChip.stage.kind} rows={selRows} />
               </div>
             </section>
           )}
+          {emptyElims.map((st) => (
+            <section className="stage-block" key={st.id}>
+              <h3 className="stage-head">{st.name || stageTitle[st.kind]}</h3>
+              <div className="round-block">
+                <p className="muted">赛程待编排</p>
+              </div>
+            </section>
+          ))}
         </div>
       )}
 
@@ -396,39 +450,32 @@ export default function PublicTournament() {
   );
 }
 
-function PublicMatchRow({
+export function PublicMatchRow({
   tid,
   match: m,
   agg,
+  winnerId,
 }: {
   tid: number;
   match: MatchDTO;
   agg: [number, number] | null;
+  /** 高亮方覆盖：两回合对局传总比分晋级方；缺省用本行 winnerEntryId；显式 null 不高亮 */
+  winnerId?: number | null;
 }) {
+  const win = winnerId === undefined ? m.winnerEntryId : winnerId;
+  const isWin = (entryId: number | null) => entryId != null && entryId === win;
   return (
     <div className={`match-row mr-${m.status}`}>
       <Link to={`/t/${tid}/match/${m.id}`} className="mr-link">
         <div className="mr-line">
-          <span className={`mr-team${m.winnerEntryId === m.homeEntryId ? " mr-win" : ""}`}>
-            {m.homeTeamName ? (
-              <>
-                <TeamLogo name={m.homeTeamName} url={m.homeLogoUrl} size={18} />
-                {m.homeTeamName}
-              </>
-            ) : (
-              "待定"
-            )}
+          <span className={`mr-team${isWin(m.homeEntryId) ? " mr-win" : ""}`}>
+            {m.homeTeamName && <TeamLogo name={m.homeTeamName} url={m.homeLogoUrl} size={18} />}
+            {seatLabel(m.homeTeamName, m.homePlaceholder)}
           </span>
           <MatchScore m={m} agg={agg} />
-          <span className={`mr-team mr-away${m.winnerEntryId === m.awayEntryId ? " mr-win" : ""}`}>
-            {m.awayTeamName ? (
-              <>
-                {m.awayTeamName}
-                <TeamLogo name={m.awayTeamName} url={m.awayLogoUrl} size={18} />
-              </>
-            ) : (
-              "待定"
-            )}
+          <span className={`mr-team mr-away${isWin(m.awayEntryId) ? " mr-win" : ""}`}>
+            {seatLabel(m.awayTeamName, m.awayPlaceholder)}
+            {m.awayTeamName && <TeamLogo name={m.awayTeamName} url={m.awayLogoUrl} size={18} />}
           </span>
           {m.status === "live" && <span className="m-badge ms-live">进行中</span>}
           {m.walkoverSide && <span className="m-badge ms-wo">弃权</span>}
@@ -436,6 +483,56 @@ function PublicMatchRow({
       </Link>
       <EventTimeline events={m.events ?? []} />
     </div>
+  );
+}
+
+// 选中轮的对阵区：淘汰赛两回合制轮次按「首回合」「次回合」分块（区块内一行 = 一场对阵，
+// 次回合行带总比分与晋级方高亮）；单场轮次与非淘汰阶段保持整轮平铺的现状。
+export function RoundMatches({
+  tid,
+  stageKind,
+  rows,
+}: {
+  tid: number;
+  stageKind: StageRoundsDTO["kind"];
+  rows: MatchDTO[];
+}) {
+  const layout = stageKind === "elim" ? groupElimRound(rows) : null;
+  if (!layout || !layout.twoLeg) {
+    return (
+      <>
+        {rows.map((m) => (
+          <PublicMatchRow key={m.id} tid={tid} match={m} agg={computeAgg(m, rows)} />
+        ))}
+      </>
+    );
+  }
+  const leg1 = layout.pairs.filter((p) => p.leg1);
+  const leg2 = layout.pairs.filter((p) => p.leg2);
+  return (
+    <>
+      {leg1.length > 0 && <h5 className="round-title">首回合</h5>}
+      {leg1.map((p) => (
+        <PublicMatchRow
+          key={p.leg1!.id}
+          tid={tid}
+          match={p.leg1!}
+          agg={null}
+          // 两回合对局的晋级方只在次回合行高亮；轮空单行仍按本行 winner 高亮
+          winnerId={p.leg2 ? null : undefined}
+        />
+      ))}
+      {leg2.length > 0 && <h5 className="round-title">次回合</h5>}
+      {leg2.map((p) => (
+        <PublicMatchRow
+          key={p.leg2!.id}
+          tid={tid}
+          match={p.leg2!}
+          agg={computeAgg(p.leg2!, rows)}
+          winnerId={matchupWinnerId(p.leg1, p.leg2)}
+        />
+      ))}
+    </>
   );
 }
 

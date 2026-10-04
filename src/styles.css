@@ -1057,6 +1057,12 @@ button.btn-ghost:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* ---------- 淘汰赛落位视图 ---------- */
+.ko-candidates-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.ko-add-slot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.ko-place { font-weight: 600; }
+.ko-view td > .btn + .btn { margin-left: 6px; }
+
 /* ---------- 添加阶段 ---------- */
 button.add-stage {
   margin-top: 12px;

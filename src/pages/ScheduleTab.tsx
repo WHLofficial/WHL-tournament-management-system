@@ -6,6 +6,7 @@ import type {
   StageDTO,
   TournamentDetailDTO,
 } from "../../shared/types";
+import KnockoutStageView from "../components/KnockoutStageView";
 
 const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   pending: "未开打",
@@ -36,15 +37,17 @@ export default function ScheduleTab({
   reload: () => void;
 }) {
   const [matches, setMatches] = useState<MatchDTO[] | null>(null);
+  const [qualifiers, setQualifiers] = useState<Record<string, number[]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
     try {
-      const b = await api<{ matches: MatchDTO[] }>(
+      const b = await api<{ matches: MatchDTO[]; qualifiers?: Record<string, number[]> }>(
         `/api/admin/tournaments/${detail.tournament.id}/matches`
       );
       setMatches(b.matches);
+      setQualifiers(b.qualifiers ?? null);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "加载赛程失败");
     }
@@ -142,6 +145,7 @@ export default function ScheduleTab({
           detail={detail}
           stage={stage}
           matches={(matches ?? []).filter((m) => m.stageId === stage.id)}
+          qualifiers={qualifiers?.[String(stage.id)]}
           busy={busy}
           editable={editable}
           onRefresh={() => {
@@ -175,6 +179,7 @@ function StageBlock({
   detail,
   stage,
   matches,
+  qualifiers,
   busy,
   editable,
   onRefresh,
@@ -187,6 +192,7 @@ function StageBlock({
   detail: TournamentDetailDTO;
   stage: StageDTO;
   matches: MatchDTO[];
+  qualifiers?: number[];
   busy: boolean;
   editable: boolean;
   onRefresh: () => void;
@@ -290,15 +296,22 @@ function StageBlock({
           >
             改名
           </button>
-          <StageConfigEditor detail={detail} stage={stage} onSaved={onRefresh} />
+          <StageConfigEditor
+            detail={detail}
+            stage={stage}
+            onSaved={onRefresh}
+            locked={stage.kind === "elim" && matches.length > 0}
+          />
           {stage.kind === "group" && (
             <button className="btn" onClick={onDraw} disabled={busy}>
               随机抽签
             </button>
           )}
-          <button className="btn" onClick={onGenerate} disabled={busy}>
-            自动生成{stage.kind === "elim" ? "对阵" : "赛程"}
-          </button>
+          {stage.kind !== "elim" && (
+            <button className="btn" onClick={onGenerate} disabled={busy}>
+              自动生成赛程
+            </button>
+          )}
           {stage.kind === "round_robin" && onCompleteDouble && (
             <button
               className="btn"
@@ -344,10 +357,19 @@ function StageBlock({
         />
       )}
 
-      {matches.length === 0 ? (
+      {stage.kind === "elim" ? (
+        <KnockoutStageView
+          detail={detail}
+          stage={stage}
+          matches={matches}
+          qualifiers={qualifiers}
+          busy={busy}
+          onRefresh={onRefresh}
+        />
+      ) : matches.length === 0 ? (
         <p className="muted">
           还没有场次。
-          {stage.kind === "group" ? "先随机抽签或在下方点队名旁的组别字母手动分组，再生成小组赛程。" : "点右上角自动生成。"}
+          {stage.kind === "group" ? "先随机抽签或在下方点队名旁的组别字母手动分组，再生成小组赛程。" : "点右上角自动生成赛程。"}
         </p>
       ) : (
         roundBuckets.map(({ round, third, list }) => (
@@ -771,10 +793,12 @@ function StageConfigEditor({
   detail,
   stage,
   onSaved,
+  locked = false,
 }: {
   detail: TournamentDetailDTO;
   stage: StageDTO;
   onSaved: () => void;
+  locked?: boolean;
 }) {
   const cfg = stage.config as {
     loops?: number;
@@ -803,10 +827,16 @@ function StageConfigEditor({
     return (
       <span className="cfg-editor">
         {err && <span className="error">{err}</span>}
+        {locked && (
+          <span className="muted" title="该阶段已有场次，要改先清除赛程">
+            配置已锁定（要改先清除赛程）
+          </span>
+        )}
         <label>
           回合
           <select
             value={cfg.legs === 2 ? "2" : "1"}
+            disabled={locked}
             onChange={(e) => patch({ legs: Number(e.target.value) })}
           >
             <option value="1">单场</option>
@@ -817,6 +847,7 @@ function StageConfigEditor({
           决赛
           <select
             value={String(cfg.final_legs ?? cfg.legs ?? 1)}
+            disabled={locked}
             onChange={(e) => patch({ final_legs: Number(e.target.value) })}
           >
             <option value="1">单场</option>
@@ -828,6 +859,7 @@ function StageConfigEditor({
           <input
             type="checkbox"
             checked={!!cfg.third_place}
+            disabled={locked}
             onChange={(e) => patch({ third_place: e.target.checked })}
           />
         </label>
