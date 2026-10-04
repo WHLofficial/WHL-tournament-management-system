@@ -22,6 +22,7 @@ import { buildStats } from "../lib/topstats";
 import { buildToplistsWithSuspension } from "../lib/suspension";
 import { listMatchAbsences, listTournamentActiveInjuries } from "../lib/injury";
 import { mediaUrl } from "../lib/media";
+import { shanghaiDateOf } from "../lib/time";
 import { fetchMatchLineup, LineupError, parseSlotsJson } from "../lib/lineup";
 import { FORMS } from "../../shared/tactics";
 import type { StoredLineupSlot } from "../../shared/types";
@@ -840,7 +841,7 @@ app.get("/tournaments/:id/matches/:mid/h2h", pubCache(60), async (c) => {
     stageName: r.stage_name,
     round: r.round,
     leg: r.leg,
-    dateLabel: r.finished_at?.slice(0, 10) ?? "",
+    dateLabel: shanghaiDateOf(r.finished_at),
     homeTeamName: r.h_name,
     awayTeamName: r.a_name,
     homeLogoUrl: mediaUrl(r.h_logo),

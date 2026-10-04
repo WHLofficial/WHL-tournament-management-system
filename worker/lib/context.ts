@@ -8,6 +8,7 @@ import { mediaUrl } from "./media";
 import { getSuspensionConfig } from "./suspension";
 import type { MatchEventType } from "../../shared/types";
 import { elimRoundName } from "../../shared/rounds";
+import { shanghaiDateOf } from "./time";
 
 export interface FinishedMatch {
   id: number;
@@ -495,12 +496,11 @@ export function cnum(n: number): string {
   return String(n);
 }
 
-// 「9 月 6 日」（UTC 日期口径；终场时间为服务器记录时刻，确定性优先）
+// 「9 月 6 日」（上海日历日口径：UTC 时刻 +8h 取日期，业务日历日全仓统一）
 export function cnDate(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getUTCMonth() + 1} 月 ${d.getUTCDate()} 日`;
+  const day = shanghaiDateOf(iso);
+  if (!day) return "";
+  return `${Number(day.slice(5, 7))} 月 ${Number(day.slice(8, 10))} 日`;
 }
 
 // 轮次文案：淘汰赛用轮次名，小组/循环用第 N 轮；阶段有自定义名时前置；
