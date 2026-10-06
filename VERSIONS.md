@@ -37,7 +37,9 @@
 
 | 48 | v5.3.0 | 淘汰赛改手动落位编排（去自动生成）：新接口 `POST/PUT/DELETE …/stages/:stageId/slots[/:slot]`（首轮 2 的幂、上限 16 场、轮空、两回合自动铺 leg 行、结构变更原地 UPDATE 保 `match.id`）+ `generate` 对 elim 400、自动补生成跳过 elim 目标 + 单场删除端点对 elim 400、出现场次后回合制参数锁定 + 开打闸门（首轮非 2 的幂 → start/finish 409）+ 管理端淘汰赛分层列表视图 `src/components/KnockoutStageView.tsx`（点选落位/出线标记/待定来源引用）+ 公开赛程页两回合按回合分区块与空席位候选占位（`homePlaceholder`/`awayPlaceholder`，来源未完赛回退「待定」）+ 管理端 `qualifiers` 出线名单 + `tests/schedule.slots.routes.test.ts` 19 例、`tests/public.placeholder.routes.test.ts` 8 例 | minor：新增用户可见能力（淘汰赛编排方式与赛程展示改版） |
 
-**当前版本：v5.3.0**
+| 49 | v5.4.0 | 编排整批保存（草稿态）：worker 新端点 `PUT …/stages/:stageId/slots`（完整首轮快照 1..16 场整批落位，锁定口径与单场端点同源：started 增删闸、已开打槽位逐槽比对、后续轮开打仅幂等放行、快照内一队一场）+ `PUT …/stages/:stageId/matches/batch`（小组/循环跨轮增删混合，adds≤64/deletes≤32/总≤96，`guardMatches` 扩展 `extraPairs`/`excludeIds` 支持先删后排与跨轮 loops 计数，单 `db.batch` 原子落库）+ 前端淘汰赛落位改草稿态（`DraftSaveBar` 公共保存条、sessionStorage 防丢、锁定口径前端同源禁用）+ 按出线队数一键铺场（N=最小 2 的幂满编，只铺空槽）+ 小组/循环手动排赛草稿化（跨轮攒场去 2 场下限/24 上限、行删除入草稿待删除可撤销、置灰口径=库内+草稿−待删除）+ 测试 slots 26 例、bulk 15 例、UI 19+7 例（全量 486 passed） | minor：新增用户可见能力（整批保存与一键铺位，端点向后兼容） |
+
+**当前版本：v5.4.0**
 
 ## 落地位置
 
