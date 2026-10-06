@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import DraftSaveBar from "./DraftSaveBar";
 import { elimRoundName } from "../../shared/rounds";
 import type {
   EntryDTO,
@@ -19,6 +20,22 @@ export interface SlotGroup {
 /** 2 的幂判定（首轮 1/2/4/8/16 场合法） */
 export function isPowerOfTwo(n: number): boolean {
   return n > 0 && (n & (n - 1)) === 0;
+}
+
+/** 草稿里的一个首轮场次（场次号由数组下标决定：下标 i → 第 i+1 场） */
+export interface DraftSlot {
+  home: number | null;
+  away: number | null;
+}
+
+/** sessionStorage 里恢复的草稿形状校验 */
+function isDraftSlot(s: unknown): s is DraftSlot {
+  if (typeof s !== "object" || s === null || !("home" in s) || !("away" in s)) return false;
+  const home = (s as { home: unknown }).home;
+  const away = (s as { away: unknown }).away;
+  return (
+    (home === null || typeof home === "number") && (away === null || typeof away === "number")
+  );
 }
 
 /** 首轮场次数 = 第 1 轮不同场次号个数（空场次、轮空各算一场） */
@@ -151,17 +168,65 @@ export default function KnockoutStageView({
     home: number | null;
     away: number | null;
   } | null>(null);
-  const [acting, setActing] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DraftSlot[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   const groups = useMemo(() => groupSlots(matches), [matches]);
-  const firstCount = useMemo(() => firstRoundCount(matches), [matches]);
+  const firstGroups = groups.filter((g) => g.round === 1 && !g.third);
+  // 草稿基线：未进草稿时首轮按库内场次铺开（firstGroups 升序 → 场次号 = 下标 + 1）
+  const draftFromMatches = useMemo(
+    () =>
+      firstGroups.map((g) => ({
+        home: g.legs[0].homeEntryId ?? null,
+        away: g.legs[0].awayEntryId ?? null,
+      })),
+    [firstGroups],
+  );
+  const firstRows = useMemo(() => {
+    const bySlot = new Map(firstGroups.map((g) => [g.slot, g]));
+    return (draft ?? draftFromMatches).map((s, i) => ({
+      slot: i + 1,
+      home: s.home,
+      away: s.away,
+      origin: bySlot.get(i + 1),
+    }));
+  }, [draft, draftFromMatches, firstGroups]);
+  // 首轮场数/总轮数按草稿态取值：草稿里增删场次即时反映在标题与分层上
+  const firstCount = firstRows.length;
   const totalRounds = useMemo(() => totalRoundsOf(firstCount, matches), [firstCount, matches]);
   const powerOfTwo = isPowerOfTwo(firstCount);
   const nonPower = firstCount > 0 && !powerOfTwo;
   const structureLocked = matches.some((m) => m.status !== "pending");
 
-  const firstGroups = groups.filter((g) => g.round === 1 && !g.third);
+  const draftKey = `whl.ko.draft.${detail.tournament.id}.${stage.id}`;
+  // 刷新/误关页面后恢复草稿（防丢）；形状不对就忽略
+  useEffect(() => {
+    const raw = window.sessionStorage.getItem(draftKey);
+    if (!raw) return;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every(isDraftSlot)) setDraft(parsed);
+    } catch {
+      // 损坏的草稿直接忽略
+    }
+  }, [draftKey]);
+  useEffect(() => {
+    if (draft !== null) window.sessionStorage.setItem(draftKey, JSON.stringify(draft));
+  }, [draft, draftKey]);
+
+  // 与库内首轮的差异处数（保存条计数）
+  const changeCount = useMemo(() => {
+    if (!draft) return 0;
+    let n = Math.abs(draft.length - draftFromMatches.length);
+    const len = Math.min(draft.length, draftFromMatches.length);
+    for (let i = 0; i < len; i += 1) {
+      if (draft[i].home !== draftFromMatches[i].home || draft[i].away !== draftFromMatches[i].away)
+        n += 1;
+    }
+    return n;
+  }, [draft, draftFromMatches]);
+
   const firstTitle = firstCount === 0 ? "第 1 轮" : roundTitleOf(1, firstCount, totalRounds);
   const laterRoundNums = powerOfTwo
     ? [...new Set(groups.filter((g) => !g.third && g.round >= 2).map((g) => g.round))].sort(
@@ -184,43 +249,73 @@ export default function KnockoutStageView({
   const laterStarted = matches.some((m) => m.round >= 2 && m.status !== "pending");
   const slotAllPending = (g: SlotGroup) => g.legs.every((l) => l.status === "pending");
 
-  const openPanel = (g: SlotGroup) => {
-    setErr(null);
-    const leg = g.legs[0];
-    setPanel({ slot: g.slot, home: leg.homeEntryId, away: leg.awayEntryId });
+  // 所有落位/增删都只改草稿，保存时一次提交（PUT 完整首轮快照）
+  const ensureDraft = () => {
+    if (draft) return draft;
+    setDraft(draftFromMatches);
+    return draftFromMatches;
+  };
+  const place = (slot: number, home: number | null, away: number | null) => {
+    setDraft(ensureDraft().map((s, i) => (i + 1 === slot ? { home, away } : s)));
+    setPanel(null);
+  };
+  const addSlot = () => {
+    const d = ensureDraft();
+    if (d.length >= 16) return;
+    setDraft([...d, { home: null, away: null }]);
+  };
+  const removeSlot = (slot: number) => {
+    setDraft(ensureDraft().filter((_, i) => i + 1 !== slot));
+  };
+  const openPanel = (slot: number) => {
+    setSaveErr(null);
+    const cur = ensureDraft()[slot - 1] ?? { home: null, away: null };
+    setPanel({ slot, home: cur.home, away: cur.away });
   };
 
-  const run = async (fn: () => Promise<unknown>, closePanel = true) => {
-    setActing(true);
-    setErr(null);
+  // 整批保存端点（worker/routes/admin/schedule.ts 挂载在 /api/admin/tournaments 下）
+  const slotsPath = `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/slots`;
+  const save = async () => {
+    if (!draft || saving) return;
+    setSaving(true);
+    setSaveErr(null);
     try {
-      await fn();
-      if (closePanel) setPanel(null);
+      await api(slotsPath, {
+        method: "PUT",
+        body: { slots: draft.map((s) => ({ homeEntryId: s.home, awayEntryId: s.away })) },
+      });
+      window.sessionStorage.removeItem(draftKey);
+      setDraft(null);
+      setPanel(null);
       onRefresh();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "操作失败");
+      setSaveErr(e instanceof Error ? e.message : "保存失败");
     } finally {
-      setActing(false);
+      setSaving(false);
     }
   };
-
-  // 端点与其它阶段接口同基址（worker/routes/admin/schedule.ts 挂载在 /api/admin/tournaments 下）：
-  // POST /api/admin/tournaments/:id/stages/:stageId/slots，PUT/DELETE 同上 + /:slot
-  const slotsPath = (slot?: number) =>
-    `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/slots${
-      slot == null ? "" : `/${slot}`
-    }`;
-  const place = (slot: number, homeEntryId: number | null, awayEntryId: number | null) =>
-    run(() => api(slotsPath(slot), { method: "PUT", body: { homeEntryId, awayEntryId } }));
-  const addSlot = () => run(() => api(slotsPath(), { method: "POST" }), false);
-  const removeSlot = (slot: number) => {
-    if (!window.confirm(`删除第 ${slot} 场？该场落位会一并清除，后续场次序号自动前移。`)) return;
-    void run(() => api(slotsPath(slot), { method: "DELETE" }), false);
+  const discard = () => {
+    window.sessionStorage.removeItem(draftKey);
+    setDraft(null);
+    setPanel(null);
   };
 
   // 候选面板：qualifiers 置顶标「出线」，其余按种子；本轮已落位（编辑场次自身除外）置灰
   const qualifierIds = qualifiers ?? [];
   const qualifierSet = new Set(qualifierIds);
+  const qualifierCount = qualifierIds.length;
+  // 一键铺位：首轮空时按出线队数铺 N 场，N = 最小 2 幂使满编 2N ≥ 出线队数
+  const fillCount = (() => {
+    if (qualifierCount < 2) return 0;
+    let n = 1;
+    while (n < Math.ceil(qualifierCount / 2) && n < 16) n *= 2;
+    return n;
+  })();
+  const fillByQualifiers = () =>
+    setDraft(Array.from({ length: fillCount }, () => ({ home: null, away: null })));
+
+  const entryName = (id: number | null): string | null =>
+    id == null ? null : (detail.entries.find((e) => e.id === id)?.teamName ?? null);
   const orderedEntries = useMemo(() => {
     const byId = new Map(detail.entries.map((e) => [e.id, e]));
     const head: EntryDTO[] = [];
@@ -234,17 +329,16 @@ export default function KnockoutStageView({
     return [...head, ...tail];
   }, [detail.entries, qualifiers]);
 
+  // 本轮已落位的队（草稿态按草稿算，编辑场次自身除外）
   const occupied = useMemo(() => {
     const set = new Set<number>();
-    for (const g of firstGroups) {
-      if (panel && g.slot === panel.slot) continue;
-      for (const leg of g.legs) {
-        if (leg.homeEntryId != null) set.add(leg.homeEntryId);
-        if (leg.awayEntryId != null) set.add(leg.awayEntryId);
-      }
+    for (const row of firstRows) {
+      if (panel && row.slot === panel.slot) continue;
+      if (row.home != null) set.add(row.home);
+      if (row.away != null) set.add(row.away);
     }
     return set;
-  }, [firstGroups, panel]);
+  }, [firstRows, panel]);
 
   const groupNameOf = (e: EntryDTO) =>
     e.groupId == null ? "" : (detail.groups.find((g) => g.id === e.groupId)?.name ?? "");
@@ -266,10 +360,7 @@ export default function KnockoutStageView({
     return win ? <b>{name}</b> : <>{name}</>;
   };
 
-  const panelGroup = panel ? firstGroups.find((g) => g.slot === panel.slot) : undefined;
-  const panelPlaced = panelGroup
-    ? panelGroup.legs[0].homeEntryId != null || panelGroup.legs[0].awayEntryId != null
-    : false;
+  const panelPlaced = panel != null && (panel.home != null || panel.away != null);
 
   const renderLaterRows = (list: SlotGroup[]) =>
     list.map((g) => {
@@ -306,8 +397,6 @@ export default function KnockoutStageView({
 
   return (
     <div className="ko-view">
-      {err && <p className="error">{err}</p>}
-
       <div className="round-group">
         <h4 className="round-title">
           {firstTitle}
@@ -315,39 +404,49 @@ export default function KnockoutStageView({
             <span className="muted"> 首轮场次数需为 2 的幂（当前 {firstCount} 场）</span>
           )}
         </h4>
-        {firstGroups.length === 0 && (
-          <p className="muted">首轮还没有场次：点〔＋新增场次〕添加，再点空场次落位。</p>
+        {draft && (
+          <DraftSaveBar
+            label={`有未保存的更改 · ${changeCount} 处`}
+            saving={saving}
+            error={saveErr}
+            onSave={() => void save()}
+            onDiscard={discard}
+          />
         )}
-        {firstGroups.length > 0 && (
+        {!draft && firstCount === 0 && (
+          <p className="muted">首轮还没有场次：点〔＋新增场次〕或〔按出线队数铺场〕添加，再点空场次落位。</p>
+        )}
+        {firstRows.length > 0 && (
           <table>
             <tbody>
-              {firstGroups.map((g) => {
-                const leg = g.legs[0];
-                const empty = leg.homeEntryId == null && leg.awayEntryId == null;
-                const bye = leg.note === "轮空";
-                const status = slotStatusOf(g.legs);
-                const winner = slotWinner(g.legs);
-                const canEdit = slotAllPending(g) && !laterStarted;
-                const canDelete = canEdit && !structureLocked;
+              {firstRows.map((row) => {
+                const empty = row.home == null && row.away == null;
+                const bye = !empty && row.away == null;
+                const status = row.origin ? slotStatusOf(row.origin.legs) : "pending";
+                const winner = row.origin ? slotWinner(row.origin.legs) : null;
+                const canEdit = row.origin
+                  ? slotAllPending(row.origin) && !laterStarted
+                  : !laterStarted;
+                const canDelete = canEdit && (row.origin ? !structureLocked : true);
                 return (
-                  <tr key={`${g.round}:${g.slot}`}>
-                    <td className="muted">场次 {g.slot}</td>
+                  <tr key={row.slot}>
+                    <td className="muted">场次 {row.slot}</td>
                     {empty ? (
                       <td colSpan={5}>
                         <button
                           className="btn btn-sm ko-place"
                           type="button"
-                          disabled={busy || acting}
-                          onClick={() => openPanel(g)}
+                          disabled={busy}
+                          onClick={() => openPanel(row.slot)}
                         >
                           〔空〕点此落位（先点主队 → 再点客队）
                         </button>
-                        {!structureLocked && (
+                        {canDelete && (
                           <button
                             className="btn btn-danger btn-sm"
                             type="button"
-                            disabled={busy || acting}
-                            onClick={() => removeSlot(g.slot)}
+                            disabled={busy}
+                            onClick={() => removeSlot(row.slot)}
                           >
                             删除
                           </button>
@@ -355,12 +454,14 @@ export default function KnockoutStageView({
                       </td>
                     ) : (
                       <>
-                        <td>{sideName(leg.homeTeamName, winner === leg.homeEntryId)}</td>
-                        <td className="score">{bye ? "轮空" : slotScoreLabel(g.legs)}</td>
-                        <td>{sideName(leg.awayTeamName, winner === leg.awayEntryId)}</td>
+                        <td>{sideName(entryName(row.home), winner != null && winner === row.home)}</td>
+                        <td className="score">
+                          {bye ? "轮空" : row.origin ? slotScoreLabel(row.origin.legs) : "—"}
+                        </td>
+                        <td>{sideName(entryName(row.away), winner != null && winner === row.away)}</td>
                         <td>
                           {bye && <span className="badge">轮空</span>}
-                          {g.legs.some((l) => l.walkoverSide) && (
+                          {row.origin?.legs.some((l) => l.walkoverSide) && (
                             <span className="badge badge-wo">弃权</span>
                           )}
                           {status === "live" && <span className="badge">进行中</span>}
@@ -372,8 +473,8 @@ export default function KnockoutStageView({
                             <button
                               className="btn btn-sm"
                               type="button"
-                              disabled={busy || acting}
-                              onClick={() => openPanel(g)}
+                              disabled={busy}
+                              onClick={() => openPanel(row.slot)}
                             >
                               改位
                             </button>
@@ -382,8 +483,8 @@ export default function KnockoutStageView({
                             <button
                               className="btn btn-danger btn-sm"
                               type="button"
-                              disabled={busy || acting}
-                              onClick={() => removeSlot(g.slot)}
+                              disabled={busy}
+                              onClick={() => removeSlot(row.slot)}
                             >
                               删除
                             </button>
@@ -391,7 +492,7 @@ export default function KnockoutStageView({
                           {!canEdit && laterStarted && (
                             <span className="muted">后续轮次已开打，不能再改位</span>
                           )}
-                          {canEdit && byeAdvanced(g) && (
+                          {canEdit && row.origin && byeAdvanced(row.origin) && (
                             <span className="muted">轮空已晋级（改位会重算后续轮）</span>
                           )}
                         </td>
@@ -427,7 +528,7 @@ export default function KnockoutStageView({
                     key={e.id}
                     type="button"
                     className={`tg-btn${selected ? " tg-picked" : ""}`}
-                    disabled={used || busy || acting}
+                    disabled={used || busy}
                     title={used ? "本轮已落位（一队一轮只能一场）" : undefined}
                     onClick={() => pick(e.id)}
                   >
@@ -443,16 +544,16 @@ export default function KnockoutStageView({
               <button
                 className="btn"
                 type="button"
-                disabled={acting || busy || panel.home == null || panel.away == null}
-                onClick={() => void place(panel.slot, panel.home, panel.away)}
+                disabled={busy || panel.home == null || panel.away == null}
+                onClick={() => place(panel.slot, panel.home, panel.away)}
               >
                 确认落位
               </button>
               <button
                 className="btn"
                 type="button"
-                disabled={acting || busy || panel.home == null || panel.away != null}
-                onClick={() => void place(panel.slot, panel.home, null)}
+                disabled={busy || panel.home == null || panel.away != null}
+                onClick={() => place(panel.slot, panel.home, null)}
               >
                 轮空
               </button>
@@ -460,8 +561,8 @@ export default function KnockoutStageView({
                 <button
                   className="btn btn-danger-ghost"
                   type="button"
-                  disabled={acting || busy}
-                  onClick={() => void place(panel.slot, null, null)}
+                  disabled={busy}
+                  onClick={() => place(panel.slot, null, null)}
                 >
                   清除落位
                 </button>
@@ -471,7 +572,7 @@ export default function KnockoutStageView({
                 type="button"
                 onClick={() => {
                   setPanel(null);
-                  setErr(null);
+                  setSaveErr(null);
                 }}
               >
                 取消
@@ -481,10 +582,26 @@ export default function KnockoutStageView({
         )}
 
         <div className="ko-add-slot">
+          {!draft && firstCount === 0 && !structureLocked && (
+            qualifierCount >= 2 ? (
+              <button className="btn" type="button" disabled={busy} onClick={fillByQualifiers}>
+                按出线队数铺 {fillCount} 场（出线 {qualifierCount} 队）
+              </button>
+            ) : (
+              <button
+                className="btn"
+                type="button"
+                disabled
+                title="出线名单未生成（小组赛未完赛或未配置取人规则）"
+              >
+                按出线队数铺场
+              </button>
+            )
+          )}
           <button
             className="btn"
             type="button"
-            disabled={busy || acting || structureLocked || firstCount >= 16}
+            disabled={busy || structureLocked || firstCount >= 16}
             title={
               firstCount >= 16
                 ? "已达上限（16 场）"
@@ -492,13 +609,22 @@ export default function KnockoutStageView({
                   ? "已有场次开打，不能再增删场次"
                   : undefined
             }
-            onClick={() => void addSlot()}
+            onClick={addSlot}
           >
             〔＋新增场次〕
           </button>
           {firstCount >= 16 && <span className="muted">已达上限（16 场）</span>}
           {structureLocked && <span className="muted">已有场次开打，不能增删场次</span>}
         </div>
+        {!draft && firstCount === 0 && !structureLocked && (
+          qualifierCount >= 2 ? (
+            <p className="muted">
+              出线 {qualifierCount} 队满编 {fillCount * 2} 队，多出席位可设轮空或删除场次。
+            </p>
+          ) : (
+            <p className="muted">出线名单未生成（小组赛未完赛或未配置取人规则），可先手动新增场次。</p>
+          )
+        )}
       </div>
 
       {laterRoundNums.map((r) => (

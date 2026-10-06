@@ -244,6 +244,7 @@ afterEach(() => {
   unmountCurrent();
   apiMock.mockReset();
   vi.unstubAllGlobals();
+  window.sessionStorage.clear();
 });
 
 describe("KnockoutStageView 分层列表", () => {
@@ -267,7 +268,7 @@ describe("KnockoutStageView 分层列表", () => {
     expect(text()).toContain("待定（半决赛·场次 1 胜者）");
   });
 
-  it("空场次：点击展开候选面板，先主队后客队两步落位后 PUT 提交", async () => {
+  it("空场次：两步落位进草稿不发请求，保存一次 PUT 完整快照", async () => {
     renderKo([shell(1, 1), shell(1, 2)]);
 
     expect(text()).toContain(EMPTY_LABEL);
@@ -293,23 +294,40 @@ describe("KnockoutStageView 分层列表", () => {
     expect(button("确认落位").disabled).toBe(false);
 
     await click(button("确认落位"));
+    // 落位只进草稿：不发请求，行内立即可见，出现保存条
+    expect(apiCalls).toHaveLength(0);
+    expect(koRow(1).textContent).toContain("甲队");
+    expect(koRow(1).textContent).toContain("乙队");
+    expect(text()).toContain("有未保存的更改 · 1 处");
+
+    await click(button("保存"));
     expect(lastCall()).toMatchObject({
-      path: "/api/admin/tournaments/1/stages/7/slots/1",
+      path: "/api/admin/tournaments/1/stages/7/slots",
       method: "PUT",
-      body: { homeEntryId: 11, awayEntryId: 12 },
+      body: {
+        slots: [
+          { homeEntryId: 11, awayEntryId: 12 },
+          { homeEntryId: null, awayEntryId: null },
+        ],
+      },
     });
     expect(refreshSpy).toHaveBeenCalled();
+    expect(text()).not.toContain("有未保存的更改");
   });
 
-  it("只选一队可「轮空」（awayEntryId 为 null）", async () => {
+  it("只选一队可「轮空」（awayEntryId 为 null），保存时随快照提交", async () => {
     renderKo([shell(1, 1)]);
     await click(button(EMPTY_LABEL));
     await click(teamButton("丙队"));
     await click(button("轮空"));
+    expect(apiCalls).toHaveLength(0);
+    expect(koRow(1).textContent).toContain("轮空");
+
+    await click(button("保存"));
     expect(lastCall()).toMatchObject({
-      path: "/api/admin/tournaments/1/stages/7/slots/1",
+      path: "/api/admin/tournaments/1/stages/7/slots",
       method: "PUT",
-      body: { homeEntryId: 13, awayEntryId: null },
+      body: { slots: [{ homeEntryId: 13, awayEntryId: null }] },
     });
   });
 
@@ -331,10 +349,20 @@ describe("KnockoutStageView 分层列表", () => {
     expect(teamButton("甲队").textContent).toContain("主队");
     expect(teamButton("乙队").textContent).toContain("客队");
     await click(button("清除落位"));
+    // 清除也只进草稿：行回到空态，保存时快照里该场为全空
+    expect(apiCalls).toHaveLength(0);
+    expect(rowButtonLabels(1)).toContain(EMPTY_LABEL);
+
+    await click(button("保存"));
     expect(lastCall()).toMatchObject({
-      path: "/api/admin/tournaments/1/stages/7/slots/1",
+      path: "/api/admin/tournaments/1/stages/7/slots",
       method: "PUT",
-      body: { homeEntryId: null, awayEntryId: null },
+      body: {
+        slots: [
+          { homeEntryId: null, awayEntryId: null },
+          { homeEntryId: null, awayEntryId: null },
+        ],
+      },
     });
   });
 
@@ -384,11 +412,9 @@ describe("KnockoutStageView 分层列表", () => {
     expect(text()).toContain("第 1 场落位");
     await click(teamButton("丁队"));
     await click(button("轮空"));
-    expect(lastCall()).toMatchObject({
-      path: "/api/admin/tournaments/1/stages/7/slots/1",
-      method: "PUT",
-      body: { homeEntryId: 14, awayEntryId: null },
-    });
+    // 结构锁定只挡增删，落位仍走草稿；保存会被后端快照校验拦下
+    expect(apiCalls).toHaveLength(0);
+    expect(text()).toContain("有未保存的更改");
   });
 
   it("已完赛行显示徽章与晋级方，并锁定结构", () => {
@@ -418,17 +444,35 @@ describe("KnockoutStageView 分层列表", () => {
     expect(rowButtonLabels(3)).toEqual([EMPTY_LABEL, "删除"]);
   });
 
-  it("空阶段可新增场次，空场次可删除", async () => {
+  it("空阶段新增场次进草稿；删除场次进草稿并前移序号，保存一次提交", async () => {
     renderKo([]);
     expect(text()).toContain("首轮还没有场次");
     expect(button("〔＋新增场次〕").disabled).toBe(false);
     await click(button("〔＋新增场次〕"));
-    expect(lastCall()).toMatchObject({ path: "/api/admin/tournaments/1/stages/7/slots", method: "POST" });
+    expect(apiCalls).toHaveLength(0);
+    expect(rowButtonLabels(1)).toContain(EMPTY_LABEL);
+    expect(text()).toContain("有未保存的更改 · 1 处");
+    await click(button("保存"));
+    expect(lastCall()).toMatchObject({
+      path: "/api/admin/tournaments/1/stages/7/slots",
+      method: "PUT",
+      body: { slots: [{ homeEntryId: null, awayEntryId: null }] },
+    });
     expect(refreshSpy).toHaveBeenCalled();
 
     renderKo([shell(1, 1), shell(1, 2)]);
+    apiCalls = [];
     await click(button("删除"));
-    expect(lastCall()).toMatchObject({ path: "/api/admin/tournaments/1/stages/7/slots/1", method: "DELETE" });
+    expect(apiCalls).toHaveLength(0);
+    // 删第 1 场后原第 2 场前移为第 1 场（草稿序号重排）
+    expect(rowButtonLabels(1)).toContain(EMPTY_LABEL);
+    expect(text()).toContain("有未保存的更改 · 1 处");
+    await click(button("保存"));
+    expect(lastCall()).toMatchObject({
+      path: "/api/admin/tournaments/1/stages/7/slots",
+      method: "PUT",
+      body: { slots: [{ homeEntryId: null, awayEntryId: null }] },
+    });
   });
 
   it("首轮满 16 场时新增按钮禁用并提示上限", () => {
@@ -448,6 +492,73 @@ describe("KnockoutStageView 分层列表", () => {
     expect(grid[0]?.textContent).toContain("丙队");
     expect(grid[0]?.querySelector(".badge")?.textContent).toBe("出线");
     expect(grid[1]?.textContent).toContain("甲队");
+  });
+});
+
+describe("淘汰赛草稿与一键铺位", () => {
+  it("一键铺位：按出线队数铺最小满编 2 幂场数，保存一次提交空快照", async () => {
+    renderKo([], { qualifiers: [11, 12, 13] });
+    expect(button("按出线队数铺 2 场（出线 3 队）")).toBeTruthy();
+    expect(text()).toContain("出线 3 队满编 4 队，多出席位可设轮空或删除场次。");
+
+    await click(button("按出线队数铺 2 场（出线 3 队）"));
+    expect(apiCalls).toHaveLength(0);
+    expect(rowButtonLabels(1)).toContain(EMPTY_LABEL);
+    expect(rowButtonLabels(2)).toContain(EMPTY_LABEL);
+    expect(text()).toContain("有未保存的更改 · 2 处");
+
+    await click(button("保存"));
+    expect(lastCall()).toMatchObject({
+      path: "/api/admin/tournaments/1/stages/7/slots",
+      method: "PUT",
+      body: {
+        slots: [
+          { homeEntryId: null, awayEntryId: null },
+          { homeEntryId: null, awayEntryId: null },
+        ],
+      },
+    });
+  });
+
+  it("出线名单未生成时铺场按钮禁用并说明", () => {
+    renderKo([]);
+    const btn = buttons().find((b) => (b.textContent ?? "").includes("按出线队数铺"));
+    expect(btn?.disabled).toBe(true);
+    expect(btn?.title).toContain("出线名单未生成");
+    expect(text()).toContain("出线名单未生成（小组赛未完赛或未配置取人规则）");
+  });
+
+  it("刷新后从 sessionStorage 恢复草稿；放弃恢复原状", async () => {
+    renderKo([shell(1, 1), shell(1, 2)]);
+    await click(button(EMPTY_LABEL));
+    await click(teamButton("甲队"));
+    await click(teamButton("乙队"));
+    await click(button("确认落位"));
+    expect(text()).toContain("有未保存的更改 · 1 处");
+
+    // 模拟刷新：重新挂载同 props
+    renderKo([shell(1, 1), shell(1, 2)]);
+    expect(koRow(1).textContent).toContain("甲队");
+    expect(koRow(1).textContent).toContain("乙队");
+    expect(text()).toContain("有未保存的更改 · 1 处");
+
+    await click(button("放弃"));
+    expect(koRow(1).textContent).toContain(EMPTY_LABEL);
+    expect(text()).not.toContain("有未保存的更改");
+    expect(window.sessionStorage.getItem("whl.ko.draft.1.7")).toBe(null);
+  });
+
+  it("保存失败：错误显示在保存条，草稿保留", async () => {
+    renderKo([shell(1, 1)]);
+    await click(button(EMPTY_LABEL));
+    await click(teamButton("甲队"));
+    await click(button("轮空"));
+    apiMock.mockImplementationOnce(async () => {
+      throw new Error("该场次已开打，不能调整落位");
+    });
+    await click(button("保存"));
+    expect(text()).toContain("该场次已开打，不能调整落位");
+    expect(text()).toContain("有未保存的更改");
   });
 });
 

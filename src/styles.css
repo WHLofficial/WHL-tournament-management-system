@@ -3703,3 +3703,16 @@ button.add-stage {
     width: 100%;
   }
 }
+
+/* ---------- 草稿保存条（淘汰赛落位 / 小组循环排赛共用） ---------- */
+.draft-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line, #2a3a2f);
+  border-radius: 8px;
+}
+.draft-bar .error { margin-left: auto; }
