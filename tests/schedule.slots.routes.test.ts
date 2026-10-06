@@ -505,3 +505,176 @@ describe("淘汰赛场次的结构守卫", () => {
     expect((await patch(env, path, { config_json: { legs: 1 } })).status).toBe(200);
   });
 });
+
+describe("淘汰赛整批保存（PUT slots 快照）", () => {
+  const save = (env: Env, slots: Array<{ homeEntryId: number | null; awayEntryId: number | null }>) =>
+    put(env, slotsPath(600), { slots });
+
+  it("空阶段一次铺 4 场（含轮空与空槽）：结构 + 晋级器一次到位", async () => {
+    const { env, sqlite } = freshEnv();
+    mkEntries(sqlite, [600, 601, 602, 603, 604, 605]);
+    mkStage(sqlite, 600, "elim", 1, { legs: 1 });
+    const res = await save(env, [
+      { homeEntryId: 600, awayEntryId: 601 },
+      { homeEntryId: 602, awayEntryId: 603 },
+      { homeEntryId: 605, awayEntryId: null },
+      { homeEntryId: 604, awayEntryId: null },
+    ]);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, count: 4 });
+    // 首轮 4 行 + 次轮 2 行 + 决赛 1 行 = 7；轮空行形态与单场接口一致
+    const rows = rowsOf(sqlite, 600);
+    expect(rows.filter((r) => r.round === 1).map(shape)).toEqual([
+      [1, 1, null, 600, 601, null, "pending", null],
+      [1, 2, null, 602, 603, null, "pending", null],
+      [1, 3, null, 605, null, 605, "pending", "轮空"],
+      [1, 4, null, 604, null, 604, "pending", "轮空"],
+    ]);
+    // 晋级器：两个轮空席位都定了 → 次轮预填 605 vs 604
+    const r2s2 = rows.find((r) => r.round === 2 && r.slot === 2);
+    expect([r2s2?.home_entry_id, r2s2?.away_entry_id]).toEqual([605, 604]);
+  });
+
+  it("未开打时快照可增可减：4 场缩到 2 场，后续空壳同步对齐", async () => {
+    const { env, sqlite } = freshEnv();
+    mkEntries(sqlite, [600, 601, 602, 603]);
+    mkStage(sqlite, 600, "elim", 1, { legs: 1 });
+    for (let i = 1; i <= 4; i++) await addSlot(env, 600);
+    await place(env, 600, 1, 600, 601);
+    await place(env, 600, 2, 602, 603);
+    const res = await save(env, [
+      { homeEntryId: 600, awayEntryId: 601 },
+      { homeEntryId: 602, awayEntryId: 603 },
+    ]);
+    expect(res.status).toBe(200);
+    const rows = rowsOf(sqlite, 600);
+    expect(rows.map(shape)).toEqual([
+      [1, 1, null, 600, 601, null, "pending", null],
+      [1, 2, null, 602, 603, null, "pending", null],
+      [2, 1, null, null, null, null, "pending", null],
+    ]);
+  });
+
+  it("快照内同队两场 → 409 整批拒绝", async () => {
+    const { env, sqlite } = freshEnv();
+    mkEntries(sqlite, [600, 601, 602, 603]);
+    mkStage(sqlite, 600, "elim", 1, { legs: 1 });
+    const res = await save(env, [
+      { homeEntryId: 600, awayEntryId: 601 },
+      { homeEntryId: 600, awayEntryId: 602 },
+    ]);
+    expect(res.status).toBe(409);
+    expect(await msg(res)).toBe("第 2 场：该队已在第 1 场出场");
+    expect(rowsOf(sqlite, 600)).toHaveLength(0);
+  });
+
+  it("已开打的场次必须原样保留：改动 409，其余场次仍可整批微调", async () => {
+    const { env, sqlite } = freshEnv();
+    mkEntries(sqlite, [600, 601, 602, 603, 604, 605, 606, 607]);
+    mkStage(sqlite, 600, "elim", 1, { legs: 1 });
+    for (let i = 1; i <= 4; i++) await addSlot(env, 600);
+    await place(env, 600, 1, 600, 601);
+    await place(env, 600, 2, 602, 603);
+    await place(env, 600, 3, 604, 605);
+    await place(env, 600, 4, 606, 607);
+    await start(env, idAt(sqlite, 600, 1, 1));
+
+    const bad = await save(env, [
+      { homeEntryId: 601, awayEntryId: 600 },
+      { homeEntryId: 602, awayEntryId: 603 },
+      { homeEntryId: 604, awayEntryId: 605 },
+      { homeEntryId: 606, awayEntryId: 607 },
+    ]);
+    expect(bad.status).toBe(409);
+    expect(await msg(bad)).toBe("第 1 场已开打，不能调整落位");
+
+    // 第 1 场保持原样，翻转未开打的第 2 场主客 → 放行
+    const ok = await save(env, [
+      { homeEntryId: 600, awayEntryId: 601 },
+      { homeEntryId: 603, awayEntryId: 602 },
+      { homeEntryId: 604, awayEntryId: 605 },
+      { homeEntryId: 606, awayEntryId: 607 },
+    ]);
+    expect(ok.status).toBe(200);
+    const r1s2 = rowsOf(sqlite, 600).find((r) => r.round === 1 && r.slot === 2);
+    expect([r1s2?.home_entry_id, r1s2?.away_entry_id]).toEqual([603, 602]);
+  });
+
+  it("场次数变化且已有开打 → 409", async () => {
+    const { env, sqlite } = freshEnv();
+    mkEntries(sqlite, [600, 601, 602, 603, 604, 605, 606, 607]);
+    mkStage(sqlite, 600, "elim", 1, { legs: 1 });
+    for (let i = 1; i <= 4; i++) await addSlot(env, 600);
+    await place(env, 600, 1, 600, 601);
+    await place(env, 600, 2, 602, 603);
+    await place(env, 600, 3, 604, 605);
+    await place(env, 600, 4, 606, 607);
+    await start(env, idAt(sqlite, 600, 1, 1));
+
+    const res = await save(env, [
+      { homeEntryId: 600, awayEntryId: 601 },
+      { homeEntryId: 602, awayEntryId: 603 },
+      { homeEntryId: 604, awayEntryId: 605 },
+    ]);
+    expect(res.status).toBe(409);
+    expect(await msg(res)).toBe("该阶段已有开打或完赛的场次，不能增删场次");
+  });
+
+  it("后续轮开打：快照一致放行（幂等保存），有任何变化 409", async () => {
+    const { env, sqlite } = freshEnv();
+    mkEntries(sqlite, [600, 601, 602, 603, 604, 605, 606, 607]);
+    mkStage(sqlite, 600, "elim", 1, { legs: 1 });
+    for (let i = 1; i <= 4; i++) await addSlot(env, 600);
+    await place(env, 600, 1, 600, 601);
+    await place(env, 600, 2, 602, 603);
+    await place(env, 600, 3, 604, 605);
+    await place(env, 600, 4, 606, 607);
+    await finish(env, idAt(sqlite, 600, 1, 1), 2, 0);
+    await finish(env, idAt(sqlite, 600, 1, 2), 1, 0);
+    await start(env, idAt(sqlite, 600, 2, 1));
+
+    const same = await save(env, [
+      { homeEntryId: 600, awayEntryId: 601 },
+      { homeEntryId: 602, awayEntryId: 603 },
+      { homeEntryId: 604, awayEntryId: 605 },
+      { homeEntryId: 606, awayEntryId: 607 },
+    ]);
+    expect(same.status).toBe(200);
+
+    const changed = await save(env, [
+      { homeEntryId: 600, awayEntryId: 601 },
+      { homeEntryId: 602, awayEntryId: 603 },
+      { homeEntryId: 605, awayEntryId: 604 },
+      { homeEntryId: 606, awayEntryId: 607 },
+    ]);
+    expect(changed.status).toBe(409);
+    expect(await msg(changed)).toBe("后续轮次已开打，不能再调整首轮落位");
+  });
+
+  it("形状守卫：空快照 / 超上限 / 半对 / 同队 / 队伍不存在", async () => {
+    const { env, sqlite } = freshEnv();
+    mkEntries(sqlite, [600, 601, 602, 603]);
+    mkStage(sqlite, 600, "elim", 1, { legs: 1 });
+
+    const empty = await save(env, []);
+    expect(empty.status).toBe(400);
+    expect(await msg(empty)).toBe("slots 需为 1 到 16 场的完整首轮快照");
+
+    const overflow = await save(env, Array.from({ length: 17 }, () => ({ homeEntryId: null, awayEntryId: null })));
+    expect(overflow.status).toBe(400);
+    expect(await msg(overflow)).toBe("slots 需为 1 到 16 场的完整首轮快照");
+
+    const half = await save(env, [{ homeEntryId: null, awayEntryId: 600 }]);
+    expect(half.status).toBe(400);
+    expect(await msg(half)).toBe("第 1 场：主队留空时不能指定客队");
+
+    const same = await save(env, [{ homeEntryId: 600, awayEntryId: 600 }]);
+    expect(same.status).toBe(400);
+    expect(await msg(same)).toBe("第 1 场：主客队不能是同一支队伍");
+
+    const ghost = await save(env, [{ homeEntryId: 600, awayEntryId: 999 }]);
+    expect(ghost.status).toBe(400);
+    expect(await msg(ghost)).toBe("参赛队伍不存在");
+    expect(rowsOf(sqlite, 600)).toHaveLength(0);
+  });
+});

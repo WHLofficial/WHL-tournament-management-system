@@ -576,6 +576,86 @@ app.delete("/:id/stages/:stageId/slots/:slot", async (c) => {
   }
 });
 
+// 整批保存首轮快照：一次提交 1..16 场的完整首轮（含轮空/空槽），通过后结构 + 晋级器一次收口。
+// 快照按 slot 对齐而非下标，兼容历史遗留的非连续 slot；与既有单场接口的锁定口径保持一致。
+app.put("/:id/stages/:stageId/slots", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  const body = await c.req.json().catch(() => null as null);
+  const raw = Array.isArray(body?.slots) ? body.slots : null;
+  if (!raw || raw.length < 1 || raw.length > MAX_FIRST_ROUND) {
+    return fail(c, 400, `slots 需为 1 到 ${MAX_FIRST_ROUND} 场的完整首轮快照`);
+  }
+  const slots: Round1Slot[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const s = (raw[i] ?? {}) as { homeEntryId?: unknown; awayEntryId?: unknown };
+    const home = s.homeEntryId ?? null;
+    const away = s.awayEntryId ?? null;
+    const okId = (v: unknown) => v === null || (Number.isInteger(v) && Number(v) > 0);
+    if (!okId(home) || !okId(away)) {
+      return fail(c, 400, `第 ${i + 1} 场：请提供 homeEntryId 与 awayEntryId（可为 null）`);
+    }
+    if (home === null && away !== null) return fail(c, 400, `第 ${i + 1} 场：主队留空时不能指定客队`);
+    if (home !== null && home === away) return fail(c, 400, `第 ${i + 1} 场：主客队不能是同一支队伍`);
+    slots.push({ slot: i + 1, home: home as number | null, away: away as number | null });
+  }
+  try {
+    const { stage, started, rows, cfg } = await loadManualStage(c.env.DB, tid, stageId);
+    const placements = round1Placements(rows);
+    const bySlot = new Map(slots.map((s) => [s.slot, s]));
+    // 场次数变化等价于增删场次：沿用「started === 0 才允许」的口径
+    if (slots.length !== placements.length && started > 0) {
+      return fail(c, 409, "该阶段已有开打或完赛的场次，不能增删场次");
+    }
+    // 已开打的场次必须原样保留（快照里对应槽位不允许有任何改动）
+    for (const p of placements) {
+      const startedRow = rows.some((r) => r.round === 1 && r.slot === p.slot && r.status !== "pending");
+      if (!startedRow) continue;
+      const want = bySlot.get(p.slot);
+      if (!want || want.home !== p.home || want.away !== p.away) {
+        return fail(c, 409, `第 ${p.slot} 场已开打，不能调整落位`);
+      }
+    }
+    // 后续轮已开打：首轮落位整体冻结；完全一致的快照视为幂等保存，放行
+    const later = await laterRoundStarted(c.env.DB, stage.id);
+    if (later > 0) {
+      const identical =
+        slots.length === placements.length &&
+        placements.every((p) => {
+          const want = bySlot.get(p.slot);
+          return want && want.home === p.home && want.away === p.away;
+        });
+      if (!identical) return fail(c, 409, "后续轮次已开打，不能再调整首轮落位");
+    }
+    // 快照内部查重：一队一场
+    const seen = new Map<number, number>();
+    for (let i = 0; i < slots.length; i++) {
+      for (const id of [slots[i].home, slots[i].away]) {
+        if (id == null) continue;
+        const prev = seen.get(id);
+        if (prev !== undefined) return fail(c, 409, `第 ${i + 1} 场：该队已在第 ${prev} 场出场`);
+        seen.set(id, i + 1);
+      }
+    }
+    if (seen.size > 0) {
+      const ids = [...seen.keys()];
+      const erows = await c.env.DB.prepare(
+        `SELECT id FROM entry WHERE tournament_id = ? AND id IN (${ids.map(() => "?").join(",")})`
+      )
+        .bind(tid, ...ids)
+        .all<{ id: number }>();
+      const have = new Set((erows.results ?? []).map((r) => r.id));
+      if (ids.some((id) => !have.has(id))) return fail(c, 400, "参赛队伍不存在");
+    }
+    await applyBracketChange(c.env.DB, stage.id, slots.length, cfg, slots, rows);
+    return c.json({ ok: true, count: slots.length });
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    if (e instanceof AdvancerError) return fail(c, 409, e.message);
+    throw e;
+  }
+});
+
 // ---------- 小组抽签 ----------
 
 app.post("/:id/stages/:stageId/draw", async (c) => {
@@ -737,12 +817,15 @@ app.patch("/:id/stages/:stageId/entries/:entryId/group", async (c) => {
 // 原实现逐场 4 条串行查询，批量最多 24 场 ≈ 96 条 ≈ 19s；批量化后整批固定 2 条查询，与场数无关。
 // 批次内互斥（一队一批只踢一场）由调用方先查；这里对「本轮已有比赛」只看本场两支队的库里占用——
 // 同批先前的队必然已各自通过检查，故无需再并进 IN 列表（语义与原 extraPairIds 一致）。
+// v5.4.0 跨轮整批：opts.extraPairs 计入同批其它轮次的同对配对数（补进交手判定），
+// opts.excludeIds 把「本批待删」的行从占用/交手统计里剔除（先删再排的队视为未占用）。
 async function guardMatches(
   db: D1Database,
   tid: number,
   stage: StageRow,
   round: number,
-  pairs: Array<{ home: number; away: number }>
+  pairs: Array<{ home: number; away: number }>,
+  opts?: { extraPairs?: Map<string, number>; excludeIds?: Set<number> }
 ): Promise<{ index: number; why: string } | null> {
   if (stage.kind === "elim") {
     return { index: 0, why: "淘汰赛请在赛程页逐场点选落位" };
@@ -765,13 +848,14 @@ async function guardMatches(
 
   // 2) 该阶段全部场次：同时供「本轮占用」与「历史交手次数」判定
   const mrows = await db
-    .prepare("SELECT round, home_entry_id, away_entry_id FROM match WHERE stage_id = ?")
+    .prepare("SELECT id, round, home_entry_id, away_entry_id FROM match WHERE stage_id = ?")
     .bind(stage.id)
-    .all<{ round: number; home_entry_id: number | null; away_entry_id: number | null }>();
+    .all<{ id: number; round: number; home_entry_id: number | null; away_entry_id: number | null }>();
   const roundOccupied = new Set<number>();
   const pairCount = new Map<string, number>();
   const pairKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
   for (const m of mrows.results ?? []) {
+    if (opts?.excludeIds?.has(m.id)) continue;
     if (m.round === round) {
       if (m.home_entry_id != null) roundOccupied.add(m.home_entry_id);
       if (m.away_entry_id != null) roundOccupied.add(m.away_entry_id);
@@ -794,7 +878,8 @@ async function guardMatches(
     if (roundOccupied.has(home) || roundOccupied.has(away)) {
       return { index: i, why: "本轮已有其中一支球队的比赛" };
     }
-    if ((pairCount.get(pairKey(home, away)) ?? 0) >= loops) {
+    const pk = pairKey(home, away);
+    if ((pairCount.get(pk) ?? 0) + (opts?.extraPairs?.get(pk) ?? 0) >= loops) {
       return { index: i, why: loops === 1 ? "两队在本阶段已交手过" : "两队交手次数已达上限（双循环）" };
     }
   }
@@ -907,6 +992,135 @@ app.post("/:id/stages/:stageId/matches/bulk", async (c) => {
   );
   await c.env.DB.batch(stmts);
   return c.json({ ok: true, created: clean.length, round });
+});
+
+// 跨轮整批保存（v5.4.0，小组/循环赛草稿态用）：一次提交新增 + 待删，一个 db.batch 原子落库。
+// 总量上限 96 条压在 D1 单批语句数实践线以内；pending 增删不影响积分，无需重算。
+app.put("/:id/stages/:stageId/matches/batch", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  const body = await c.req.json().catch(() => null as null);
+  const rawAdds = Array.isArray(body?.adds) ? body.adds : null;
+  const rawDels = Array.isArray(body?.deleteIds) ? body.deleteIds : null;
+  if (!rawAdds || !rawDels) return fail(c, 400, "请提供 adds 与 deleteIds 数组");
+  if (rawAdds.length === 0 && rawDels.length === 0) return fail(c, 400, "没有要保存的改动");
+  if (rawAdds.length > 64 || rawDels.length > 32 || rawAdds.length + rawDels.length > 96) {
+    return fail(c, 400, "一次最多保存 96 条改动（新增 64 场 + 删除 32 场），请分批保存");
+  }
+  type BatchAdd = { round: number; home: number; away: number; index: number };
+  const adds: BatchAdd[] = [];
+  for (let i = 0; i < rawAdds.length; i++) {
+    const a = rawAdds[i] ?? {};
+    const round = Number(a.round);
+    const home = Number(a.homeEntryId);
+    const away = Number(a.awayEntryId);
+    if (!Number.isInteger(round) || round < 1) return fail(c, 400, `第 ${i + 1} 场：轮次必须是正整数`);
+    if (!Number.isInteger(home) || !Number.isInteger(away) || home < 1 || away < 1) {
+      return fail(c, 400, `第 ${i + 1} 场：请选择主队和客队`);
+    }
+    if (home === away) return fail(c, 400, `第 ${i + 1} 场：主客队不能是同一支队伍`);
+    adds.push({ round, home, away, index: i + 1 });
+  }
+  const deleteIds: number[] = [];
+  for (const v of rawDels) {
+    const id = Number(v);
+    if (!Number.isInteger(id) || id < 1) return fail(c, 400, "待删除的场次不合法");
+    deleteIds.push(id);
+  }
+  if (new Set(deleteIds).size !== deleteIds.length) return fail(c, 400, "待删除的场次有重复");
+
+  let stage: StageRow;
+  try {
+    ({ stage } = await loadStage(c.env.DB, tid, stageId));
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    throw e;
+  }
+  if (stage.kind === "elim") return fail(c, 400, "淘汰赛请在赛程页增删场次");
+
+  // 待删行先验明正身：必须在本阶段且未开打（删了才允许同批重排/释放占用）
+  const excludeIds = new Set(deleteIds);
+  if (deleteIds.length > 0) {
+    const drows = await c.env.DB.prepare(
+      `SELECT id, status FROM match WHERE stage_id = ? AND id IN (${deleteIds.map(() => "?").join(",")})`
+    )
+      .bind(stageId, ...deleteIds)
+      .all<{ id: number; status: string }>();
+    const byId = new Map((drows.results ?? []).map((r) => [r.id, r]));
+    for (const id of deleteIds) {
+      const row = byId.get(id);
+      if (!row) return fail(c, 400, `要删除的比赛 #${id} 不在该阶段`);
+      if (row.status !== "pending") return fail(c, 409, "只有未开打的比赛可以删除");
+    }
+  }
+
+  // 批内互斥按轮分桶（同轮一队一场）；extraPairs 汇总全批同对配对数，交给守卫补进交手判定
+  const byRound = new Map<number, BatchAdd[]>();
+  const seenByRound = new Map<number, Map<number, number>>();
+  const extraPairs = new Map<string, number>();
+  const pairKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+  for (const a of adds) {
+    let seen = seenByRound.get(a.round);
+    if (!seen) {
+      seen = new Map();
+      seenByRound.set(a.round, seen);
+    }
+    for (const id of [a.home, a.away]) {
+      const prev = seen.get(id);
+      if (prev !== undefined) return fail(c, 400, `第 ${a.index} 场：该队已在本批第 ${prev} 场出场`);
+    }
+    seen.set(a.home, a.index);
+    seen.set(a.away, a.index);
+    const bucket = byRound.get(a.round) ?? [];
+    bucket.push(a);
+    byRound.set(a.round, bucket);
+    const k = pairKey(a.home, a.away);
+    extraPairs.set(k, (extraPairs.get(k) ?? 0) + 1);
+  }
+  for (const [round, bucket] of byRound) {
+    // 扣掉本桶自身的配对计数：同桶同对已被互斥挡下，剩余计数来自其它轮次的同批场次——
+    // 不减的话 loops=1 时任何新增都会自拒
+    const extra = new Map(extraPairs);
+    for (const a of bucket) {
+      const k = pairKey(a.home, a.away);
+      extra.set(k, (extra.get(k) ?? 1) - 1);
+    }
+    const bad = await guardMatches(
+      c.env.DB,
+      tid,
+      stage,
+      round,
+      bucket.map((a) => ({ home: a.home, away: a.away })),
+      { extraPairs: extra, excludeIds }
+    );
+    if (bad) return fail(c, 400, `第 ${bucket[bad.index].index} 场：${bad.why}`);
+  }
+
+  // slot 续号：按轮取现存最大 slot（待删行不计），本批内递增
+  const allRows = await c.env.DB.prepare("SELECT id, round, slot FROM match WHERE stage_id = ?")
+    .bind(stageId)
+    .all<{ id: number; round: number; slot: number }>();
+  const maxSlot = new Map<number, number>();
+  for (const r of allRows.results ?? []) {
+    if (excludeIds.has(r.id)) continue;
+    maxSlot.set(r.round, Math.max(maxSlot.get(r.round) ?? 0, r.slot));
+  }
+  const nextSlot = new Map<number, number>();
+  const stmts: D1PreparedStatement[] = deleteIds.map((id) =>
+    c.env.DB.prepare("DELETE FROM match WHERE id = ? AND stage_id = ?").bind(id, stageId)
+  );
+  for (const a of adds) {
+    const slot = nextSlot.get(a.round) ?? (maxSlot.get(a.round) ?? 0) + 1;
+    nextSlot.set(a.round, slot + 1);
+    stmts.push(
+      c.env.DB.prepare(
+        `INSERT INTO match (stage_id, round, slot, home_entry_id, away_entry_id, status)
+         VALUES (?, ?, ?, ?, ?, 'pending')`
+      ).bind(stageId, a.round, slot, a.home, a.away)
+    );
+  }
+  await c.env.DB.batch(stmts);
+  return c.json({ ok: true, created: adds.length, deleted: deleteIds.length });
 });
 
 // ---------- 场次查询（全赛事，前端按阶段过滤）与删除 ----------

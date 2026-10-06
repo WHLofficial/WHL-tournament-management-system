@@ -163,3 +163,173 @@ describe("管理端批量落场", () => {
     expect(created.status).toBe(201);
   });
 });
+
+describe("跨轮整批保存（PUT matches/batch）", () => {
+  const put = (env: Record<string, unknown>, path: string, body: unknown) =>
+    app.request(
+      path,
+      {
+        method: "PUT",
+        headers: { Cookie: "whl_session=tok-admin", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      env,
+    );
+  const saveBatch = (env: Record<string, unknown>, body: unknown, stageId = 70) =>
+    put(env, `/api/admin/tournaments/7/stages/${stageId}/matches/batch`, body);
+  const seedMatch = (
+    sqlite: DatabaseSync,
+    id: number,
+    round: number,
+    slot: number,
+    home: number,
+    away: number,
+    status = "pending",
+  ) =>
+    sqlite
+      .prepare("INSERT INTO match (id, stage_id, round, slot, home_entry_id, away_entry_id, status) VALUES (?, 70, ?, ?, ?, ?, ?)")
+      .run(id, round, slot, home, away, status);
+  const rowsOf = (sqlite: DatabaseSync) =>
+    sqlite
+      .prepare("SELECT id, round, slot, home_entry_id, away_entry_id FROM match WHERE stage_id = 70 ORDER BY round, slot")
+      .all() as unknown as Array<{ id: number; round: number; slot: number; home_entry_id: number; away_entry_id: number }>;
+
+  it("跨轮 adds 一次落库，slot 按轮各自续号", async () => {
+    const { env, sqlite } = freshEnv();
+    seedMatch(sqlite, 800, 1, 1, 500, 501);
+    const res = await saveBatch(env, {
+      adds: [
+        { round: 1, homeEntryId: 502, awayEntryId: 503 },
+        { round: 2, homeEntryId: 500, awayEntryId: 502 },
+        { round: 2, homeEntryId: 501, awayEntryId: 503 },
+      ],
+      deleteIds: [],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, created: 3, deleted: 0 });
+    expect(rowsOf(sqlite)).toEqual([
+      { id: 800, round: 1, slot: 1, home_entry_id: 500, away_entry_id: 501 },
+      { id: expect.any(Number), round: 1, slot: 2, home_entry_id: 502, away_entry_id: 503 },
+      { id: expect.any(Number), round: 2, slot: 1, home_entry_id: 500, away_entry_id: 502 },
+      { id: expect.any(Number), round: 2, slot: 2, home_entry_id: 501, away_entry_id: 503 },
+    ]);
+  });
+
+  it("批内互斥：同轮一队只允许一场", async () => {
+    const { env, sqlite } = freshEnv();
+    const res = await saveBatch(env, {
+      adds: [
+        { round: 1, homeEntryId: 500, awayEntryId: 501 },
+        { round: 1, homeEntryId: 501, awayEntryId: 502 },
+      ],
+      deleteIds: [],
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ message: "第 2 场：该队已在本批第 1 场出场" });
+    expect(countMatches(sqlite, 70)).toBe(0);
+  });
+
+  it("loops=1 同对跨轮两场 → 整批拒绝", async () => {
+    const { env, sqlite } = freshEnv();
+    const res = await saveBatch(env, {
+      adds: [
+        { round: 1, homeEntryId: 500, awayEntryId: 501 },
+        { round: 2, homeEntryId: 501, awayEntryId: 500 },
+      ],
+      deleteIds: [],
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ message: "第 1 场：两队在本阶段已交手过" });
+    expect(countMatches(sqlite, 70)).toBe(0);
+  });
+
+  it("删除校验：pending 删得掉；不在阶段 400；已开打 409；重复 400", async () => {
+    const { env, sqlite } = freshEnv();
+    seedMatch(sqlite, 800, 1, 1, 500, 501);
+
+    const ghost = await saveBatch(env, { adds: [], deleteIds: [999] });
+    expect(ghost.status).toBe(400);
+    expect(await ghost.json()).toEqual({ message: "要删除的比赛 #999 不在该阶段" });
+
+    sqlite
+      .prepare("INSERT INTO match (id, stage_id, round, slot, home_entry_id, away_entry_id, status) VALUES (801, 70, 1, 2, 502, 503, 'live')")
+      .run();
+    const live = await saveBatch(env, { adds: [], deleteIds: [801] });
+    expect(live.status).toBe(409);
+    expect(await live.json()).toEqual({ message: "只有未开打的比赛可以删除" });
+
+    const dup = await saveBatch(env, { adds: [], deleteIds: [800, 800] });
+    expect(dup.status).toBe(400);
+    expect(await dup.json()).toEqual({ message: "待删除的场次有重复" });
+
+    const ok = await saveBatch(env, { adds: [], deleteIds: [800] });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true, created: 0, deleted: 1 });
+    expect(countMatches(sqlite, 70)).toBe(1);
+  });
+
+  it("删 + 增混合：同轮释放占用重排，删了再排同一对也放行", async () => {
+    const { env, sqlite } = freshEnv();
+    seedMatch(sqlite, 800, 1, 1, 500, 501);
+    const res = await saveBatch(env, {
+      adds: [{ round: 1, homeEntryId: 500, awayEntryId: 502 }],
+      deleteIds: [800],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, created: 1, deleted: 1 });
+    expect(rowsOf(sqlite)).toEqual([
+      { id: expect.any(Number), round: 1, slot: 1, home_entry_id: 500, away_entry_id: 502 },
+    ]);
+
+    sqlite.prepare("DELETE FROM match").run();
+    seedMatch(sqlite, 810, 1, 1, 500, 501);
+    const same = await saveBatch(env, {
+      adds: [{ round: 1, homeEntryId: 500, awayEntryId: 501 }],
+      deleteIds: [810],
+    });
+    expect(same.status).toBe(200);
+    expect(rowsOf(sqlite)).toEqual([
+      { id: expect.any(Number), round: 1, slot: 1, home_entry_id: 500, away_entry_id: 501 },
+    ]);
+  });
+
+  it("形状守卫：缺数组 / 双空 / 超限 / 轮次非法", async () => {
+    const { env, sqlite } = freshEnv();
+
+    const missing = await saveBatch(env, { adds: [] });
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ message: "请提供 adds 与 deleteIds 数组" });
+
+    const empty = await saveBatch(env, { adds: [], deleteIds: [] });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toEqual({ message: "没有要保存的改动" });
+
+    const overflow = await saveBatch(env, {
+      adds: Array.from({ length: 65 }, () => ({ round: 1, homeEntryId: 500, awayEntryId: 501 })),
+      deleteIds: [],
+    });
+    expect(overflow.status).toBe(400);
+    expect(await overflow.json()).toEqual({ message: "一次最多保存 96 条改动（新增 64 场 + 删除 32 场），请分批保存" });
+
+    const badRound = await saveBatch(env, {
+      adds: [{ round: 0, homeEntryId: 500, awayEntryId: 501 }],
+      deleteIds: [],
+    });
+    expect(badRound.status).toBe(400);
+    expect(await badRound.json()).toEqual({ message: "第 1 场：轮次必须是正整数" });
+    expect(countMatches(sqlite, 70)).toBe(0);
+  });
+
+  it("阶段类型守卫：跨组 400、淘汰赛 400", async () => {
+    const { env, sqlite } = freshEnv();
+
+    const cross = await saveBatch(env, { adds: [{ round: 1, homeEntryId: 500, awayEntryId: 502 }], deleteIds: [] }, 71);
+    expect(cross.status).toBe(400);
+    expect(await cross.json()).toEqual({ message: "第 1 场：小组赛只能在同组球队之间落场" });
+
+    const elim = await saveBatch(env, { adds: [{ round: 1, homeEntryId: 500, awayEntryId: 501 }], deleteIds: [] }, 72);
+    expect(elim.status).toBe(400);
+    expect(await elim.json()).toEqual({ message: "淘汰赛请在赛程页增删场次" });
+    expect(countMatches(sqlite, 70)).toBe(0);
+  });
+});
