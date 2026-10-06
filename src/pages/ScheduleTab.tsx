@@ -19,6 +19,23 @@ const MATCH_STATUS: Record<MatchDTO["status"], string> = {
 type SchedAdd = { round: number; homeId: number; awayId: number };
 type SchedDraft = { adds: SchedAdd[]; deletes: number[] };
 
+// 与 PUT /matches/batch 的上限对齐（worker/routes/admin/schedule.ts）
+const BATCH_MAX = { adds: 64, deletes: 32, total: 96 };
+
+const isPosInt = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v > 0;
+
+/** sessionStorage 里恢复的草稿形状校验（字段必须是正整数） */
+function isSchedDraft(parsed: unknown): parsed is SchedDraft {
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const d = parsed as SchedDraft;
+  if (!Array.isArray(d.adds) || !Array.isArray(d.deletes)) return false;
+  return (
+    d.adds.every((a) => isPosInt(a?.round) && isPosInt(a?.homeId) && isPosInt(a?.awayId)) &&
+    d.deletes.every(isPosInt)
+  );
+}
+
 // 单淘轮次名：按剩余场次数命名（决赛/半决赛/1/4决赛…）
 function elimRoundName(round: number, rounds: number): string {
   const slots = 2 ** (rounds - round);
@@ -220,15 +237,7 @@ function StageBlock({
     try {
       const raw = window.sessionStorage.getItem(draftKey);
       const parsed: unknown = raw ? JSON.parse(raw) : null;
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        Array.isArray((parsed as SchedDraft).adds) &&
-        Array.isArray((parsed as SchedDraft).deletes)
-      ) {
-        return parsed as SchedDraft;
-      }
-      return null;
+      return isSchedDraft(parsed) ? parsed : null;
     } catch {
       return null;
     }
@@ -239,6 +248,11 @@ function StageBlock({
     if (draft) window.sessionStorage.setItem(draftKey, JSON.stringify(draft));
     else window.sessionStorage.removeItem(draftKey);
   }, [draft, draftKey]);
+  const draftOverLimit =
+    draft != null &&
+    (draft.adds.length > BATCH_MAX.adds ||
+      draft.deletes.length > BATCH_MAX.deletes ||
+      draft.adds.length + draft.deletes.length > BATCH_MAX.total);
   const displayName =
     stage.name ||
     (stageTitle[stage.kind] +
@@ -474,8 +488,13 @@ function StageBlock({
 
       {stage.kind !== "elim" && draft && draft.adds.length + draft.deletes.length > 0 && (
         <DraftSaveBar
-          label={`新增 ${draft.adds.length} 场 · 删除 ${draft.deletes.length} 场`}
+          label={
+            draftOverLimit
+              ? `新增 ${draft.adds.length} 场 · 删除 ${draft.deletes.length} 场（超出单批上限，请分批保存）`
+              : `新增 ${draft.adds.length} 场 · 删除 ${draft.deletes.length} 场`
+          }
           saving={draftSaving}
+          saveDisabled={draftOverLimit}
           error={draftErr}
           onSave={saveDraft}
           onDiscard={discardDraft}
@@ -755,6 +774,14 @@ function ManualForm({
   const click = (e: EntryDTO) => {
     if (busy || saving) return;
     if (picked == null) {
+      // 主队也要过占用检查：否则非法对进草稿，错误推迟到保存并连累整批
+      if (roundBusy.has(e.id)) {
+        const inBatch = adds.some(
+          (a) => a.round === roundValue && (a.homeId === e.id || a.awayId === e.id),
+        );
+        setErr(`${e.teamName} ${inBatch ? "已在本批中" : "本轮已有比赛"}，不能作主队`);
+        return;
+      }
       setPicked(e.id);
       setErr(null);
       return;

@@ -28,14 +28,13 @@ export interface DraftSlot {
   away: number | null;
 }
 
-/** sessionStorage 里恢复的草稿形状校验 */
+/** sessionStorage 里恢复的草稿形状校验（entryId 必须是正整数） */
 function isDraftSlot(s: unknown): s is DraftSlot {
   if (typeof s !== "object" || s === null || !("home" in s) || !("away" in s)) return false;
   const home = (s as { home: unknown }).home;
   const away = (s as { away: unknown }).away;
-  return (
-    (home === null || typeof home === "number") && (away === null || typeof away === "number")
-  );
+  const isId = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v > 0;
+  return (home === null || isId(home)) && (away === null || isId(away));
 }
 
 /** 首轮场次数 = 第 1 轮不同场次号个数（空场次、轮空各算一场） */
@@ -277,6 +276,10 @@ export default function KnockoutStageView({
   const slotsPath = `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/slots`;
   const save = async () => {
     if (!draft || saving) return;
+    if (draft.length === 0) {
+      setSaveErr("首轮至少保留 1 场（空场次也算一场）");
+      return;
+    }
     setSaving(true);
     setSaveErr(null);
     try {
@@ -406,8 +409,15 @@ export default function KnockoutStageView({
         </h4>
         {draft && (
           <DraftSaveBar
-            label={`有未保存的更改 · ${changeCount} 处`}
+            label={
+              draft.length === 0
+                ? "首轮至少保留 1 场（空场次也算一场）；点「放弃」可恢复原状"
+                : changeCount === 0
+                  ? "尚未修改：点〔空〕落位或增删场次后保存"
+                  : `有未保存的更改 · ${changeCount} 处`
+            }
             saving={saving}
+            saveDisabled={draft.length === 0 || changeCount === 0}
             error={saveErr}
             onSave={() => void save()}
             onDiscard={discard}
@@ -436,7 +446,8 @@ export default function KnockoutStageView({
                         <button
                           className="btn btn-sm ko-place"
                           type="button"
-                          disabled={busy}
+                          disabled={busy || laterStarted}
+                          title={laterStarted ? "后续轮次已开打，不能再调整首轮落位" : undefined}
                           onClick={() => openPanel(row.slot)}
                         >
                           〔空〕点此落位（先点主队 → 再点客队）

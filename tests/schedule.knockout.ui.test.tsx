@@ -493,6 +493,30 @@ describe("KnockoutStageView 分层列表", () => {
     expect(grid[0]?.querySelector(".badge")?.textContent).toBe("出线");
     expect(grid[1]?.textContent).toContain("甲队");
   });
+
+  it("草稿删到 0 场时禁用保存并提示，放弃可恢复", async () => {
+    renderKo([shell(1, 1), shell(1, 2)]);
+
+    await click(button("删除"));
+    expect(text()).toContain("有未保存的更改 · 1 处");
+    await click(button("删除"));
+    expect(text()).toContain("首轮至少保留 1 场");
+    expect(button("保存").disabled).toBe(true);
+
+    await click(button("放弃"));
+    expect(hasButton("保存")).toBe(false);
+    expect(rowButtonLabels(1)).toContain(EMPTY_LABEL);
+    expect(rowButtonLabels(2)).toContain(EMPTY_LABEL);
+  });
+
+  it("打开落位面板但未修改时，保存禁用且不发请求", async () => {
+    renderKo([shell(1, 1)]);
+    await click(button(EMPTY_LABEL));
+    await click(button("取消"));
+    expect(text()).toContain("尚未修改");
+    expect(button("保存").disabled).toBe(true);
+    expect(apiCalls).toHaveLength(0);
+  });
 });
 
 describe("淘汰赛草稿与一键铺位", () => {

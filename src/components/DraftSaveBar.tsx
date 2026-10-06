@@ -2,12 +2,15 @@
 export default function DraftSaveBar({
   label,
   saving,
+  saveDisabled = false,
   error,
   onSave,
   onDiscard,
 }: {
   label: string;
   saving: boolean;
+  /** 满足保存前置条件前禁用（如草稿不合法、超上限），保存按钮仍可见 */
+  saveDisabled?: boolean;
   error: string | null;
   onSave: () => void;
   onDiscard: () => void;
@@ -15,7 +18,12 @@ export default function DraftSaveBar({
   return (
     <div className="draft-bar">
       <span>{label}</span>
-      <button className="btn btn-sm" type="button" disabled={saving} onClick={onSave}>
+      <button
+        className="btn btn-sm"
+        type="button"
+        disabled={saving || saveDisabled}
+        onClick={onSave}
+      >
         {saving ? "保存中…" : "保存"}
       </button>
       <button

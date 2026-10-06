@@ -187,11 +187,9 @@ describe("ScheduleTab 小组/循环排赛草稿态", () => {
     expect(text()).toContain("新增 1 场 · 删除 0 场");
     expect(text()).toContain("第 1 轮：丙队 vs 丁队");
 
-    // 同一场草稿不能重复排：已在本批的队作客队时置灰
+    // 同一场草稿不能重复排：已在本批的队不能作主队
     await click(teamButton("丙队"));
-    expect(teamButton("丁队").disabled).toBe(true);
-    expect(teamButton("丁队").title).toBe("本批已选");
-    await click(teamButton("丙队")); // 取消选中
+    expect(text()).toContain("丙队 已在本批中，不能作主队");
     expect(apiCalls).toHaveLength(1);
 
     await click(button("保存"));
@@ -294,12 +292,28 @@ describe("ScheduleTab 小组/循环排赛草稿态", () => {
     expect(text()).toContain("新增 1 场 · 删除 0 场");
   });
 
+  it("本轮已有比赛或已在本批的队不能作主队；已在本批的队作客队置灰", async () => {
+    await renderTab(MATCHES);
+
+    // 库内甲乙已在第 1 轮：甲不能作主队
+    await click(teamButton("甲队"));
+    expect(text()).toContain("甲队 本轮已有比赛，不能作主队");
+
+    // 客队侧：清掉库内场次腾出第三支自由队作主队，已在本批的队置灰
+    window.sessionStorage.clear();
+    await renderTab([]);
+    await click(teamButton("丙队"));
+    await click(teamButton("丁队"));
+    await click(teamButton("甲队"));
+    expect(teamButton("丙队").disabled).toBe(true);
+    expect(teamButton("丙队").title).toBe("本批已选");
+  });
+
   it("待删除场次不再占用，草稿算入交手计数", async () => {
     await renderTab(MATCHES);
-    // 库内甲乙已在第 1 轮：选中甲后乙置灰（本轮已排 / 已交手）
+    // 库内甲乙已在第 1 轮：甲不能作主队（提前拦截）
     await click(teamButton("甲队"));
-    expect(teamButton("乙队").disabled).toBe(true);
-    await click(teamButton("甲队")); // 取消选中
+    expect(text()).toContain("甲队 本轮已有比赛，不能作主队");
 
     // 甲乙那场进草稿待删除后即不再占用，两人可重排
     await click(button("删除"));
