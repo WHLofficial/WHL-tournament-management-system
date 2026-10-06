@@ -7,12 +7,17 @@ import type {
   TournamentDetailDTO,
 } from "../../shared/types";
 import KnockoutStageView from "../components/KnockoutStageView";
+import DraftSaveBar from "../components/DraftSaveBar";
 
 const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   pending: "未开打",
   live: "进行中",
   finished: "已完赛",
 };
+
+// 小组/循环排赛草稿：新增场次（可跨轮）+ 待删除场次，一次 PUT /matches/batch 提交
+type SchedAdd = { round: number; homeId: number; awayId: number };
+type SchedDraft = { adds: SchedAdd[]; deletes: number[] };
 
 // 单淘轮次名：按剩余场次数命名（决赛/半决赛/1/4决赛…）
 function elimRoundName(round: number, rounds: number): string {
@@ -210,6 +215,30 @@ function StageBlock({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [nameErr, setNameErr] = useState<string | null>(null);
+  const draftKey = `whl.sched.draft.${detail.tournament.id}.${stage.id}`;
+  const [draft, setDraft] = useState<SchedDraft | null>(() => {
+    try {
+      const raw = window.sessionStorage.getItem(draftKey);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        Array.isArray((parsed as SchedDraft).adds) &&
+        Array.isArray((parsed as SchedDraft).deletes)
+      ) {
+        return parsed as SchedDraft;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftErr, setDraftErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (draft) window.sessionStorage.setItem(draftKey, JSON.stringify(draft));
+    else window.sessionStorage.removeItem(draftKey);
+  }, [draft, draftKey]);
   const displayName =
     stage.name ||
     (stageTitle[stage.kind] +
@@ -238,6 +267,39 @@ function StageBlock({
     } catch (e) {
       setNameErr(e instanceof Error ? e.message : String(e));
     }
+  };
+  const commitDraft = (next: SchedDraft) =>
+    setDraft(next.adds.length > 0 || next.deletes.length > 0 ? next : null);
+  const saveDraft = async () => {
+    if (!draft || draftSaving) return;
+    setDraftSaving(true);
+    setDraftErr(null);
+    try {
+      await api(
+        `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/matches/batch`,
+        {
+          method: "PUT",
+          body: {
+            adds: draft.adds.map((a) => ({
+              round: a.round,
+              homeEntryId: a.homeId,
+              awayEntryId: a.awayId,
+            })),
+            deleteIds: draft.deletes,
+          },
+        }
+      );
+      setDraft(null);
+      onRefresh();
+    } catch (e) {
+      setDraftErr(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+  const discardDraft = () => {
+    setDraft(null);
+    setDraftErr(null);
   };
   const rounds = matches.reduce((mx, m) => Math.max(mx, m.round), 0);
   const roundBuckets = useMemo(() => {
@@ -382,7 +444,6 @@ function StageBlock({
                 {list.map((m) => (
                   <MatchRow
                     key={m.id}
-                    detail={detail}
                     match={m}
                     canDelete={
                       stage.kind !== "elim" &&
@@ -390,7 +451,19 @@ function StageBlock({
                       m.note !== "轮空" &&
                       m.homeEntryId !== null
                     }
-                    onDeleted={onRefresh}
+                    pendingDelete={draft?.deletes.includes(m.id) ?? false}
+                    onDeleteDraft={() =>
+                      commitDraft({
+                        adds: draft?.adds ?? [],
+                        deletes: [...(draft?.deletes ?? []), m.id],
+                      })
+                    }
+                    onUndoDelete={() =>
+                      commitDraft({
+                        adds: draft?.adds ?? [],
+                        deletes: (draft?.deletes ?? []).filter((id) => id !== m.id),
+                      })
+                    }
                   />
                 ))}
               </tbody>
@@ -399,13 +472,33 @@ function StageBlock({
         ))
       )}
 
+      {stage.kind !== "elim" && draft && draft.adds.length + draft.deletes.length > 0 && (
+        <DraftSaveBar
+          label={`新增 ${draft.adds.length} 场 · 删除 ${draft.deletes.length} 场`}
+          saving={draftSaving}
+          error={draftErr}
+          onSave={saveDraft}
+          onDiscard={discardDraft}
+        />
+      )}
       {(stage.kind === "round_robin" || stage.kind === "group") && (
         <ManualForm
           detail={detail}
           stage={stage}
           matches={matches}
           busy={busy}
-          onRefresh={onRefresh}
+          saving={draftSaving}
+          adds={draft?.adds ?? []}
+          onAdd={(add) =>
+            commitDraft({ adds: [...(draft?.adds ?? []), add], deletes: draft?.deletes ?? [] })
+          }
+          onRemoveAdd={(index) =>
+            commitDraft({
+              adds: (draft?.adds ?? []).filter((_, i) => i !== index),
+              deletes: draft?.deletes ?? [],
+            })
+          }
+          deletes={draft?.deletes ?? []}
         />
       )}
     </section>
@@ -413,34 +506,18 @@ function StageBlock({
 }
 
 function MatchRow({
-  detail,
   match,
   canDelete,
-  onDeleted,
+  pendingDelete,
+  onDeleteDraft,
+  onUndoDelete,
 }: {
-  detail: TournamentDetailDTO;
   match: MatchDTO;
   canDelete: boolean;
-  onDeleted: () => void;
+  pendingDelete: boolean;
+  onDeleteDraft: () => void;
+  onUndoDelete: () => void;
 }) {
-  const [err, setErr] = useState<string | null>(null);
-  const remove = async () => {
-    if (
-      !window.confirm(
-        `删除 ${match.homeTeamName ?? "?"} vs ${match.awayTeamName ?? "?"} 这场未开打的比赛？`
-      )
-    )
-      return;
-    try {
-      await api(
-        `/api/admin/tournaments/${detail.tournament.id}/matches/${match.id}`,
-        { method: "DELETE" }
-      );
-      onDeleted();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "删除失败");
-    }
-  };
   const score =
     match.status === "pending"
       ? "—"
@@ -454,7 +531,9 @@ function MatchRow({
       <td className="score">{score}</td>
       <td>{match.awayTeamName ?? "待定"}</td>
       <td>
-        {match.note === "轮空" ? (
+        {pendingDelete ? (
+          <span className="badge badge-wo">待删除</span>
+        ) : match.note === "轮空" ? (
           <span className="badge">轮空</span>
         ) : (
           <>
@@ -466,12 +545,15 @@ function MatchRow({
         )}
       </td>
       <td>
-        {canDelete && (
-          <button className="btn btn-danger btn-sm" onClick={remove}>
+        {pendingDelete ? (
+          <button className="btn btn-sm" onClick={onUndoDelete}>
+            撤销
+          </button>
+        ) : canDelete ? (
+          <button className="btn btn-danger btn-sm" onClick={onDeleteDraft}>
             删除
           </button>
-        )}
-        {err && <span className="error">{err}</span>}
+        ) : null}
       </td>
     </tr>
   );
@@ -585,58 +667,65 @@ function GroupOverview({
   );
 }
 
-// 点选式手动排赛：点主队 → 点客队入批量，攒够 2 场一次性提交（轮次留空 = 当前轮，不跳变）
+// 点选式手动排赛：点主队 → 点客队入草稿批次（可跨轮、可与待删除场次混合），点保存条一次性提交
 function ManualForm({
   detail,
   stage,
   matches,
   busy,
-  onRefresh,
+  saving,
+  adds,
+  onAdd,
+  onRemoveAdd,
+  deletes,
 }: {
   detail: TournamentDetailDTO;
   stage: StageDTO;
   matches: MatchDTO[];
   busy: boolean;
-  onRefresh: () => void;
+  saving: boolean;
+  adds: SchedAdd[];
+  onAdd: (add: SchedAdd) => void;
+  onRemoveAdd: (index: number) => void;
+  deletes: number[];
 }) {
   const cfg = stage.config as { loops?: number };
   const loops = cfg.loops === 2 ? 2 : 1;
   const maxRound = matches.reduce((mx, m) => Math.max(mx, m.round), 0);
-  // 空 = 当前轮（maxRound 或 1）；显式填轮次后固定，排完一场不会自动跳轮
+  // 空 = 当前轮（maxRound 或 1）；显式填轮次后固定，改轮次不清空已选场次
   const [round, setRound] = useState("");
   const [picked, setPicked] = useState<number | null>(null);
-  const [batch, setBatch] = useState<{ home: EntryDTO; away: EntryDTO }[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
 
   const roundValue = Number(round) || (maxRound || 1);
 
-  // 本轮已上场的队（作客队时置灰）
+  // 本轮已上场的队（作客队时置灰）：库内同轮（扣掉待删除）+ 草稿新增同轮
   const roundBusy = useMemo(() => {
     const set = new Set<number>();
     for (const m of matches) {
-      if (m.round !== roundValue) continue;
+      if (m.round !== roundValue || deletes.includes(m.id)) continue;
       if (m.homeEntryId !== null) set.add(m.homeEntryId);
       if (m.awayEntryId !== null) set.add(m.awayEntryId);
     }
-    return set;
-  }, [matches, roundValue]);
-
-  // 本批已选中的队（同一队在一批里只能出现一次）
-  const batchUsed = useMemo(() => {
-    const set = new Set<number>();
-    for (const p of batch) {
-      set.add(p.home.id);
-      set.add(p.away.id);
+    for (const a of adds) {
+      if (a.round !== roundValue) continue;
+      set.add(a.homeId);
+      set.add(a.awayId);
     }
     return set;
-  }, [batch]);
+  }, [matches, deletes, adds, roundValue]);
 
+  // 交手计数：库内全轮（扣掉待删除）+ 草稿新增全轮
   const playedCount = (a: number, b: number) =>
     matches.filter(
       (m) =>
-        (m.homeEntryId === a && m.awayEntryId === b) ||
-        (m.homeEntryId === b && m.awayEntryId === a)
+        !deletes.includes(m.id) &&
+        ((m.homeEntryId === a && m.awayEntryId === b) ||
+          (m.homeEntryId === b && m.awayEntryId === a))
+    ).length +
+    adds.filter(
+      (p) =>
+        (p.homeId === a && p.awayId === b) || (p.homeId === b && p.awayId === a)
     ).length;
 
   const pickedEntry =
@@ -646,11 +735,16 @@ function ManualForm({
   const blockReason = (e: EntryDTO): string | null => {
     if (picked == null || !pickedEntry) return null;
     if (e.id === picked) return null; // 自己：再点取消
-    if (batchUsed.has(e.id)) return "本批已选";
     if (stage.kind === "group" && (e.groupId == null || e.groupId !== pickedEntry.groupId)) {
       return "不同组";
     }
-    if (roundBusy.has(e.id)) return "本轮已排";
+    if (roundBusy.has(e.id)) {
+      return adds.some(
+        (a) => a.round === roundValue && (a.homeId === e.id || a.awayId === e.id)
+      )
+        ? "本批已选"
+        : "本轮已排";
+    }
     if (playedCount(picked, e.id) >= loops) return loops === 1 ? "已交手" : "已赛两场";
     return null;
   };
@@ -659,7 +753,7 @@ function ManualForm({
     detail.groups.find((g) => g.id === gid)?.name ?? "";
 
   const click = (e: EntryDTO) => {
-    if (busy || submitting) return;
+    if (busy || saving) return;
     if (picked == null) {
       setPicked(e.id);
       setErr(null);
@@ -674,36 +768,9 @@ function ManualForm({
       setErr(`${e.teamName} 不能作客队：${why}`);
       return;
     }
-    setBatch((b) => [...b, { home: pickedEntry!, away: e }]);
+    onAdd({ round: roundValue, homeId: pickedEntry!.id, awayId: e.id });
     setPicked(null);
     setErr(null);
-  };
-
-  const submitBatch = async () => {
-    if (batch.length < 2) {
-      setErr("一次至少提交 2 场（还能继续加）");
-      return;
-    }
-    setSubmitting(true);
-    setErr(null);
-    try {
-      await api(
-        `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/matches/bulk`,
-        {
-          method: "POST",
-          body: {
-            round: roundValue,
-            pairs: batch.map((p) => ({ homeEntryId: p.home.id, awayEntryId: p.away.id })),
-          },
-        }
-      );
-      setBatch([]);
-      onRefresh();
-    } catch (err2) {
-      setErr(err2 instanceof Error ? err2.message : "提交失败");
-    } finally {
-      setSubmitting(false);
-    }
   };
 
   return (
@@ -715,19 +782,16 @@ function ManualForm({
             type="number"
             min={1}
             value={round}
-            onChange={(e2) => {
-              setRound(e2.target.value);
-              if (batch.length > 0) setBatch([]);
-            }}
+            onChange={(e2) => setRound(e2.target.value)}
             placeholder={String(roundValue)}
-            title={`留空 = 第 ${roundValue} 轮；改轮次会清空已选场次`}
+            title={`留空 = 第 ${roundValue} 轮；已选场次保留，可跨轮继续排`}
             style={{ width: 72 }}
           />
         </label>
         <span className="muted">
           {picked == null
-            ? batch.length > 0
-              ? `已选 ${batch.length} 场：继续点主队加场，或直接提交`
+            ? adds.length > 0
+              ? `已选 ${adds.length} 场：继续点主队加场，或点上方「保存」一次性提交`
               : "点一支队作主队，再点客队入批量"
             : `主队 ${pickedEntry?.teamName}：点客队入批量，再点一下主队取消`}
         </span>
@@ -754,33 +818,30 @@ function ManualForm({
           );
         })}
       </div>
-      {batch.length > 0 && (
+      {adds.length > 0 && (
         <div className="manual-batch">
           <ul>
-            {batch.map((p, i) => (
-              <li key={i}>
-                <span>
-                  {p.home.teamName} <b>vs</b> {p.away.teamName}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-danger btn-sm"
-                  onClick={() => setBatch((b) => b.filter((_, j) => j !== i))}
-                >
-                  移除
-                </button>
-              </li>
-            ))}
+            {adds.map((p, i) => {
+              const home = detail.entries.find((e) => e.id === p.homeId);
+              const away = detail.entries.find((e) => e.id === p.awayId);
+              return (
+                <li key={`${p.round}-${i}`}>
+                  <span>
+                    第 {p.round} 轮：{home?.teamName ?? "?"} <b>vs</b> {away?.teamName ?? "?"}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => onRemoveAdd(i)}
+                  >
+                    移除
+                  </button>
+                </li>
+              );
+            })}
           </ul>
           <div className="manual-batch-foot">
-            <button
-              className="btn"
-              onClick={submitBatch}
-              disabled={submitting || batch.length < 2 || batch.length > 24}
-            >
-              提交 {batch.length} 场
-            </button>
-            <span className="muted">到第 {roundValue} 轮，一次 2~24 场</span>
+            <span className="muted">可跨轮攒场；点上方「保存」一次性提交</span>
           </div>
         </div>
       )}
