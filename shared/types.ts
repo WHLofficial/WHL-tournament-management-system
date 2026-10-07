@@ -585,7 +585,9 @@ export interface ProxySessionDTO {
 // 教练端 GET /api/coach/proxy/:mid/board：代打模式一次取全（名单 + 伤停停赛 + 已交阵容）
 export interface ProxyBoardResp {
   session: ProxySessionDTO;
-  players: { id: number; name: string; number: string | null }[];
+  // meta 随名册下发（裁剪版，口径见 worker/lib/playerMeta.ts 的 trimPlayerMetaForPool）：
+  // 被代打队的阵容可能从没交过，候选行的属性 pill / 徽章不能只指望阵容 DTO
+  players: { id: number; name: string; number: string | null; meta?: PlayerMeta }[];
   status: CoachStatusResp;
   lineup: TeamLineupDTO | null;
 }

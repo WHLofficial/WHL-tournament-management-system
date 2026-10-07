@@ -3,6 +3,7 @@
 // （写侧在 worker/lib/clubMeta.ts），这里只负责按 id 查出来给战术页用。
 // 查不到就整条不进 Map —— DTO 里 meta 字段缺省，UI 按「有 meta 才渲染」降级。
 import type { PlayerMeta } from "../../shared/types";
+import { ATTR_KEYS } from "../../shared/tactics";
 
 // 单条 IN 查询的 id 上限。一次战术板点到的人远少于此，分批只为防 SQLite 的变量数上限。
 const ID_CHUNK = 50;
@@ -97,5 +98,26 @@ export async function loadPlayerMeta(
       }
     }
   }
+  return out;
+}
+
+/**
+ * 名册级下发（/me/team 与 /bootstrap 的 team.players、代打板的 players）用的裁剪版 meta：
+ * 一队几十个人头一次带走，attrs 里 club 下发的是 71 键，而战术页只读得到 ATTR_KEYS 那 11 个
+ * （shared/tactics.ts）—— 其余键前端永远碰不到，留着只是白占首屏体积与 KV 缓存。
+ * 全空返回 undefined：调用方据此不加空壳字段，维持「没 meta 就按无数据渲染」的口径。
+ * 徽章只认 playstyles 里的金/银 id，条数本来就少，原样带走。
+ */
+export function trimPlayerMetaForPool(m: PlayerMeta): PlayerMeta | undefined {
+  const out: PlayerMeta = {};
+  if (typeof m.height === "number" && Number.isFinite(m.height)) out.height = m.height;
+  const attrs: Record<string, number> = {};
+  for (const k of Object.values(ATTR_KEYS)) {
+    const v = m.attrs?.[k];
+    if (typeof v === "number" && Number.isFinite(v)) attrs[k] = v;
+  }
+  if (Object.keys(attrs).length > 0) out.attrs = attrs;
+  if (m.playstyles && m.playstyles.length > 0) out.playstyles = [...m.playstyles];
+  if (out.height === undefined && !out.attrs && !out.playstyles) return undefined;
   return out;
 }

@@ -359,6 +359,39 @@ describe("教练端代打", () => {
     expect((await req(env, "b", "/api/coach/proxy/803/board")).status).toBe(403);
   });
 
+  it("代打板的名册也带裁剪版 FC26 数据（有数据的带 meta、没数据的不加空壳字段）", async () => {
+    const { env, sqlite } = freshEnv();
+    await grantRedToB(env);
+    // attrs 里混一个战术页读不到的俱乐部键（weakfoot）
+    sqlite
+      .prepare(
+        "INSERT INTO player_meta (fc_id, height, attrs, playstyles, synced_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        101,
+        196,
+        '{"jumping":80,"headingaccuracy":77,"weakfoot":3}',
+        "[26,126]",
+        "2026-01-01T00:00:00.000Z",
+      );
+
+    const b = (await (await req(env, "b", "/api/coach/proxy/802/board")).json()) as {
+      players: {
+        id: number;
+        meta?: { height?: number; attrs?: Record<string, number>; playstyles?: number[] };
+      }[];
+    };
+    const p101 = b.players.find((p) => p.id === 101);
+    expect(p101?.meta).toEqual({
+      height: 196,
+      attrs: { jumping: 80, headingaccuracy: 77 },
+      playstyles: [26, 126],
+    });
+    expect(Object.keys(p101?.meta?.attrs ?? {})).not.toContain("weakfoot");
+    // 红队 100 没有 player_meta 行：连字段都不出现，代打板名册因此不必为「无数据」造空对象
+    expect("meta" in (b.players[0] ?? {})).toBe(false);
+  });
+
   it("代打者交不属于目标队的球员：400（归属按目标队判，不按代打者本队）", async () => {
     const { env } = freshEnv();
     await grantRedToB(env);

@@ -17,11 +17,13 @@ import { computeSuspensions, parseSuspensionConfig } from "../lib/suspension";
 import { listActiveInjuries } from "../lib/injury";
 import { auditStmt } from "../lib/audit";
 import { accountNames, findGrantForGrantee, findGrantForTeam, getGranteeSession, listGranteeSessions } from "../lib/lineupProxy";
+import { loadPlayerMeta, trimPlayerMetaForPool } from "../lib/playerMeta";
 import { BUILDUPS, FORMS, decodeFut25, decodeFut26 } from "../../shared/tactics";
 import type {
   CoachStatusPlayerDTO,
   CoachStatusResp,
   LineupSubmitBody,
+  PlayerMeta,
   ProxyBoardResp,
   TacticArchiveDTO,
 } from "../../shared/types";
@@ -68,6 +70,19 @@ app.post("/bind", async (c) => {
   }
 });
 
+// 名册条目挂 meta 的口径只此一处：查得到（且裁剪后不空）才加字段，查不到不加空壳 ——
+// 前端按「有 meta 才渲染属性行，没有就写无数据」降级，两种状态都能对上。
+function poolPlayer(
+  p: { id: number; name: string; number: string | null },
+  metas: Map<number, PlayerMeta>,
+): { id: number; name: string; number: string | null; meta?: PlayerMeta } {
+  const raw = metas.get(p.id);
+  const meta = raw ? trimPlayerMetaForPool(raw) : undefined;
+  return meta
+    ? { id: p.id, name: p.name, number: p.number, meta }
+    : { id: p.id, name: p.name, number: p.number };
+}
+
 // 本队名单（抽成函数供 /me/team 与教练首屏聚合 /bootstrap 共用）
 async function buildMeTeam(env: AppEnv["Bindings"], tm: number) {
   const team = await env.DB.prepare("SELECT id, name FROM team WHERE id = ?")
@@ -97,14 +112,14 @@ async function buildMeTeam(env: AppEnv["Bindings"], tm: number) {
         seed: number;
       }>(),
   ]);
+  // FC26 数据（属性 / 徽章 / 身高）随名册一起下发：编排队长与定位球时，候选行要显示属性 pill
+  // 与金银徽章，而阵容还没提交过的人只能从这里拿（阵容 DTO 只覆盖已提交/已指派的人）。
+  // 拿到 id 才查得了，所以排在名单查询之后；一次 IN 查询，坏表/无数据在 loadPlayerMeta 内降级。
+  const metas = await loadPlayerMeta(env.DB, players.results.map((p) => p.id));
   return {
     id: team?.id ?? tm,
     name: team?.name ?? "",
-    players: players.results.map((p) => ({
-      id: p.id,
-      name: p.name,
-      number: p.number,
-    })),
+    players: players.results.map((p) => poolPlayer(p, metas)),
     members: members.map((m) => ({
       id: m.userId,
       name: m.name,
@@ -455,6 +470,9 @@ app.get("/proxy/:mid/board", async (c) => {
       : lineup.away?.teamId === session.teamId
         ? lineup.away
         : null;
+  // 代打板的名册也带 FC26 数据（口径与 /bootstrap 的 team.players 一致）：代打者排阵容时
+  // 编的是别人队，目标队阵容可能压根没交过，没有这份 meta 候选行就整列「无数据」。
+  const metas = await loadPlayerMeta(c.env.DB, players.results.map((p) => p.id));
   const status: CoachStatusResp = {
     // 赛事被授权锁死在这一场，选择器只留这一个，避免板上切赛事切了个寂寞
     tournaments: [{ tournamentId: session.tournamentId, name: session.tournamentName, default: true }],
@@ -465,7 +483,7 @@ app.get("/proxy/:mid/board", async (c) => {
   };
   const body: ProxyBoardResp = {
     session,
-    players: players.results.map((p) => ({ id: p.id, name: p.name, number: p.number })),
+    players: players.results.map((p) => poolPlayer(p, metas)),
     status,
     lineup: mine,
   };

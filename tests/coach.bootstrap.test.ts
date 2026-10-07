@@ -76,7 +76,7 @@ function freshEnv(bind: number | null) {
     ASSETS: {} as never,
     AUTH_DB: authDb(bind),
   };
-  return env;
+  return { env, sqlite };
 }
 
 const get = (env: Record<string, unknown>, path: string) =>
@@ -84,7 +84,7 @@ const get = (env: Record<string, unknown>, path: string) =>
 
 describe("教练首屏聚合 /api/coach/bootstrap", () => {
   it("四段与拆开的四个端点逐字一致", async () => {
-    const env = freshEnv(10);
+    const { env } = freshEnv(10);
     const res = await get(env, "/api/coach/bootstrap");
     expect(res.status).toBe(200);
     const boot = (await res.json()) as {
@@ -108,7 +108,7 @@ describe("教练首屏聚合 /api/coach/bootstrap", () => {
   });
 
   it("内容本身也对：本队名单、存档、待赛（草稿赛事不进）、代打授权", async () => {
-    const env = freshEnv(10);
+    const { env } = freshEnv(10);
     const res = await get(env, "/api/coach/bootstrap");
     const boot = (await res.json()) as {
       team: { id: number; name: string; players: { id: number; name: string }[] } | null;
@@ -128,7 +128,7 @@ describe("教练首屏聚合 /api/coach/bootstrap", () => {
   });
 
   it("未绑队时本队三段退化成 null / 空数组；代打授权照常返回（与被代打队的绑定无关）", async () => {
-    const env = freshEnv(null);
+    const { env } = freshEnv(null);
     const res = await get(env, "/api/coach/bootstrap");
     expect(res.status).toBe(200);
     const boot = (await res.json()) as {
@@ -144,5 +144,43 @@ describe("教练首屏聚合 /api/coach/bootstrap", () => {
     expect(boot.sessions.map((s) => s.matchId)).toEqual([801]);
     const solo = (await (await get(env, "/api/coach/proxy/sessions")).json()) as { sessions: unknown[] };
     expect(boot.sessions).toEqual(solo.sessions);
+  });
+
+  it("名册带裁剪版 FC26 数据：有数据的带 meta（只留战术页读得到的键），没数据的不加空壳字段", async () => {
+    const { env, sqlite } = freshEnv(10);
+    // attrs 里混一个战术页读不到的俱乐部键（shotpower），height 两处给不同值以证明取的是列
+    sqlite
+      .prepare(
+        "INSERT INTO player_meta (fc_id, height, attrs, playstyles, synced_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        100,
+        189,
+        '{"curve":88,"finishing":91,"shotpower":99,"height":186}',
+        "[105,5]",
+        "2026-01-01T00:00:00.000Z",
+      );
+    const res = await get(env, "/api/coach/bootstrap");
+    expect(res.status).toBe(200);
+    const boot = (await res.json()) as {
+      team: {
+        players: {
+          id: number;
+          name: string;
+          meta?: { height?: number; attrs?: Record<string, number>; playstyles?: number[] };
+        }[];
+      };
+    };
+    const [zhang, li] = boot.team.players;
+    expect(zhang.id).toBe(100);
+    expect(zhang.meta).toEqual({
+      height: 189,
+      attrs: { curve: 88, finishing: 91, height: 186 },
+      playstyles: [5, 105],
+    });
+    expect(Object.keys(zhang.meta?.attrs ?? {})).not.toContain("shotpower");
+    // 李四没有 player_meta 行：DTO 里连字段都不出现（前端据此按「无数据」渲染）
+    expect(li.id).toBe(101);
+    expect("meta" in li).toBe(false);
   });
 });
