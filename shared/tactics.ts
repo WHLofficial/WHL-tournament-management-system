@@ -841,6 +841,8 @@ export function assignAttrValue(
  * 每个相关属性累加 max(0, 值 - 40)，身高按 HEIGHT_BANDS 分档给分；
  * 无 meta、属性缺失、或角色本身不看属性（队长 / 界外球）一律返回 0。
  * 徽章不计分 —— 有没有徽章交给 chip 表达，混进排序会让「为什么他排前面」变得不可解释。
+ * 口径细节：非身高属性入分前先取整（Math.round），即 max(0, round(v) - 40)——
+ * club 侧属性都是整数，取整只为兜住脏数据里的小数，正常数据上两者结果一致。
  */
 export function assignRelevanceScore(
   meta: PlayerMeta | undefined,

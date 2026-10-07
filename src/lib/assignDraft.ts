@@ -1,6 +1,7 @@
 // 战术页与定位球编排页共用的草稿层：两页读写同一份 localStorage（按身份 scope 隔离），
 // 所以在编排页改完返回战术页，首发名单与指派都是同一份，不会各看各的。
 import { BU, FORMS, isAssignKey, type Buildup, type TacticState } from "../../shared/tactics";
+import type { PlayerMeta } from "../../shared/types";
 
 /**
  * 草稿按身份分开放：本队一份（ftc26-*），每个代打场次各一份（ftc26-proxy-<mid>-*）——
@@ -85,4 +86,44 @@ export function assignPoolOf(
     }
   }
   return out;
+}
+
+/** 名册条目（/bootstrap 的 team.players 与代打板的 players）：名字/号码必在，meta 有才有 */
+export interface RosterPlayer {
+  id: number;
+  name: string;
+  number: string | null;
+  meta?: PlayerMeta;
+}
+
+/** 候选行数据（结构与 components/AssignCandidate 的 AssignCandidateItem 一致，这里不依赖组件层） */
+export interface AssignCandidate {
+  playerId: number;
+  name: string | null;
+  number: string | null;
+  pos: string;
+  meta?: PlayerMeta;
+}
+
+/**
+ * 候选行 = 首发池 + 名册文案 + FC26 数据（战术页、编排页、手机弹层共用这一份口径）。
+ * meta 两个来源同源同形，优先级：已提交阵容 DTO（metaOfPid，能覆盖「已指派但已不在首发」的人）
+ *   > 名册条目自带（接口层随名册下发的裁剪版，见 worker/lib/playerMeta.ts）。
+ * 后一条是主流程的来源：「首次起草阵容、还没提交过」时阵容 DTO 是空的，候选行全靠它才不是「无数据」。
+ */
+export function assignCandidatesOf(
+  pool: readonly { id: number; pos: string }[],
+  roster: readonly RosterPlayer[] | null,
+  metaOfPid?: ReadonlyMap<number, PlayerMeta>,
+): AssignCandidate[] {
+  return pool.map((c) => {
+    const p = roster?.find((x) => x.id === c.id) ?? null;
+    return {
+      playerId: c.id,
+      name: p?.name ?? null,
+      number: p?.number ?? null,
+      pos: c.pos,
+      meta: metaOfPid?.get(c.id) ?? p?.meta,
+    };
+  });
 }

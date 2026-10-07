@@ -9,6 +9,10 @@
   --border: #dfe5df;
   --live: #e8590c;
   --live-bg: #fdeee2;
+  /* 主色 10% 的淡底（当前页签、选中候选行）：写成 color-mix 好让它在换主色时自己跟着走，
+     上一行是给不支持 color-mix 的浏览器的退路（10% 的 --pitch 旧写法） */
+  --pitch-soft: rgba(14, 122, 70, 0.1);
+  --pitch-soft: color-mix(in srgb, var(--pitch) 10%, transparent);
   --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
 }
 
@@ -3697,10 +3701,16 @@ button.add-stage {
 .asg-row:hover {
   border-color: var(--pitch);
 }
-/* 选中态绿底 = 战术页主色 --pitch（#0e7a46）的 10% 透明 */
+/* 板上正指着这一行（鼠标停在这个人的钉子上）：橙系，与钉子的 .hot 同色。
+   排在 .sel 前面 —— 两个都命中时让选中态的绿底压过它，别把「✓ 当前」的标记盖没了 */
+.asg-row.hot {
+  border-color: rgba(232, 89, 12, 0.7);
+  background: #fff7f0;
+}
+/* 选中态绿底 = 战术页主色 --pitch 的 10% 淡底（token 在 :root，换主色跟着走） */
 .asg-row.sel {
   border-color: var(--pitch);
-  background: rgba(14, 122, 70, 0.1);
+  background: var(--pitch-soft);
 }
 .asg-top {
   display: flex;
@@ -3877,7 +3887,7 @@ button.add-stage {
 }
 .asg-tab.on {
   border-color: var(--pitch);
-  background: rgba(14, 122, 70, 0.1);
+  background: var(--pitch-soft);
   font-weight: 700;
 }
 .asg-tab.on em {

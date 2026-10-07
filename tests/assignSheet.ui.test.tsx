@@ -155,4 +155,29 @@ describe("手机底部弹层（AssignSheet）", () => {
     expect(chip.classList.contains("gold")).toBe(true);
     expect(chip.textContent).toBe("精准头球 +");
   });
+
+  it("按 Esc 关掉弹层（外接键盘 / 桌面窗口都好收），别的键不关", () => {
+    let closed = 0;
+    mount(
+      <AssignSheet
+        assignKey="ti_right"
+        players={[candidate({ playerId: 7, name: "张三", number: "9" })]}
+        assign={{}}
+        suffixOf={() => ""}
+        onPick={() => {}}
+        onClear={() => {}}
+        onClose={() => {
+          closed += 1;
+        }}
+      />,
+    );
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    });
+    expect(closed).toBe(0);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(closed).toBe(1);
+  });
 });

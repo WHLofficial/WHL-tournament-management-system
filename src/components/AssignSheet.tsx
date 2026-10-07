@@ -1,5 +1,6 @@
 // 手机底部弹层：战术页点槽位 chip 时开（窄屏才走这条路），只展示该槽的候选列表，不画半场示意图。
 // 候选行、排序、互斥预检与会话页共用 AssignCandidateList，两端口径一致。
+import { useEffect } from "react";
 import { ASSIGN_GROUP_OF, ASSIGN_LABEL, type AssignKey } from "../../shared/tactics";
 import { AssignCandidateList, type AssignCandidateItem } from "./AssignCandidate";
 
@@ -23,6 +24,14 @@ export function AssignSheet({
 }) {
   const group = ASSIGN_GROUP_OF[assignKey];
   const label = ASSIGN_LABEL[assignKey];
+  // Esc 关（与仓内 ShareDialog / 球员卡同一套做法）：手机外接键盘与桌面窗口都没别的出口时好收
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <>
       <button

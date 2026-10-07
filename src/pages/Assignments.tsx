@@ -19,12 +19,14 @@ import {
 import { nameFontSize, surname } from "../lib/pitch";
 import {
   DRAFT_KEYS,
+  assignCandidatesOf,
   assignPoolOf,
   loadLS,
   loadScopeState,
   parseScopeParam,
   sanitizeAssign,
   saveLS,
+  type RosterPlayer,
 } from "../lib/assignDraft";
 import { ASSIGN_NAILS, boardSideOf } from "../lib/assignBoard";
 import { statusSuffix } from "../lib/assignCandidates";
@@ -39,7 +41,8 @@ import type {
   TeamLineupDTO,
 } from "../../shared/types";
 
-type TeamPlayer = { id: number; name: string; number: string | null };
+// 名册条目（与战术页同一个形状：默认队走 /bootstrap，代打走 board.players）
+type TeamPlayer = RosterPlayer;
 
 // 教练首屏聚合端点（与战术页同一支；这里只要球队名册与待选比赛）
 type CoachBootstrap = { team: { name: string; players: TeamPlayer[] } | null; matches: CoachPendingMatchDTO[] };
@@ -174,6 +177,7 @@ export default function Assignments() {
 
   const form = FORMS.find((f) => f.value === state.form) ?? FORMS[0];
   const assignPool = useMemo(() => assignPoolOf(form.pos, names), [form, names]);
+  // 已提交阵容 DTO 里的 meta（优先级高于名册自带的那份，见 assignCandidatesOf）
   const metaOfPid = useMemo(() => {
     const m = new Map<number, PlayerMeta>();
     if (!mine) return m;
@@ -182,17 +186,7 @@ export default function Assignments() {
     return m;
   }, [mine]);
   const candidates = useMemo<AssignCandidateItem[]>(
-    () =>
-      assignPool.map((c) => {
-        const p = teamPlayers?.find((x) => x.id === c.id);
-        return {
-          playerId: c.id,
-          name: p?.name ?? null,
-          number: p?.number ?? null,
-          pos: c.pos,
-          meta: metaOfPid.get(c.id),
-        };
-      }),
+    () => assignCandidatesOf(assignPool, teamPlayers, metaOfPid),
     [assignPool, teamPlayers, metaOfPid],
   );
 
@@ -238,10 +232,16 @@ export default function Assignments() {
       ? keyFromUrl
       : g.items[0].key;
   });
-  // 地址栏变了（从战术页再点一个槽位回来）就跟着挪，别停在上一槽
+  // 地址栏变了（从战术页再点一个槽位回来）就跟着挪，别停在上一槽。
+  // 组归属以 key 为准：手改地址栏把 group 与 key 写成两组时，页签跟着 key 走，
+  // 否则页签与右栏会出现「看的是角球进攻、改的是任意球」这种不对版。
   useEffect(() => {
-    if (groupFromUrl) setTab(groupFromUrl.title);
-    if (keyFromUrl && isAssignKey(keyFromUrl)) setCur(keyFromUrl);
+    if (keyFromUrl && isAssignKey(keyFromUrl)) {
+      setTab(ASSIGN_GROUP_OF[keyFromUrl]);
+      setCur(keyFromUrl);
+    } else if (groupFromUrl) {
+      setTab(groupFromUrl.title);
+    }
   }, [groupFromUrl, keyFromUrl]);
 
   const group = ASSIGN_GROUPS.find((g) => g.title === tab) ?? ASSIGN_GROUPS[0];
@@ -437,6 +437,11 @@ export default function Assignments() {
                   aria-label={`${it.label}${v == null ? "：空" : `：${chipTag(v)}`}`}
                   title={`${it.label}｜${it.hint}${v == null ? "｜空着" : `｜${chipTag(v)}`}`}
                   onClick={() => selectSlot(it.key)}
+                  // 双向高亮的另一半：鼠标停在这个人的钉子上，右栏他那一行跟着亮（空钉子无对应行）
+                  onMouseEnter={() => setHot(v)}
+                  onMouseLeave={() => setHot(null)}
+                  onFocus={() => setHot(v)}
+                  onBlur={() => setHot(null)}
                 >
                   <span className="asg-nail-top">{nail.short}</span>
                   {name ? (
@@ -480,6 +485,7 @@ export default function Assignments() {
             onPick={pickPlayer}
             onClear={clearSlot}
             onHover={setHot}
+            hot={hot}
           />
         </section>
       </div>

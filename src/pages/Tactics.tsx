@@ -36,11 +36,13 @@ import { TILE_NAME_MAX, heatSide, nameFontSize, surname, tilePositions } from ".
 import {
   DRAFT_KEYS,
   DEFAULT_STATE,
+  assignCandidatesOf,
   assignPoolOf,
   loadLS,
   loadScopeState,
   sanitizeAssign,
   saveLS,
+  type RosterPlayer,
 } from "../lib/assignDraft";
 import { statusSuffix } from "../lib/assignCandidates";
 import { useNarrow } from "../lib/useNarrow";
@@ -80,7 +82,8 @@ function isZone(v: string | null): v is Zone {
 
 // 磁贴摆位表在 src/lib/pitch.ts（与赛前情报的小战术板共用一套），这里只负责渲染。
 
-type TeamPlayer = { id: number; name: string; number: string | null };
+// meta：FC26 数据随名册一起下发（未提交阵容时候选行的属性 pill / 徽章只靠它）
+type TeamPlayer = RosterPlayer;
 
 // 停赛口径的按赛事缓存（players + 黄牌阈值；伤停跨赛事，跟着整包状态走）
 type StatusSlice = { players: CoachStatusPlayerDTO[]; yellowThreshold: number };
@@ -429,8 +432,8 @@ export default function Tactics() {
   // 指派候选池＝本场场上 11 名首发（实现搬到 lib/assignDraft，编排页共用同一份口径）。
   // 没摆满 11 个位置就留空并提示。
   const assignPool = useMemo(() => assignPoolOf(form.pos, names), [form, names]);
-  // FC26 数据（属性 / 徽章 / 身高）只随阵容 DTO 下发（player_meta 没有名册级接口）：
-  // 把当前这份已提交阵容的 meta 收成一份表，草稿里没进过阵容的球员查不到 → 候选行显示「无数据」。
+  // 已提交阵容 DTO 里的 meta（含已指派但已不在首发的人）。它不再是唯一来源：
+  // 名册条目（bootstrap / 代打板的 players）也带同一份数据，阵容没交过时由后者兜底。
   const metaOfPid = useMemo(() => {
     const m = new Map<number, PlayerMeta>();
     if (!mine) return m;
@@ -438,19 +441,9 @@ export default function Tactics() {
     for (const a of mine.assign ?? []) if (a.meta) m.set(a.playerId, a.meta);
     return m;
   }, [mine]);
-  // 弹层与编排页共用的候选池：本场首发 + 名册文案 + 上面那份 meta
+  // 弹层与编排页共用的候选池：本场首发 + 名册文案 + 上面那份 meta（优先级见 assignCandidatesOf）
   const assignCandidates = useMemo<AssignCandidateItem[]>(
-    () =>
-      assignPool.map((c) => {
-        const p = teamPlayers?.find((x) => x.id === c.id);
-        return {
-          playerId: c.id,
-          name: p?.name ?? null,
-          number: p?.number ?? null,
-          pos: c.pos,
-          meta: metaOfPid.get(c.id),
-        };
-      }),
+    () => assignCandidatesOf(assignPool, teamPlayers, metaOfPid),
     [assignPool, teamPlayers, metaOfPid],
   );
   // 已填项按 ASSIGN_KEYS 顺序（队长在最前）；互斥冲突按声明表算，前端预检与后端同源

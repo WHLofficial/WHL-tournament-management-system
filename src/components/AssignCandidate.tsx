@@ -45,6 +45,7 @@ export function AssignCandidateRow({
   selected,
   conflict,
   placedIn,
+  hot,
   onPick,
   onHover,
 }: {
@@ -59,6 +60,8 @@ export function AssignCandidateRow({
   conflict?: AssignKey | null;
   /** 这人已经在别的槽里了（不撞互斥也标出来，编排页好知道谁被占了） */
   placedIn?: readonly AssignKey[];
+  /** 编排页的板子正指着这个人（鼠标停在他那颗钉子上）：整行描亮 */
+  hot?: boolean;
   onPick: () => void;
   /** 悬停/聚焦：编排页拿它去高亮同一个人在板上占的钉子 */
   onHover?: (playerId: number | null) => void;
@@ -74,7 +77,7 @@ export function AssignCandidateRow({
   return (
     <button
       type="button"
-      className={`asg-row${selected ? " sel" : ""}`}
+      className={`asg-row${selected ? " sel" : ""}${hot ? " hot" : ""}`}
       aria-pressed={selected}
       onClick={onPick}
       onMouseEnter={onHover ? () => onHover(player.playerId) : undefined}
@@ -149,6 +152,7 @@ export function AssignCandidateList({
   onPick,
   onClear,
   onHover,
+  hot,
 }: {
   players: readonly AssignCandidateItem[];
   assignKey: AssignKey;
@@ -158,6 +162,8 @@ export function AssignCandidateList({
   onClear: () => void;
   /** 悬停/聚焦某一行（编排页用它高亮板上这个人的钉子） */
   onHover?: (playerId: number | null) => void;
+  /** 板上正指着谁（编排页的钉子悬停），对应那一行描亮 —— 双向高亮反过来的一半 */
+  hot?: number | null;
 }) {
   const current = assign[assignKey] ?? null;
   return (
@@ -172,6 +178,7 @@ export function AssignCandidateList({
             selected={p.playerId === current}
             conflict={conflictingKey(assign, assignKey, p.playerId)}
             placedIn={ASSIGN_KEYS.filter((k) => k !== assignKey && assign[k] === p.playerId)}
+            hot={hot != null && hot === p.playerId}
             onPick={() => onPick(p.playerId)}
             onHover={onHover}
           />

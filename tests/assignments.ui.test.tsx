@@ -329,6 +329,104 @@ describe("定位球编排页（桌面）", () => {
     expect(text(".asg-side-head h2")).toContain("右侧角球");
     expect(chips[1].classList.contains("on")).toBe(true);
   });
+  it("阵容还没提交过时候选行照样出胶囊与徽章（FC26 数据来自名册自带的那份 meta）", async () => {
+    seedDraft({ ca_left: 101, ca_target: 110 });
+    // 首次起草：阵容 DTO 是 null，FC26 数据只能靠名册（worker 随 /bootstrap 下发的裁剪版）
+    apiMock.mockImplementation((path: string) => {
+      if (path.startsWith("/api/coach/bootstrap")) {
+        return Promise.resolve({
+          team: {
+            name: "测试队",
+            players: ROSTER.map(({ id, name, number, height }) => ({
+              id,
+              name,
+              number,
+              // attrs 只留战术页读得到的键，另外混一个读不到的（shotpower）看它会不会漏成胶囊
+              meta: {
+                height,
+                attrs: { headingaccuracy: 80, shotpower: 99 },
+                playstyles: id === 110 ? [5, 105] : [5],
+              },
+            })),
+          },
+          matches: [
+            {
+              id: 21,
+              tournamentId: 5,
+              tournamentName: "春季联赛",
+              stageName: "第一轮",
+              stageKind: "elim",
+              round: 1,
+              leg: null,
+              side: "home",
+              opponentName: "对手队",
+              submitted: false,
+              proxyGranted: false,
+            },
+          ],
+        });
+      }
+      if (path.includes("/lineup")) return Promise.resolve({ lineup: null });
+      if (path.startsWith("/api/coach/me/status")) {
+        return Promise.resolve({
+          tournaments: [],
+          tournamentId: 5,
+          yellowThreshold: 3,
+          players: [],
+          injuries: [],
+        });
+      }
+      return Promise.reject(new Error(`未预期的请求：${path}`));
+    });
+    await mountAt("?scope=ftc26&group=角球进攻&key=ca_left&mid=21");
+
+    expect(nodes(".asg-row")).toHaveLength(12);
+    // 修的就是这一条：此前没有阵容 DTO 时全员「无数据」
+    expect(nodes(".asg-nodata")).toHaveLength(0);
+    const kroos = byText(".asg-row", "Kroos");
+    // 胶囊照 ASSIGN_RELEVANCE 的属性顺序，缺的跳过；读不到的键不出现
+    expect([...kroos.querySelectorAll(".asg-pill")].map((n) => n.textContent)).toEqual(["身高 196", "头球 80"]);
+    // 徽章：金徽优先（Kroos 有 105），其余只有银徽
+    expect(text1(kroos, ".asg-chip.gold")).toBe("精准头球 +");
+    expect(text1(byText(".asg-row", "王一"), ".asg-chip.silver")).toBe("精准头球");
+
+    // 板上钉子 ↔ 候选行双向高亮：鼠标停在钉子上，对应的那一行描亮
+    const kroosNail = byText(".asg-nail", "Kroos");
+    act(() => {
+      kroosNail.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(kroos.classList.contains("hot")).toBe(true);
+    expect(nodes(".asg-row.hot")).toHaveLength(1);
+    act(() => {
+      kroosNail.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+    });
+    expect(kroos.classList.contains("hot")).toBe(false);
+    // 反过来：鼠标停在候选行上，板上这个人的钉子描亮；移开就熄
+    act(() => {
+      kroos.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(kroosNail.classList.contains("hot")).toBe(true);
+    act(() => {
+      kroos.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+    });
+    expect(kroosNail.classList.contains("hot")).toBe(false);
+  });
+
+  it("深链以 key 的组归属为准：key 属于哪组就落哪组，不是看 group 参数", async () => {
+    seedDraft();
+    await mountAt("?scope=ftc26&group=界外球&key=ca_near&mid=21");
+
+    expect(text(".asg-tab.on")).toBe("角球进攻0/7");
+    expect(host!.querySelector(".asg-nail.cur")!.getAttribute("aria-label")).toBe("近门柱：空");
+  });
+
+  it("深链的 key 认不出时退回 group 参数那一组的第一项", async () => {
+    seedDraft();
+    await mountAt("?scope=ftc26&group=界外球&key=bogus&mid=21");
+
+    expect(text(".asg-tab.on")).toBe("界外球0/2");
+    expect(host!.querySelector(".asg-nail.cur")!.getAttribute("aria-label")).toBe("左侧界外球：空");
+  });
 });
 
 function text1(el: HTMLElement, sel: string): string {
