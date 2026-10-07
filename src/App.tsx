@@ -9,6 +9,7 @@ import PublicMatchDetail from "./pages/PublicMatchDetail";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import Tactics from "./pages/Tactics";
+import Assignments from "./pages/Assignments";
 import { APP_VERSION } from "./lib/version";
 
 // 管理端/个人页按路由拆包：公开访客不再下载管理端代码（主 bundle 402KB→瘦身）
@@ -85,6 +86,8 @@ function AppShell() {
           <Route path="/" element={<Home />} />
           <Route path="/t/:id" element={<PublicTournament />} />
           <Route path="/tactics" element={<Tactics />} />
+          {/* 定位球编排页：桌面端从战术页的槽位 chip 深链进来（手机上走战术页里的底部弹层） */}
+          <Route path="/tactics/assignments" element={<Assignments />} />
           <Route path="/t/:id/match/:mid" element={<PublicMatchDetail />} />
           <Route path="/report/:mid" element={<ReportPage />} />
           <Route path="/weekly" element={<WeeklyPage />} />

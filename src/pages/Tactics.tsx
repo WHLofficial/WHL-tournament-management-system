@@ -8,7 +8,6 @@ import {
   ASSIGN_GROUPS,
   ASSIGN_KEYS,
   ASSIGN_LABEL,
-  BU,
   BU_ZH,
   BUILDUPS,
   FORMS,
@@ -24,7 +23,6 @@ import {
   errText,
   focusAbbr,
   formTitle,
-  isAssignKey,
   lhBucket,
   lhName,
   pairEa,
@@ -35,6 +33,15 @@ import {
 } from "../../shared/tactics";
 import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
 import { TILE_NAME_MAX, heatSide, nameFontSize, surname, tilePositions } from "../lib/pitch";
+import {
+  DRAFT_KEYS,
+  DEFAULT_STATE,
+  assignPoolOf,
+  loadLS,
+  loadScopeState,
+  sanitizeAssign,
+  saveLS,
+} from "../lib/assignDraft";
 import { statusSuffix } from "../lib/assignCandidates";
 import { useNarrow } from "../lib/useNarrow";
 import { AssignSheet } from "../components/AssignSheet";
@@ -52,13 +59,6 @@ import type {
 
 const STAGE_ZH: Record<string, string> = { elim: "淘汰赛", round_robin: "循环赛", group: "小组赛" };
 
-// 草稿按身份分开放：本队一份（ftc26-*），每个代打场次各一份（ftc26-proxy-<mid>-*）——
-// 否则替别人排完阵容切回本队，会看到对方的名单，指派也叠在自己那份上。
-const DRAFT_KEYS = (scope: string) => ({
-  state: `${scope}-state-v1`,
-  names: `${scope}-names-v1`,
-  assign: `${scope}-assign-v1`,
-});
 const LS_ASSIGN_OPEN = "ftc26-assign-open";
 const BENCH = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 // 切回刚看过的赛事/比赛先用缓存值立刻画，超过这个时长再后台校正
@@ -77,47 +77,8 @@ const ZONES: { key: Zone; label: string; note: string }[] = [
 function isZone(v: string | null): v is Zone {
   return v === "lineup" || v === "design" || v === "tools";
 }
-// 指派白名单过滤：只留认识的项 + 正整数值（与后端 parseAssignJson 同口径，坏数据当没填）
-function sanitizeAssign(raw: unknown): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (isAssignKey(k) && Number.isInteger(v) && (v as number) > 0) out[k] = v as number;
-  }
-  return out;
-}
 
 // 磁贴摆位表在 src/lib/pitch.ts（与赛前情报的小战术板共用一套），这里只负责渲染。
-
-function loadLS<T>(k: string, d: T): T {
-  try {
-    const v = JSON.parse(localStorage.getItem(k) ?? "");
-    return v == null ? d : (v as T);
-  } catch {
-    return d;
-  }
-}
-function saveLS(k: string, v: unknown) {
-  try {
-    localStorage.setItem(k, JSON.stringify(v));
-  } catch {
-    /* 本机存不下就算了 */
-  }
-}
-
-const DEFAULT_STATE: TacticState = { form: "3142", bu: "balanced", lh: 50, roles: {} };
-function loadScopeState(scope: string): TacticState {
-  const saved = loadLS<TacticState | null>(DRAFT_KEYS(scope).state, null);
-  if (!saved || !FORMS.some((f) => f.value === saved.form) || BU[saved.bu as Buildup] === undefined) {
-    return { ...DEFAULT_STATE };
-  }
-  return {
-    form: saved.form,
-    bu: saved.bu,
-    lh: Math.min(100, Math.max(1, Number(saved.lh) || 50)),
-    roles: saved.roles && typeof saved.roles === "object" ? saved.roles : {},
-  };
-}
 
 type TeamPlayer = { id: number; name: string; number: string | null };
 
@@ -465,23 +426,9 @@ export default function Tactics() {
 
   const form = FORMS.find((f) => f.value === state.form) ?? FORMS[0];
 
-  // 指派候选池＝本场场上 11 名首发（FC26 口径：指派只能从场上球员里选），按人去重；
-  // 一人占两个位置时位置串起来显示（#7 LB/LCB 张三）。没摆满 11 个位置就留空并提示。
-  const assignPool = useMemo(() => {
-    const out: { id: number; pos: string }[] = [];
-    const at = new Map<number, number>();
-    for (const p of form.pos) {
-      const v = Number(names[String(p.lid)]);
-      if (!Number.isInteger(v) || v <= 0) continue;
-      const hit = at.get(v);
-      if (hit != null) out[hit] = { ...out[hit], pos: `${out[hit].pos}/${p.position}` };
-      else {
-        at.set(v, out.length);
-        out.push({ id: v, pos: p.position });
-      }
-    }
-    return out;
-  }, [form, names]);
+  // 指派候选池＝本场场上 11 名首发（实现搬到 lib/assignDraft，编排页共用同一份口径）。
+  // 没摆满 11 个位置就留空并提示。
+  const assignPool = useMemo(() => assignPoolOf(form.pos, names), [form, names]);
   // FC26 数据（属性 / 徽章 / 身高）只随阵容 DTO 下发（player_meta 没有名册级接口）：
   // 把当前这份已提交阵容的 meta 收成一份表，草稿里没进过阵容的球员查不到 → 候选行显示「无数据」。
   const metaOfPid = useMemo(() => {
@@ -689,6 +636,8 @@ export default function Tactics() {
       return;
     }
     const q = new URLSearchParams({ scope, group: ASSIGN_GROUP_OF[key], key });
+    // 带上当前这场比赛：编排页照它取已交阵容，候选行的 FC26 数据才跟战术页看到的是同一份
+    if (curMid != null) q.set("mid", String(curMid));
     navigate(`/tactics/assignments?${q.toString()}`);
   }
   function setAssignKey(key: AssignKey, pid: number | null) {

@@ -3836,6 +3836,221 @@ button.add-stage {
   line-height: 1.7;
 }
 
+/* ---------- 定位球编排页（/tactics/assignments）----------
+   顶层五个组页签，一次一组：左边半场板 + 右边常驻候选栏（队长组没有板子，候选栏占满）。
+   板子只在桌面宽度渲染（窄屏落到本页的槽位列表），所以这里的尺寸都按桌面口径给。 */
+.asg-page {
+  max-width: 1100px;
+}
+.asg-head .btn {
+  flex: 0 0 auto;
+}
+.asg-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+}
+.asg-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.asg-tab:hover {
+  border-color: var(--pitch);
+}
+.asg-tab em {
+  font: 600 11px/1 var(--mono);
+  font-style: normal;
+  color: var(--muted);
+}
+.asg-tab.on {
+  border-color: var(--pitch);
+  background: rgba(14, 122, 70, 0.1);
+  font-weight: 700;
+}
+.asg-tab.on em {
+  color: var(--pitch);
+}
+.asg-tab.bad,
+.asg-tab.bad em {
+  border-color: #c92a2a;
+  color: #c92a2a;
+}
+.asg-loaderr {
+  margin-top: 0;
+}
+/* 窄屏的槽位列表（板子的替身）：沿用战术页组卡里那套 chip，两列固定网格 */
+.asg-slotbar {
+  margin-bottom: 12px;
+}
+.asg-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.9fr);
+  gap: 14px;
+  align-items: start;
+}
+/* 队长组没有板子；窄屏也不画板子——两种情况都让候选栏自己占一行 */
+.asg-cols.no-board {
+  grid-template-columns: minmax(0, 1fr);
+}
+.asg-board {
+  position: relative;
+  padding: 0;
+  /* 半场比例照真实场地（68m 宽 × 52.5m 深），球门在上、中线在下 */
+  aspect-ratio: 100 / 78;
+  border: 1px solid #cdd8c8;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #e7efe2;
+}
+.asg-board-defense {
+  border-color: #d8c8cd;
+  background: #efe7e2;
+}
+.asg-board > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.asg-board-cap {
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #3d6b3d;
+  pointer-events: none;
+}
+.asg-board-defense .asg-board-cap {
+  color: #9c5a34;
+}
+.asg-board-cap em {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: rgba(26, 36, 32, 0.55);
+}
+/* 钉子：白底卡片，上面一行槽位短码、下面一行姓氏；空位虚线框写「空」 */
+.asg-nail {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 74px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(26, 36, 32, 0.12);
+}
+.asg-nail:hover {
+  border-color: var(--pitch);
+}
+.asg-nail-top {
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.asg-nail-name {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.asg-nail-name.none {
+  font-weight: 400;
+  color: var(--muted);
+}
+.asg-nail.empty {
+  border-style: dashed;
+  box-shadow: none;
+}
+/* 当前槽位的钉子高亮（与战术页磁贴选中态同一套绿） */
+.asg-nail.cur {
+  border: 2px solid var(--pitch-deep);
+  box-shadow: 0 0 0 3px rgba(14, 122, 70, 0.28);
+}
+/* 候选行悬停时，板上同一个人的钉子跟着亮（候选行那边的「✓ 当前」是另一半） */
+.asg-nail.hot {
+  box-shadow: 0 0 0 3px rgba(232, 89, 12, 0.35);
+}
+.asg-nail.bad {
+  border-color: #c92a2a;
+}
+.asg-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 14px;
+}
+.asg-side-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.asg-side-head h2 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.asg-side-head h2 small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.asg-side-now {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--pitch);
+}
+.asg-side-now.none {
+  font-weight: 400;
+  color: var(--muted);
+}
+.asg-goto {
+  margin-left: 8px;
+}
+/* 「也填了：队长」——这人已经在别的槽里（不撞互斥也标出来） */
+.asg-elsewhere {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+@media (max-width: 979px) {
+  /* 编排页窄屏：没有板子，候选栏占满整行 */
+  .asg-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 979px) {
   /* 手机上层条吸顶：滚到面板深处也能立刻换层（球场在上、面板在下，层条压在最前）。
      窄屏没有竖排的空间，回到横排下划线页签 */
