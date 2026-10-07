@@ -3451,23 +3451,8 @@ button.add-stage {
   margin-top: 12px;
   align-items: start;
 }
-/* 版面按组名归位：左列队长 + 界外球，右列任意球（往下占两行），下一行角球进攻 | 角球防守。
-   组名改了就不套这些类，直接退回自然流。 */
-.tac-as-a {
-  grid-area: 1 / 1;
-}
-.tac-as-b {
-  grid-area: 2 / 1;
-}
-.tac-as-c {
-  grid-area: 1 / 2 / span 2;
-}
-.tac-as-d {
-  grid-area: 3 / 1;
-}
-.tac-as-e {
-  grid-area: 3 / 2;
-}
+/* 组卡按 ASSIGN_GROUPS 的声明顺序自然流排两列（队长 | 任意球 / 角球进攻 | 角球防守 / 界外球），
+   槽位 chip 在组卡内部各自是一块固定两列网格，组多高都不影响别的组，坐标也不会漂。 */
 .tac-assign-group {
   min-width: 0;
 }
@@ -3488,31 +3473,90 @@ button.add-stage {
   text-transform: none;
   color: var(--muted);
 }
-/* 队长只有一项、组名与项名同词：组标题直接当项的标签，项里不再排小标题 */
-.tac-assign-field {
+/* 组标题上的「已指定 n/N」计数（填满转主色） */
+.tac-assign-count {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+.tac-assign-count.full {
+  color: var(--pitch);
+  font-weight: 600;
+}
+/* 组卡内槽位 chip：统一固定两列网格；槽位数为奇数时补一个虚线空位占位，
+   同类槽位在各组里永远落在同一列，换阵型也不会漂 */
+.tac-assign-cells {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 3px;
-  margin-bottom: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
 }
-.tac-assign-field > span {
-  font-size: 12px;
-  color: var(--ink);
-}
-.tac-assign-field select {
+/* 只读 chip：点它不是改下拉，是进指派（桌面深链编排页 / 窄屏底部弹层） */
+.tac-assign-chip {
+  display: block;
   width: 100%;
-  min-height: 34px;
-  padding: 4px 8px;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
   border-radius: 8px;
+  background: var(--card);
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-/* 互斥命中：整项红框，方便一眼找到要改哪一个 */
-.tac-assign-field.bad select {
+.tac-assign-chip:hover {
+  border-color: var(--pitch);
+}
+.tac-assign-chip .tac-ac-slot {
+  display: block;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+}
+.tac-assign-chip .tac-ac-who {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tac-assign-chip .tac-ac-who.none {
+  font-weight: 400;
+  color: var(--muted);
+}
+/* 已指定：实线边 + 左侧主色条（未指定是虚线圈 + 灰字），扫一眼就知道哪几个填了 */
+.tac-assign-chip.on {
+  border-style: solid;
+  box-shadow: inset 3px 0 0 var(--pitch);
+}
+.tac-assign-chip .tac-ac-off {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #c92a2a;
+}
+.tac-assign-chip .tac-ac-sfx {
+  display: block;
+  font-size: 11px;
+  line-height: 16px;
+  color: #c92a2a;
+}
+/* 互斥命中：整块红框，方便一眼找到要改哪一个（提交时后端仍会拦） */
+.tac-assign-chip.bad {
   border-color: #c92a2a;
   background: #fff6f5;
 }
-.tac-assign-field.bad > span {
-  color: #c92a2a;
-  font-weight: 700;
+.tac-assign-blank {
+  min-height: 48px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  opacity: 0.55;
 }
 
 /* 提交卡：拆成独立一张，落在 ① 面板最底 */
@@ -3736,6 +3780,61 @@ button.add-stage {
 .asg-none {
   color: var(--muted);
 }
+/* 手机底部弹层：战术页点槽位 chip 时从底部整宽拉起该槽的候选列表（不画半场示意图） */
+.asg-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  border: 0;
+  padding: 0;
+  background: rgba(26, 36, 32, 0.45);
+  cursor: pointer;
+}
+.asg-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  border-radius: 14px 14px 0 0;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 -8px 28px rgba(26, 36, 32, 0.32);
+}
+.asg-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.asg-sheet-head h3 {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.asg-sheet-head h3 small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.asg-sheet-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 10px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+}
+.asg-sheet-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
 
 @media (max-width: 979px) {
   /* 手机上层条吸顶：滚到面板深处也能立刻换层（球场在上、面板在下，层条压在最前）。
@@ -3779,24 +3878,13 @@ button.add-stage {
   /* 手机球场跟桌面同一个比例 10/13（.tac-pitch 自持，图例再长也不压它）：
      摆位表是 12% 一档的阶梯，375 视口下球场 314x408，一档 49px > 磁贴高 44px。
      更窄的屏靠横向兜底：同行磁贴隔 32%、边路与中路隔 34%（见 tests/pitch.test.ts）。 */
-  .tac-assign-field select {
-    min-height: 36px;
-  }
-  /* 手机上一列一项：下拉点得准，标签也不会被挤成两行 */
-  .tac-assign-grid {
-    grid-template-columns: 1fr;
+  /* 槽位 chip 在手机上同样是固定两列：chip 只有「槽位短名 + #号姓氏」两行，半栏也放得下 */
+  .tac-assign-chip {
+    min-height: 52px;
   }
   /* 替补席同样一列一项（一行一个）：三列时每个下拉只剩七十来像素，选中的名字只看得见一个姓 */
   .tac-bench-grid {
     grid-template-columns: 1fr;
-  }
-  /* 撤掉按组名归的槽位，回到自然流（不写在这儿会被上面的基础规则盖掉） */
-  .tac-as-a,
-  .tac-as-b,
-  .tac-as-c,
-  .tac-as-d,
-  .tac-as-e {
-    grid-area: auto;
   }
   .lu-assign li i {
     min-width: 0;

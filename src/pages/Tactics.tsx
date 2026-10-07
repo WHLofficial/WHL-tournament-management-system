@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useTimeFmt } from "../lib/datetime";
 import {
+  ASSIGN_GROUP_OF,
   ASSIGN_GROUPS,
   ASSIGN_KEYS,
   ASSIGN_LABEL,
@@ -29,17 +30,20 @@ import {
   pairEa,
   roleFull,
   type AssignKey,
-  type AssignGroup,
   type Buildup,
   type TacticState,
 } from "../../shared/tactics";
 import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
 import { TILE_NAME_MAX, heatSide, nameFontSize, surname, tilePositions } from "../lib/pitch";
 import { statusSuffix } from "../lib/assignCandidates";
+import { useNarrow } from "../lib/useNarrow";
+import { AssignSheet } from "../components/AssignSheet";
+import type { AssignCandidateItem } from "../components/AssignCandidate";
 import type {
   CoachPendingMatchDTO,
   CoachStatusPlayerDTO,
   CoachStatusResp,
+  PlayerMeta,
   ProxyBoardResp,
   ProxySessionDTO,
   TacticArchiveDTO,
@@ -68,23 +72,8 @@ const ZONES: { key: Zone; label: string; note: string }[] = [
   { key: "design", label: "战术设计", note: "阵型 · 组织风格 · 防线 · 队长与定位球" },
   { key: "tools", label: "工具与档案", note: "导入战术码 · 存档" },
 ];
-// 卡里的展示顺序：队长只有 1 项，界外球 2 项排它后面填掉那点空白；组名对不上就退回原顺序
-const ASSIGN_RENDER_ORDER: AssignGroup[] = (() => {
-  const want = ["队长", "界外球", "任意球", "角球进攻", "角球防守"];
-  const out = want
-    .map((t) => ASSIGN_GROUPS.find((g) => g.title === t))
-    .filter((g): g is AssignGroup => g != null);
-  return out.length === ASSIGN_GROUPS.length ? out : ASSIGN_GROUPS;
-})();
-// 版面：左列队长 + 界外球，右列任意球（往下占两行），下一行角球进攻 | 角球防守。
-// 按组名认槽位，组名改了就退回自然流（不套 tac-as-* 类），不会串位。
-const ASSIGN_SLOT: Record<string, string> = {
-  队长: "a",
-  界外球: "b",
-  任意球: "c",
-  角球进攻: "d",
-  角球防守: "e",
-};
+// 卡里的展示顺序：照 ASSIGN_GROUPS 的声明顺序（队长 → 任意球 → 角球进攻 → 角球防守 → 界外球）。
+// 组卡内槽位 chip 走统一两列网格，槽位数为奇数补一个空位，同类槽位在各组里坐标一致。
 function isZone(v: string | null): v is Zone {
   return v === "lineup" || v === "design" || v === "tools";
 }
@@ -156,6 +145,9 @@ export default function Tactics() {
   const { dateTime, date } = useTimeFmt();
   const { user } = useAuth();
   const [sp, setSp] = useSearchParams();
+  const navigate = useNavigate();
+  // 窄屏（手机）= 槽位 chip 开底部弹层；桌面 = 深链进编排页。半场板也只在桌面宽度画。
+  const narrow = useNarrow();
   const [state, setState] = useState<TacticState>(() => loadScopeState("ftc26"));
   const [names, setNames] = useState<Record<string, string>>(() =>
     loadLS(DRAFT_KEYS("ftc26").names, {}),
@@ -165,6 +157,8 @@ export default function Tactics() {
     sanitizeAssign(loadLS(DRAFT_KEYS("ftc26").assign, null)),
   );
   const [assignOpen, setAssignOpen] = useState<boolean>(() => loadLS(LS_ASSIGN_OPEN, false));
+  // 手机底部弹层当前看的是哪个槽（桌面不开弹层，深链去编排页那一个槽）
+  const [sheetKey, setSheetKey] = useState<AssignKey | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [codeInput, setCodeInput] = useState("");
   const [msg, setMsg] = useState<{ t: "ok" | "err"; text: string } | null>(null);
@@ -488,6 +482,30 @@ export default function Tactics() {
     }
     return out;
   }, [form, names]);
+  // FC26 数据（属性 / 徽章 / 身高）只随阵容 DTO 下发（player_meta 没有名册级接口）：
+  // 把当前这份已提交阵容的 meta 收成一份表，草稿里没进过阵容的球员查不到 → 候选行显示「无数据」。
+  const metaOfPid = useMemo(() => {
+    const m = new Map<number, PlayerMeta>();
+    if (!mine) return m;
+    for (const p of [...mine.starters, ...mine.bench]) if (p.meta) m.set(p.playerId, p.meta);
+    for (const a of mine.assign ?? []) if (a.meta) m.set(a.playerId, a.meta);
+    return m;
+  }, [mine]);
+  // 弹层与编排页共用的候选池：本场首发 + 名册文案 + 上面那份 meta
+  const assignCandidates = useMemo<AssignCandidateItem[]>(
+    () =>
+      assignPool.map((c) => {
+        const p = teamPlayers?.find((x) => x.id === c.id);
+        return {
+          playerId: c.id,
+          name: p?.name ?? null,
+          number: p?.number ?? null,
+          pos: c.pos,
+          meta: metaOfPid.get(c.id),
+        };
+      }),
+    [assignPool, teamPlayers, metaOfPid],
+  );
   // 已填项按 ASSIGN_KEYS 顺序（队长在最前）；互斥冲突按声明表算，前端预检与后端同源
   const assignFilled = ASSIGN_KEYS.filter((k) => assign[k] != null);
   const assignConflictList = useMemo(() => assignConflicts(assign), [assign]);
@@ -658,11 +676,20 @@ export default function Tactics() {
     if (!p) return `球员 ${pid}`;
     return `${p.number ? `#${p.number} ` : ""}${p.name}`;
   }
-  // 候选文案：#号 → 位置 → 姓名 → 状态后缀，与球员卡/替补席下拉同一套后缀
-  function poolLabel(c: { id: number; pos: string }): string {
-    const p = teamPlayers?.find((x) => x.id === c.id);
-    const num = p?.number ? `#${p.number} ` : "";
-    return `${num}${c.pos} ${p?.name ?? "已不在名单"}${optionSuffix(c.id)}`;
+  // 槽位 chip 上的球员：#号 + 姓氏（chip 只有半栏宽，全名放不下；名册查不到时退化成 id）
+  function chipTag(pid: number): string {
+    const p = teamPlayers?.find((x) => x.id === pid);
+    if (!p) return `球员 ${pid}`;
+    return `${p.number ? `#${p.number} ` : ""}${surname(p.name)}`;
+  }
+  // chip 是入口：桌面深链进编排页并定位该槽，窄屏开底部弹层（弹层里只列本场首发）
+  function openAssignSlot(key: AssignKey) {
+    if (narrow) {
+      setSheetKey(key);
+      return;
+    }
+    const q = new URLSearchParams({ scope, group: ASSIGN_GROUP_OF[key], key });
+    navigate(`/tactics/assignments?${q.toString()}`);
   }
   function setAssignKey(key: AssignKey, pid: number | null) {
     setAssign((a) => {
@@ -1628,52 +1655,59 @@ export default function Tactics() {
                       </p>
                     )}
                     <div className="tac-assign-grid">
-                      {ASSIGN_RENDER_ORDER.map((g) => {
-                        // 队长只有一项，项名与组名同一个词：这一项就不再重复渲染项名，
-                        // 组标题直接当它的标签用，字号跟界外球、任意球那些组标题一致。
-                        const single = g.items.length === 1 && g.items[0].label === g.title;
-                        const slot = ASSIGN_SLOT[g.title];
+                      {ASSIGN_GROUPS.map((g) => {
+                        const filled = g.items.filter((it) => assign[it.key] != null).length;
                         return (
-                          <section
-                            className={`tac-assign-group${slot ? ` tac-as-${slot}` : ""}`}
-                            key={g.title}
-                          >
+                          <section className="tac-assign-group" key={g.title}>
                             <h3>
-                              {g.title} <small>{g.note}</small>
+                              {g.title}
+                              <em
+                                className={`tac-assign-count${
+                                  filled === g.items.length ? " full" : ""
+                                }`}
+                              >
+                                已指定 {filled}/{g.items.length}
+                              </em>
+                              <small>{g.note}</small>
                             </h3>
-                            {g.items.map((it) => {
-                              const v = assign[it.key];
-                              const bad = conflictKeys.has(it.key);
-                              return (
-                                <label
-                                  className={`tac-assign-field${bad ? " bad" : ""}`}
-                                  key={it.key}
-                                  title={it.hint}
-                                >
-                                  {single ? null : <span>{it.label}</span>}
-                                  <select
-                                    aria-label={single ? g.title : `${g.title} · ${it.label}`}
-                                    value={v ?? ""}
-                                    onChange={(e) =>
-                                      setAssignKey(
-                                        it.key,
-                                        e.target.value ? Number(e.target.value) : null,
-                                      )
-                                    }
+                            <div className="tac-assign-cells">
+                              {g.items.map((it) => {
+                                const v = assign[it.key] ?? null;
+                                const bad = conflictKeys.has(it.key);
+                                const sfx = v == null ? "" : optionSuffix(v);
+                                // 换首发以后槽里可能留着已不在场上的人：照旧标出来，不静默丢
+                                const off = v != null && !assignPool.some((c) => c.id === v);
+                                return (
+                                  <button
+                                    type="button"
+                                    key={it.key}
+                                    className={`tac-assign-chip${v != null ? " on" : ""}${
+                                      bad ? " bad" : ""
+                                    }`}
+                                    title={`${g.title} · ${it.label}｜${it.hint}`}
+                                    onClick={() => openAssignSlot(it.key)}
                                   >
-                                    <option value="">（不指定）</option>
-                                    {v != null && !assignPool.some((c) => c.id === v) && (
-                                      <option value={v}>{playerTag(v)}（已不在首发）</option>
+                                    <span className="tac-ac-slot">{it.label}</span>
+                                    {v == null ? (
+                                      <span className="tac-ac-who none">不指定</span>
+                                    ) : (
+                                      <>
+                                        <span className="tac-ac-who">{chipTag(v)}</span>
+                                        {(sfx !== "" || off) && (
+                                          <span className="tac-ac-sfx">
+                                            {sfx}
+                                            {off && <b className="tac-ac-off">已不在首发</b>}
+                                          </span>
+                                        )}
+                                      </>
                                     )}
-                                    {assignPool.map((c) => (
-                                      <option key={c.id} value={c.id}>
-                                        {poolLabel(c)}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                              );
-                            })}
+                                  </button>
+                                );
+                              })}
+                              {g.items.length % 2 === 1 && (
+                                <span className="tac-assign-blank" aria-hidden="true" />
+                              )}
+                            </div>
                           </section>
                         );
                       })}
@@ -1810,6 +1844,24 @@ export default function Tactics() {
 
       {selected != null && <button className="tac-scrim" aria-label="关闭球员卡" onClick={() => setSelected(null)} />}
       {toast && <div className="tac-toast">{toast}</div>}
+      {/* 窄屏开的是底部弹层（桌面深链去编排页）：选完即写草稿，面板上的 chip 跟着刷新 */}
+      {narrow && sheetKey && (
+        <AssignSheet
+          assignKey={sheetKey}
+          players={assignCandidates}
+          assign={assign}
+          suffixOf={optionSuffix}
+          onPick={(pid) => {
+            setAssignKey(sheetKey, pid);
+            setSheetKey(null);
+          }}
+          onClear={() => {
+            setAssignKey(sheetKey, null);
+            setSheetKey(null);
+          }}
+          onClose={() => setSheetKey(null)}
+        />
+      )}
     </main>
   );
 }
