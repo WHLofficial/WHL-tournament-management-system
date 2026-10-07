@@ -16,8 +16,9 @@ export type Bindings = {
   OIDC_CLIENT_ID?: string;
   /** 本地联调兜底：wrangler dev 对 custom_domain 路由会重写 request.url 的 origin，用环境变量盖回真实源 */
   OIDC_REDIRECT_ORIGIN?: string;
-  /** v4.0.0：俱乐部平台基址（如 https://club.whleague.win）。名册同步从它的 /api/squads 拉一线队快照；
-   *  不配 = 同步整体跳过（本地 dev 默认不配，免得开发和测试时去够生产） */
+  /** v4.0.0：俱乐部平台基址（如 https://club.whleague.win）。名册同步从它的 /api/squads 拉一线队快照，
+   *  球员元数据（属性/徽章/身高）从它的 /api/players/meta 拉（见 lib/clubMeta.ts）。
+   *  不配 = 两处都整体跳过；wrangler.jsonc 的 vars 里现配着生产地址，dev 与生产共用这一份。 */
   CLUB_API_BASE?: string;
   /** v5.0.0：球队建档双向同步的 HMAC 密钥（与俱乐部平台 TEAM_SYNC_SECRET 同值）。
    *  出站（推建队给 club）不配 = 只记同步失败、不阻断本地建队；入站（收 club 的建队推送）

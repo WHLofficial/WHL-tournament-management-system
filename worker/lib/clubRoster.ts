@@ -21,6 +21,7 @@
 // ② 响应形状不对 → 抛错不写库（形状坏掉会让「club 无」对每一行都为真 ⇒ 误删全库）；
 // ③ 只对「club 平台名下出现过的队」做删除，其他队（手工建的队）一行不碰。
 import type { Bindings } from "../env";
+import { metaSyncLog, syncPlayerMeta } from "./clubMeta";
 
 export interface ClubSquadPlayer {
   fcId: number;
@@ -259,6 +260,16 @@ export async function runRosterSync(env: Bindings): Promise<void> {
         `改名 ${s.renamed}、改号 ${s.renumbered}、删除 ${s.deleted}/${s.stale}、保留 ${s.kept.length}` +
         (s.skipped ? `（跳过：${s.skipped}）` : "")
     );
+    // 名册对账完再补球员元数据（FC26 属性 / 徽章 / 身高，见 clubMeta.ts）。
+    // meta 是附加展示数据：这里再兜一层，任何意外都只记日志，绝不让名册同步看起来失败。
+    try {
+      const fcIds = squads.flatMap((sq) => sq.players.map((p) => p.fcId));
+      console.log(metaSyncLog(await syncPlayerMeta(env, fcIds)));
+    } catch (e) {
+      console.error(
+        `[sync-player-meta] 意外失败：${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   } catch (e) {
     console.error(`[sync-rosters] 失败：${e instanceof Error ? e.message : String(e)}`);
   }

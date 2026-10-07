@@ -3,6 +3,14 @@
 // 战术码自包含全部信息（阵型/组织风格/防线高度/11 个首发角色），
 // 远期「在线提交战术阵容」时后端可用 decodeFut26 校验码合法性。
 
+import type { PlayerMeta } from "./types";
+import {
+  PS_AERIAL_FORTRESS,
+  PS_DEADBALL,
+  PS_PRECISION_HEADER,
+  hasPlaystyle,
+} from "./fc26Playstyles";
+
 export type Buildup = "balanced" | "counter" | "shortpassing";
 
 export interface FormSlot {
@@ -611,4 +619,249 @@ export function assignConflicts(
 
 export function conflictText(c: AssignConflict): string {
   return `「${ASSIGN_GROUP_OF[c.a]} · ${ASSIGN_LABEL[c.a]}」和「${ASSIGN_GROUP_OF[c.b]} · ${ASSIGN_LABEL[c.b]}」填了同一个人，但开角球的人和禁区里抢点的人必须分开`;
+}
+
+// ── 指派相关性：候选球员旁边显示哪些属性 pill 与徽章 chip ────────────────────
+// 战术页编辑上面 18 个角色时，候选人旁边要显示「这个角色看哪几项属性」的 pill 和徽章 chip，
+// 列表默认按相关性排序。属性的真源在俱乐部平台，本仓只冻一份「角色 → 相关属性」的口径，
+// 所以这张表是 UI 展示与排序的唯一依据，改动只在这里。
+
+/** 用到的 game_attrs 键，与 club 仓 src/core/fc26.ts 的 FC26_GAME_ATTR_COLUMNS 逐字一致
+ *  （注意 freekickaccuracy 没有下划线）。club 侧改键名只需改这一处。
+ *  height 是特例：club 端点把身高单列下发（player_meta.height），game_attrs 里也可能带一份，
+ *  取值统一走 assignAttrValue。 */
+export const ATTR_KEYS = {
+  height: "height",
+  curve: "curve",
+  freekickAccuracy: "freekickaccuracy",
+  shotPower: "shotpower",
+  longShots: "longshots",
+  penalties: "penalties",
+  jumping: "jumping",
+  headingAccuracy: "headingaccuracy",
+  defensiveAwareness: "defensiveawareness",
+  strength: "strength",
+  aggression: "aggression",
+} as const;
+
+export type AttrKey = (typeof ATTR_KEYS)[keyof typeof ATTR_KEYS];
+
+/** 属性键 → 中文展示名（pill 上的短名） */
+export const ASSIGN_ATTR_LABELS: Record<AttrKey, string> = {
+  [ATTR_KEYS.height]: "身高",
+  [ATTR_KEYS.curve]: "弧线",
+  [ATTR_KEYS.freekickAccuracy]: "定位球",
+  [ATTR_KEYS.shotPower]: "射门力量",
+  [ATTR_KEYS.longShots]: "远射",
+  [ATTR_KEYS.penalties]: "点球",
+  [ATTR_KEYS.jumping]: "弹跳",
+  [ATTR_KEYS.headingAccuracy]: "头球",
+  [ATTR_KEYS.defensiveAwareness]: "防守意识",
+  [ATTR_KEYS.strength]: "力量",
+  [ATTR_KEYS.aggression]: "侵略性",
+};
+
+/** 指派角色的徽章语义名；psid 集中在 shared/fc26Playstyles（金徽 = psid + 100，hasPlaystyle 两段都认） */
+export type AssignBadge = "deadball" | "heading" | "aerial";
+
+export const ASSIGN_BADGE_PSID: Record<AssignBadge, number> = {
+  deadball: PS_DEADBALL,
+  heading: PS_PRECISION_HEADER,
+  aerial: PS_AERIAL_FORTRESS,
+};
+
+/** 球员是否带某角色的相关徽章（银徽金徽任一命中即 true） */
+export function hasAssignBadge(
+  playstyles: readonly number[] | null | undefined,
+  badge: AssignBadge,
+): boolean {
+  return hasPlaystyle(playstyles, ASSIGN_BADGE_PSID[badge]);
+}
+
+export interface AssignRelevance {
+  /** 这个角色看哪几项属性，顺序即 pill 的展示顺序 */
+  attrKeys: readonly AttrKey[];
+  /** 相关徽章（无徽章要求的角色不填） */
+  badge?: AssignBadge;
+}
+
+export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
+  // 队长只影响动画与点球大战顺序，不看能力（见 ASSIGN_GROUPS 的 note）
+  captain: { attrKeys: [] },
+  // 任意球：弧线是主罚的下限，定位球+射门力量决定球速，短球还看远射
+  fk_left_short: {
+    attrKeys: [
+      ATTR_KEYS.curve,
+      ATTR_KEYS.freekickAccuracy,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.longShots,
+    ],
+    badge: "deadball",
+  },
+  fk_right_short: {
+    attrKeys: [
+      ATTR_KEYS.curve,
+      ATTR_KEYS.freekickAccuracy,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.longShots,
+    ],
+    badge: "deadball",
+  },
+  fk_long: {
+    attrKeys: [
+      ATTR_KEYS.curve,
+      ATTR_KEYS.freekickAccuracy,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.longShots,
+    ],
+    badge: "deadball",
+  },
+  // 点球换掉远射看罚球
+  fk_penalty: {
+    attrKeys: [
+      ATTR_KEYS.curve,
+      ATTR_KEYS.freekickAccuracy,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.penalties,
+    ],
+    badge: "deadball",
+  },
+  // 角球进攻：开球的人也会进禁区，抢点看身高弹跳头球
+  ca_left: {
+    attrKeys: [
+      ATTR_KEYS.height,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.jumping,
+      ATTR_KEYS.headingAccuracy,
+    ],
+    badge: "heading",
+  },
+  ca_right: {
+    attrKeys: [
+      ATTR_KEYS.height,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.jumping,
+      ATTR_KEYS.headingAccuracy,
+    ],
+    badge: "heading",
+  },
+  ca_target: {
+    attrKeys: [
+      ATTR_KEYS.height,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.jumping,
+      ATTR_KEYS.headingAccuracy,
+    ],
+    badge: "heading",
+  },
+  ca_near: {
+    attrKeys: [
+      ATTR_KEYS.height,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.jumping,
+      ATTR_KEYS.headingAccuracy,
+    ],
+    badge: "heading",
+  },
+  ca_far: {
+    attrKeys: [
+      ATTR_KEYS.height,
+      ATTR_KEYS.shotPower,
+      ATTR_KEYS.jumping,
+      ATTR_KEYS.headingAccuracy,
+    ],
+    badge: "heading",
+  },
+  // 弧顶是留人打二次进攻，身高仍要看（解围出来的高球能不能拿下），远射换掉头球
+  ca_arc: {
+    attrKeys: [ATTR_KEYS.height, ATTR_KEYS.shotPower, ATTR_KEYS.longShots],
+    badge: "heading",
+  },
+  // 后场掩护：要的是能顶住反击的对抗与预判，不看空中
+  ca_cover: {
+    attrKeys: [
+      ATTR_KEYS.defensiveAwareness,
+      ATTR_KEYS.strength,
+      ATTR_KEYS.aggression,
+    ],
+    badge: "heading",
+  },
+  // 角球防守四个人分工不同但都是制空，看身高力量弹跳
+  cd_threat: {
+    attrKeys: [ATTR_KEYS.height, ATTR_KEYS.strength, ATTR_KEYS.jumping],
+    badge: "aerial",
+  },
+  cd_guard: {
+    attrKeys: [ATTR_KEYS.height, ATTR_KEYS.strength, ATTR_KEYS.jumping],
+    badge: "aerial",
+  },
+  cd_near: {
+    attrKeys: [ATTR_KEYS.height, ATTR_KEYS.strength, ATTR_KEYS.jumping],
+    badge: "aerial",
+  },
+  cd_far: {
+    attrKeys: [ATTR_KEYS.height, ATTR_KEYS.strength, ATTR_KEYS.jumping],
+    badge: "aerial",
+  },
+  // 界外球只看「远距离界外球」徽章，但那是 Physical 类技能，与属性表无关，本轮不看属性
+  ti_left: { attrKeys: [] },
+  ti_right: { attrKeys: [] },
+};
+
+/** 单属性起算线：40 以下当「这项不行」，不计分 */
+const ATTR_FLOOR = 40;
+/** 身高分档（cm → 分），降序；175 以下不计分 */
+const HEIGHT_BANDS: readonly (readonly [number, number])[] = [
+  [195, 40],
+  [190, 32],
+  [185, 24],
+  [180, 16],
+  [175, 8],
+];
+
+/**
+ * 取球员某项属性的值。height 特例：先取 meta.height（club 单列下发的身高），
+ * 取不到再回退 game_attrs.height；其余键直接读 attrs。没拿到返回 null。
+ */
+export function assignAttrValue(
+  meta: PlayerMeta | undefined,
+  attrKey: AttrKey,
+): number | null {
+  const pick = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  if (!meta) return null;
+  if (attrKey === ATTR_KEYS.height) {
+    return pick(meta.height) ?? pick(meta.attrs?.[attrKey]);
+  }
+  return pick(meta.attrs?.[attrKey]);
+}
+
+/**
+ * 指派相关性评分（候选排序用，同分由 UI 按球衣号兜底）：
+ * 每个相关属性累加 max(0, 值 - 40)，身高按 HEIGHT_BANDS 分档给分；
+ * 无 meta、属性缺失、或角色本身不看属性（队长 / 界外球）一律返回 0。
+ * 徽章不计分 —— 有没有徽章交给 chip 表达，混进排序会让「为什么他排前面」变得不可解释。
+ */
+export function assignRelevanceScore(
+  meta: PlayerMeta | undefined,
+  key: AssignKey,
+): number {
+  const rel = ASSIGN_RELEVANCE[key];
+  if (!meta || rel.attrKeys.length === 0) return 0;
+  let score = 0;
+  for (const attrKey of rel.attrKeys) {
+    const v = assignAttrValue(meta, attrKey);
+    if (v === null) continue;
+    if (attrKey === ATTR_KEYS.height) {
+      for (const [min, pts] of HEIGHT_BANDS) {
+        if (v >= min) {
+          score += pts;
+          break;
+        }
+      }
+      continue;
+    }
+    score += Math.max(0, Math.round(v) - ATTR_FLOOR);
+  }
+  return score;
 }

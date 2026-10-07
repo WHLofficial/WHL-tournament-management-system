@@ -10,6 +10,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { accountAuditStmt } from "../../lib/audit";
+import { metaSyncLog, syncPlayerMeta } from "../../lib/clubMeta";
 import { fetchClubSquads, syncRosters } from "../../lib/clubRoster";
 
 const app = new Hono<AppEnv>();
@@ -50,6 +51,18 @@ app.post("/sync-rosters", async (c) => {
       deleted: summary.deleted,
       kept: summary.kept.length,
     }).run();
+
+    // 名册落库之后再补球员元数据（FC26 属性 / 徽章 / 身高，见 lib/clubMeta.ts）。
+    // dryRun 完全不碰 meta：那个开关的语义是「只看名册对账预期」，顺手多打一批 club 请求
+    // 会把这个语义搅浑。meta 失败不影响本响应的契约（内部只记日志，返回值仅供日志用）。
+    try {
+      const fcIds = squads.flatMap((sq) => sq.players.map((p) => p.fcId));
+      console.log(metaSyncLog(await syncPlayerMeta(c.env, fcIds)));
+    } catch (e) {
+      console.error(
+        `[sync-player-meta] 意外失败：${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
   return c.json({ ok: true, ...summary });
 });
