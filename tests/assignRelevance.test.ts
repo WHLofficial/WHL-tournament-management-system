@@ -25,7 +25,7 @@ describe("指派相关性：角色 → 属性 / 徽章", () => {
       height: "height",
       curve: "curve",
       freekickAccuracy: "freekickaccuracy",
-      shotPower: "shotpower",
+      finishing: "finishing",
       longShots: "longshots",
       penalties: "penalties",
       jumping: "jumping",
@@ -56,8 +56,8 @@ describe("指派相关性：角色 → 属性 / 徽章", () => {
   });
 
   it("逐项对照表：分组按定案，与 shared/tactics.ts 里的定义完全一致", () => {
-    const fkCommon = [T.curve, T.freekickAccuracy, T.shotPower];
-    const caHead = [T.height, T.shotPower, T.jumping, T.headingAccuracy];
+    const fkCommon = [T.curve, T.freekickAccuracy, T.finishing];
+    const caHead = [T.height, T.finishing, T.jumping, T.headingAccuracy];
     const cdAir = [T.height, T.strength, T.jumping];
     const expected: Record<AssignKey, { keys: string[]; badge?: string }> = {
       captain: { keys: [] },
@@ -71,7 +71,7 @@ describe("指派相关性：角色 → 属性 / 徽章", () => {
       ca_near: { keys: caHead, badge: "heading" },
       ca_far: { keys: caHead, badge: "heading" },
       ca_arc: {
-        keys: [T.height, T.shotPower, T.longShots],
+        keys: [T.height, T.finishing, T.longShots],
         badge: "heading",
       },
       ca_cover: {
@@ -160,7 +160,7 @@ describe("assignRelevanceScore：排序分", () => {
           attrs: {
             curve: 90,
             freekickaccuracy: 95,
-            shotpower: 91,
+            finishing: 91,
             longshots: 88,
           },
         },
@@ -188,7 +188,7 @@ describe("assignRelevanceScore：排序分", () => {
           attrs: {
             curve: 90,
             freekickaccuracy: 90,
-            shotpower: 90,
+            finishing: 90,
             longshots: 99,
             penalties: 90,
           },
@@ -199,7 +199,7 @@ describe("assignRelevanceScore：排序分", () => {
     // ca_arc 看远射，不看头球
     expect(
       assignRelevanceScore(
-        { height: 190, attrs: { shotpower: 80, headingaccuracy: 99, longshots: 70 } },
+        { height: 190, attrs: { finishing: 80, headingaccuracy: 99, longshots: 70 } },
         "ca_arc",
       ),
     ).toBe(32 + 40 + 30);
@@ -233,7 +233,7 @@ describe("assignRelevanceScore：排序分", () => {
   });
 
   it("徽章不计分：只有徽章的人不会凭空排到前面（排序必须可解释）", () => {
-    const base = { attrs: { curve: 88, freekickaccuracy: 88, shotpower: 88, longshots: 88 } };
+    const base = { attrs: { curve: 88, freekickaccuracy: 88, finishing: 88, longshots: 88 } };
     const withBadge = assignRelevanceScore(
       { ...base, playstyles: [104] },
       "fk_left_short",
@@ -245,7 +245,7 @@ describe("assignRelevanceScore：排序分", () => {
   it("单调性：同一角色把它相关的那项调高，分数不会下降", () => {
     const score = (curve: number) =>
       assignRelevanceScore(
-        { attrs: { curve, freekickaccuracy: 70, shotpower: 70, longshots: 70 } },
+        { attrs: { curve, freekickaccuracy: 70, finishing: 70, longshots: 70 } },
         "fk_long",
       );
     let prev = -1;

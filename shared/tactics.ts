@@ -634,7 +634,7 @@ export const ATTR_KEYS = {
   height: "height",
   curve: "curve",
   freekickAccuracy: "freekickaccuracy",
-  shotPower: "shotpower",
+  finishing: "finishing",
   longShots: "longshots",
   penalties: "penalties",
   jumping: "jumping",
@@ -651,7 +651,7 @@ export const ASSIGN_ATTR_LABELS: Record<AttrKey, string> = {
   [ATTR_KEYS.height]: "身高",
   [ATTR_KEYS.curve]: "弧线",
   [ATTR_KEYS.freekickAccuracy]: "定位球",
-  [ATTR_KEYS.shotPower]: "射门力量",
+  [ATTR_KEYS.finishing]: "射术",
   [ATTR_KEYS.longShots]: "远射",
   [ATTR_KEYS.penalties]: "点球",
   [ATTR_KEYS.jumping]: "弹跳",
@@ -688,12 +688,12 @@ export interface AssignRelevance {
 export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
   // 队长只影响动画与点球大战顺序，不看能力（见 ASSIGN_GROUPS 的 note）
   captain: { attrKeys: [] },
-  // 任意球：弧线是主罚的下限，定位球+射门力量决定球速，短球还看远射
+  // 任意球：弧线是主罚的下限，定位球+射术决定质量，短球还看远射
   fk_left_short: {
     attrKeys: [
       ATTR_KEYS.curve,
       ATTR_KEYS.freekickAccuracy,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.longShots,
     ],
     badge: "deadball",
@@ -702,7 +702,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
     attrKeys: [
       ATTR_KEYS.curve,
       ATTR_KEYS.freekickAccuracy,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.longShots,
     ],
     badge: "deadball",
@@ -711,7 +711,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
     attrKeys: [
       ATTR_KEYS.curve,
       ATTR_KEYS.freekickAccuracy,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.longShots,
     ],
     badge: "deadball",
@@ -721,7 +721,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
     attrKeys: [
       ATTR_KEYS.curve,
       ATTR_KEYS.freekickAccuracy,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.penalties,
     ],
     badge: "deadball",
@@ -730,7 +730,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
   ca_left: {
     attrKeys: [
       ATTR_KEYS.height,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.jumping,
       ATTR_KEYS.headingAccuracy,
     ],
@@ -739,7 +739,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
   ca_right: {
     attrKeys: [
       ATTR_KEYS.height,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.jumping,
       ATTR_KEYS.headingAccuracy,
     ],
@@ -748,7 +748,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
   ca_target: {
     attrKeys: [
       ATTR_KEYS.height,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.jumping,
       ATTR_KEYS.headingAccuracy,
     ],
@@ -757,7 +757,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
   ca_near: {
     attrKeys: [
       ATTR_KEYS.height,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.jumping,
       ATTR_KEYS.headingAccuracy,
     ],
@@ -766,7 +766,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
   ca_far: {
     attrKeys: [
       ATTR_KEYS.height,
-      ATTR_KEYS.shotPower,
+      ATTR_KEYS.finishing,
       ATTR_KEYS.jumping,
       ATTR_KEYS.headingAccuracy,
     ],
@@ -774,7 +774,7 @@ export const ASSIGN_RELEVANCE: Record<AssignKey, AssignRelevance> = {
   },
   // 弧顶是留人打二次进攻，身高仍要看（解围出来的高球能不能拿下），远射换掉头球
   ca_arc: {
-    attrKeys: [ATTR_KEYS.height, ATTR_KEYS.shotPower, ATTR_KEYS.longShots],
+    attrKeys: [ATTR_KEYS.height, ATTR_KEYS.finishing, ATTR_KEYS.longShots],
     badge: "heading",
   },
   // 后场掩护：要的是能顶住反击的对抗与预判，不看空中

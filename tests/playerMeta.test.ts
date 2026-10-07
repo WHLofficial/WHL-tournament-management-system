@@ -394,7 +394,7 @@ describe("读写闭环：同步落库 → 战术页能读到", () => {
           {
             fcId: 2500801,
             height: 189,
-            attrs: { curve: 88, freekickaccuracy: 91, shotpower: 86, longshots: 80 },
+            attrs: { curve: 88, freekickaccuracy: 91, finishing: 86, longshots: 80 },
             playstyles: [104, 5],
           },
         ],
