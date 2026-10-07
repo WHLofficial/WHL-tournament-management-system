@@ -499,8 +499,6 @@ export interface LineupSubmitBody {
 // player_meta 表 —— 随名册同步从俱乐部平台镜像（见 worker/lib/clubMeta.ts），
 // 读侧是 worker/lib/playerMeta.ts，查不到就整条不返回，前端「有才渲染」。
 export interface PlayerMeta {
-  /** @deprecated 旧的裸文本队徽位（LineupView 还在渲染）。徽章改用 playstyles，UI 改完把这条删掉 */
-  badges?: string[];
   /** game_attrs 原样镜像：英文键 → 0-99 数值（用到的键名见 shared/tactics 的 ATTR_KEYS） */
   attrs?: Record<string, number>;
   /** FC26 PlayStyle id（金徽 = 基础 id + 100，口径见 shared/fc26Playstyles；可能是银也可能是金） */

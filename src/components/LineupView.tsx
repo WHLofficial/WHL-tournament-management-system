@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ASSIGN_LABEL, formTitle, POS_ZH } from "../../shared/tactics";
 import { useTimeFmt } from "../lib/datetime";
 import type { LineupAssignDTO, LineupPlayerDTO, TeamLineupDTO } from "../../shared/types";
+import { AssignBadgeTag } from "./AssignCandidate";
 
 function playerName(p: LineupPlayerDTO): string {
   const num = p.number ? `#${p.number} ` : "";
@@ -22,11 +23,7 @@ export function AssignList({ assign }: { assign: LineupAssignDTO[] }) {
             {a.name ?? "已离队"}
           </span>
           {!a.starter && <span className="lu-assign-off">已不在首发</span>}
-          {(a.meta?.badges ?? []).map((b) => (
-            <span className="lu-chip" key={b}>
-              {b}
-            </span>
-          ))}
+          <AssignBadgeTag meta={a.meta} assignKey={a.key} />
         </li>
       ))}
     </ul>

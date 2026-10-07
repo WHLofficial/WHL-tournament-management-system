@@ -35,6 +35,7 @@ import {
 } from "../../shared/tactics";
 import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
 import { TILE_NAME_MAX, heatSide, nameFontSize, surname, tilePositions } from "../lib/pitch";
+import { statusSuffix } from "../lib/assignCandidates";
 import type {
   CoachPendingMatchDTO,
   CoachStatusPlayerDTO,
@@ -599,14 +600,10 @@ export default function Tactics() {
     return statOfPid(pid);
   }
   // 下拉后缀：文案与优先级沿用录入端（停赛 > 黄牌临界 > 伤停）；
-  // 停赛用 🟥（与全站红牌图标、赛前情报一致），伤停用 🩹
+  // 停赛用 🟥（与全站红牌图标、赛前情报一致），伤停用 🩹。
+  // 实现搬到 lib/assignCandidates 的 statusSuffix：手机弹层与桌面编排页的候选行共用同一份口径
   function optionSuffix(pid: number): string {
-    const st = statOfPid(pid);
-    if (!st) return "";
-    const injSuffix = st.inj ? `（🩹伤停 剩${st.inj.rest}场）` : "";
-    if (st.susp > 0) return `（🟥停赛 剩${st.susp}场）${injSuffix}`;
-    if (st.near) return `（⚠️再${suspThreshold - st.yellows}黄停赛）${injSuffix}`;
-    return injSuffix;
+    return statusSuffix(statOfPid(pid), suspThreshold);
   }
   // 磁贴悬停/无障碍文案
   function statTip(st: PStat | null): string {
