@@ -39,7 +39,9 @@
 
 | 49 | v5.4.0 | 编排整批保存（草稿态）：worker 新端点 `PUT …/stages/:stageId/slots`（完整首轮快照 1..16 场整批落位，锁定口径与单场端点同源：started 增删闸、已开打槽位逐槽比对、后续轮开打仅幂等放行、快照内一队一场）+ `PUT …/stages/:stageId/matches/batch`（小组/循环跨轮增删混合，adds≤64/deletes≤32/总≤96，`guardMatches` 扩展 `extraPairs`/`excludeIds` 支持先删后排与跨轮 loops 计数，单 `db.batch` 原子落库）+ 前端淘汰赛落位改草稿态（`DraftSaveBar` 公共保存条、sessionStorage 防丢、锁定口径前端同源禁用）+ 按出线队数一键铺场（N=最小 2 的幂满编，只铺空槽）+ 小组/循环手动排赛草稿化（跨轮攒场去 2 场下限/24 上限、行删除入草稿待删除可撤销、置灰口径=库内+草稿−待删除）+ 测试 slots 26 例、bulk 15 例、UI 19+7 例（全量 486 passed） | minor：新增用户可见能力（整批保存与一键铺位，端点向后兼容） |
 
-**当前版本：v5.4.0**
+| 50 | v5.5.0 | 队长与定位球选人改版 + 跨仓 FC26 元数据链路：`shared/tactics.ts` 冻结属性/徽章口径（`ATTR_KEYS` 11 键、`ASSIGN_BADGE`（死球/精准头球/空中堡垒，psid 4/5/26）、`ASSIGN_RELEVANCE` 角色相关映射、`assignRelevanceScore`）与 `shared/fc26Playstyles.ts` 73 项徽章译名（金=psid≥101）；跨仓 meta 随名册同步入库（club v6.38.0 `GET /api/players/meta`，迁移 `0026_player_meta.sql`，失败不中断名册同步）+ `/me/team`、`/bootstrap`、代打板名册条目随包下发裁剪版 meta（11 属性+身高+playstyles 兜底）；战术页 18 槽位改只读 chip（两列等宽网格防组内漂移）+ 手机底部弹层选人、桌面独立编排页 `/tactics/assignments`（半场板钉子 ↔ 候选行双向悬停高亮、草稿两页共享、深链按组归属落位）+ 候选行两行式（属性胶囊 + 金银徽章 chip、冲突 ⚠ 仍可选提交拦截、无数据降级）+ `LineupView` 结构化徽章渲染；测试全量 574 passed | minor：新增用户可见能力（面板与编排页；跨仓端点为新增向后兼容，club 未上线时静默降级为无数据） |
+
+**当前版本：v5.5.0**
 
 ## 落地位置
 
