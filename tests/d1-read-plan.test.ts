@@ -43,17 +43,18 @@ const RECAP_FILTER_SQL = `SELECT m.stage_id, m.round, MAX(m.finished_at) AS last
        ORDER BY last_at DESC, stage_id DESC, round DESC LIMIT 20`;
 
 // 反回归样本：参赛队 + 队内人数的**相关子查询**形式。
-// 这三处（worker/routes/public.ts:99、worker/routes/admin/teams.ts:14、
-// worker/routes/admin/tournaments.ts:180）刻意不改成「player 全表分组后 LEFT JOIN」——
+// 这两处（worker/routes/public.ts:104、worker/routes/admin/tournaments.ts:181）
+// 刻意不改成「player 全表分组后 LEFT JOIN」——
 // 实测那条改写赛事页 +68%、管理端 +12%（scripts/d1-read-audit/rewrite-ab.json）。
 // 断言它仍走 idx_player_team 覆盖索引点查、不出现 player 全表扫。
-const ENTRY_PLAYER_COUNT_SQL = `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted,
-         tm.name AS team_name,
+// v5.5 起扣分从 entry.points_deducted 换成 points_deduction 记录表汇总，仍是同款相关子查询
+// （同样刻意不用 LEFT JOIN + GROUP BY），靠 idx_points_deduction_entry 点查。
+const ENTRY_PLAYER_COUNT_SQL = `SELECT e.id, e.team_id, e.seed, e.group_id,
+         (SELECT COALESCE(SUM(d.points), 0) FROM points_deduction d WHERE d.entry_id = e.id) AS points_deducted,
+         tm.name AS team_name, tm.logo_key,
          (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
-       FROM entry e
-       JOIN team tm ON tm.id = e.team_id
-       WHERE e.tournament_id = ?
-       ORDER BY e.seed, e.id`;
+       FROM entry e JOIN team tm ON tm.id = e.team_id
+       WHERE e.tournament_id = ? ORDER BY e.seed`;
 
 describe("v5.0.1：D1 读消耗——关键查询的执行计划回归", () => {
   const { sqlite } = createTestDb();
@@ -109,8 +110,10 @@ describe("v5.0.1：D1 读消耗——关键查询的执行计划回归", () => {
     // 见文件头注释：这条刻意不改成「分组物化后 join」，那条改写实测更贵。
     const plan = planOf(sqlite, ENTRY_PLAYER_COUNT_SQL);
     expect(plan).toContain("idx_player_team");
+    expect(plan).toContain("idx_points_deduction_entry");
     expect(plan).not.toMatch(/SCAN p\b/);
     expect(plan).not.toMatch(/SCAN player\b/);
+    expect(plan).not.toMatch(/SCAN d\b/);
   });
 });
 

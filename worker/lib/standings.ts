@@ -1,4 +1,5 @@
 import type {
+  CarryMode,
   StageStandingDTO,
   StandingGroupDTO,
   TiebreakerKey,
@@ -19,36 +20,236 @@ type FinishedMatchRow = {
   walkover_side: string | null;
 };
 
-// ---------- 积分：全量重建某 stage 的 standing ----------
-// 胜 3 平 1 负 0；平分且录了点球 → 点胜 2 分 / 点负 1 分（pen_won/pen_lost 计次）。
-// 淘汰阶段无积分榜，返回空。
-export async function buildStandingsStmts(
-  db: D1Database,
-  stageId: number
-): Promise<D1PreparedStatement[]> {
-  const stage = await db
-    .prepare("SELECT kind FROM stage WHERE id = ?")
-    .bind(stageId)
-    .first<{ kind: string }>();
-  if (!stage || stage.kind === "elim") return [];
+// ---------- 带入积分：从上游循环赛阶段按倍率带分 ----------
+// 配置写在目标阶段自己的 config_json.carry（见 shared/types.ts 的 CarryConfig）。
+// 折算基数就是源阶段榜上的实际积分（源 standing.pts，注意它已经扣过该阶段命中的扣分）：
+// 罚分把源阶段的分打低，下游带入的部分就跟着少，不做任何「加回扣分」的还原；
+// 链式带入（A→B→C）自动成立，因为 B.pts 里已经含了 B 带入的分。
+type StageLite = { id: number; kind: string; name: string | null; sort_order: number };
 
-  // 参赛集：小组阶段取挂在本阶段组下的 entry；无分组循环取赛事全部报名
-  const entries =
-    stage.kind === "group"
+type CarryResolution = { fromStageId: number; mode: CarryMode; multiplier: number };
+
+export function listStages(db: D1Database, tournamentId: number): Promise<D1Result<StageLite>> {
+  return db
+    .prepare(`SELECT id, kind, name, sort_order FROM stage WHERE tournament_id = ?`)
+    .bind(tournamentId)
+    .all<StageLite>();
+}
+
+export function normalizeCarry(
+  raw: unknown
+): { fromStage?: number; mode: CarryMode; multiplier: number } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as { fromStage?: unknown; mode?: unknown; multiplier?: unknown };
+  const m = typeof c.multiplier === "number" ? c.multiplier : Number(c.multiplier);
+  // 倍率是百分比浮点：非有限值或负数一律当没配（非法配置由写入端点拦，读侧稳健降级）
+  if (!Number.isFinite(m) || m < 0) return null;
+  const from = Number(c.fromStage);
+  return {
+    fromStage: Number.isInteger(from) && from > 0 ? from : undefined,
+    mode: c.mode === "record" ? "record" : "points",
+    multiplier: m,
+  };
+}
+
+// 纯函数：在候选阶段里挑出源阶段。只认排在本阶段前面的 round_robin 阶段 ——
+// 带入的前提是源榜已经算完，排在后面或类型不对都当没配。
+export function pickCarrySource(
+  kind: string,
+  sortOrder: number,
+  rawCarry: unknown,
+  stages: StageLite[]
+): CarryResolution | null {
+  if (kind !== "round_robin") return null;
+  const carry = normalizeCarry(rawCarry);
+  if (!carry) return null;
+  const earlier = stages.filter((s) => s.kind === "round_robin" && s.sort_order < sortOrder);
+  const src =
+    carry.fromStage != null
+      ? earlier.find((s) => s.id === carry.fromStage)
+      : earlier.sort((a, b) => b.sort_order - a.sort_order)[0];
+  if (!src) return null;
+  return { fromStageId: src.id, mode: carry.mode, multiplier: carry.multiplier };
+}
+
+// stage.config_json 解析：坏了就当没配，别让一张脏配置把整张榜打崩
+export function parseStageConfigJson(configJson: string | null): Record<string, unknown> {
+  try {
+    return (JSON.parse(configJson || "{}") ?? {}) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+type CarrySourceRow = {
+  entry_id: number;
+  pts: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  gf: number;
+  ga: number;
+};
+
+// 一个阶段算完后的每队「带入基数 + 战绩」：raw 就是榜上那个实际积分（净值，扣分已经在里面）——
+// 下游按它折算，所以罚分会顺着带入链传导到后面的阶段。
+type StageTotals = {
+  raw: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  gf: number;
+  ga: number;
+};
+
+type CarriedEntry = {
+  pts: number;
+  // record 模式叠加的战绩列（点球计次不叠：它只在同分/计分语义内部用，叠了会让口径含糊）
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  gf: number;
+  ga: number;
+};
+
+// 读源阶段榜上的实际积分与战绩。源阶段还没算过榜（行不存在）→ 无带入。
+async function readStageTotals(db: D1Database, stageId: number): Promise<Map<number, StageTotals>> {
+  const res = await db
+    .prepare(
+      `SELECT entry_id, pts, played, won, drawn, lost, gf, ga
+       FROM standing WHERE stage_id = ?`
+    )
+    .bind(stageId)
+    .all<CarrySourceRow>();
+  return new Map(
+    (res.results ?? []).map((r) => [
+      r.entry_id,
+      {
+        raw: r.pts,
+        played: r.played,
+        won: r.won,
+        drawn: r.drawn,
+        lost: r.lost,
+        gf: r.gf,
+        ga: r.ga,
+      },
+    ])
+  );
+}
+
+// 按倍率折算带入分（百分比浮点，四舍五入到整数分）
+function applyCarry(
+  totals: Map<number, StageTotals>,
+  multiplier: number
+): Map<number, CarriedEntry> {
+  return new Map(
+    [...totals.entries()].map(([entryId, t]) => [
+      entryId,
+      {
+        pts: Math.round((t.raw * multiplier) / 100),
+        played: t.played,
+        won: t.won,
+        drawn: t.drawn,
+        lost: t.lost,
+        gf: t.gf,
+        ga: t.ga,
+      },
+    ])
+  );
+}
+
+// 本阶段命中的扣分合计：阶段级（stage_id = 本阶段）+ 全赛事（stage_id IS NULL）。
+// 阶段级扣分不穿透到下游阶段，下游只汇总自己命中的那些。
+async function readStageDeducts(db: D1Database, stageId: number): Promise<Map<number, number>> {
+  const res = await db
+    .prepare(
+      `SELECT d.entry_id, SUM(d.points) AS pts FROM points_deduction d
+       WHERE (d.stage_id IS NULL OR d.stage_id = ?)
+         AND d.entry_id IN (SELECT id FROM entry WHERE tournament_id = (SELECT tournament_id FROM stage WHERE id = ?))
+       GROUP BY d.entry_id`
+    )
+    .bind(stageId, stageId)
+    .all<{ entry_id: number; pts: number }>();
+  return new Map((res.results ?? []).map((r) => [r.entry_id, r.pts]));
+}
+
+const ZERO_RECORD = { played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0 };
+
+// ---------- 积分：算出某 stage 的 standing 重建语句 ----------
+// 胜 3 平 1 负 0；平分且录了点球 → 点胜 2 分 / 点负 1 分（pen_won/pen_lost 计次）。
+// 落库的 pts = 本阶段得分 + 带入分 − 本阶段命中扣分（两项都单独落列，榜单要标出来）。
+// 淘汰阶段无积分榜，返回 null。
+// computedTotals 是同一轮级联重建里「已算过（但尚未提交）」的源阶段基数，见下方重建入口。
+async function computeStageStandings(
+  db: D1Database,
+  stageId: number,
+  computedTotals?: Map<number, Map<number, StageTotals>>
+): Promise<{ stmts: D1PreparedStatement[]; totals: Map<number, StageTotals> } | null> {
+  const stage = await db
+    .prepare("SELECT kind, tournament_id, sort_order, config_json FROM stage WHERE id = ?")
+    .bind(stageId)
+    .first<{
+      kind: string;
+      tournament_id: number;
+      sort_order: number;
+      config_json: string | null;
+    }>();
+  if (!stage || stage.kind === "elim") return null;
+
+  // 参赛集：小组阶段取挂在本阶段组下的 entry；循环赛默认本赛事全部报名。
+  // 例外：配了 source（从上游取人）的循环赛阶段，参赛集收敛为「本阶段场次里出现过的 entry」——
+  // 否则被上一阶段淘汰、没进本阶段的队会带着带入分留在榜上。还没有场次时回退全量（编排中途也能看榜）。
+  const stageCfg = parseStageConfigJson(stage.config_json);
+  const scopeEntries = stage.kind === "round_robin" && stageCfg.source != null;
+  const entries = scopeEntries
+    ? await db
+        .prepare(
+          `SELECT e.id, e.group_id FROM entry e
+           WHERE e.tournament_id = ?
+             AND e.id IN (
+               SELECT home_entry_id FROM match WHERE stage_id = ? AND home_entry_id IS NOT NULL
+               UNION
+               SELECT away_entry_id FROM match WHERE stage_id = ? AND away_entry_id IS NOT NULL
+             )`
+        )
+        .bind(stage.tournament_id, stageId, stageId)
+        .all<{ id: number; group_id: number | null }>()
+    : stage.kind === "group"
       ? await db
           .prepare(
-            `SELECT e.id, e.group_id, e.points_deducted FROM entry e
+            `SELECT e.id, e.group_id FROM entry e
              WHERE e.group_id IN (SELECT id FROM "group" WHERE stage_id = ?)`
           )
           .bind(stageId)
-          .all<{ id: number; group_id: number | null; points_deducted: number }>()
+          .all<{ id: number; group_id: number | null }>()
       : await db
-          .prepare(
-            `SELECT e.id, e.group_id, e.points_deducted FROM entry e
-             WHERE e.tournament_id = (SELECT tournament_id FROM stage WHERE id = ?)`
-          )
-          .bind(stageId)
-          .all<{ id: number; group_id: number | null; points_deducted: number }>();
+          .prepare(`SELECT e.id, e.group_id FROM entry e WHERE e.tournament_id = ?`)
+          .bind(stage.tournament_id)
+          .all<{ id: number; group_id: number | null }>();
+
+  // 收敛后空表（配了 source 但场次被清空）→ 回退全量报名，与「无场次回退全量」同一口径
+  const entryRows =
+    scopeEntries && (entries.results ?? []).length === 0
+      ? await db
+          .prepare(`SELECT e.id, e.group_id FROM entry e WHERE e.tournament_id = ?`)
+          .bind(stage.tournament_id)
+          .all<{ id: number; group_id: number | null }>()
+      : entries;
+
+  const allStages = await listStages(db, stage.tournament_id);
+  const carry = pickCarrySource(stage.kind, stage.sort_order, stageCfg.carry, allStages.results ?? []);
+  // 源阶段的带入基数：同一轮级联重建里，源阶段可能刚被算过但还没提交（语句在 batch 之后才生效），
+  // 所以优先用本轮内存里的结果，读库只作为兜底 —— 否则下游会带上改分前的旧值。
+  const carriedByEntry = carry
+    ? applyCarry(
+        computedTotals?.get(carry.fromStageId) ?? (await readStageTotals(db, carry.fromStageId)),
+        carry.multiplier
+      )
+    : new Map<number, CarriedEntry>();
+  const deducts = await readStageDeducts(db, stageId);
 
   const finished = await db
     .prepare(
@@ -60,7 +261,6 @@ export async function buildStandingsStmts(
 
   type Row = {
     group_id: number | null;
-    deduct: number;
     played: number;
     won: number;
     drawn: number;
@@ -72,10 +272,9 @@ export async function buildStandingsStmts(
     pen_lost: number;
   };
   const rows = new Map<number, Row>();
-  for (const e of entries.results ?? []) {
+  for (const e of entryRows.results ?? []) {
     rows.set(e.id, {
       group_id: e.group_id,
-      deduct: e.points_deducted,
       played: 0,
       won: 0,
       drawn: 0,
@@ -138,30 +337,117 @@ export async function buildStandingsStmts(
     }
   }
 
-  return [
+  const totals = new Map<number, StageTotals>();
+  const stmts: D1PreparedStatement[] = [
     db.prepare("DELETE FROM standing WHERE stage_id = ?").bind(stageId),
-    ...[...rows.entries()].map(([entryId, r]) =>
-      db
+    ...[...rows.entries()].map(([entryId, r]) => {
+      const carried = carriedByEntry.get(entryId);
+      const carriedPts = carried?.pts ?? 0;
+      // record 模式：场次列叠加源阶段战绩（总战绩口径）；points 模式只看本阶段
+      const rec = carry?.mode === "record" && carried ? carried : ZERO_RECORD;
+      const deduct = deducts.get(entryId) ?? 0;
+      // 落库的分 = 本阶段得分 + 带入分 − 本阶段命中扣分；带入基数是上游这个值（不是「未扣分总分」），
+      // 所以上面算一遍、写库和给下游的都用它，两者不会走岔
+      const pts = r.pts + carriedPts - deduct;
+      // 供本轮下游阶段直接引用：raw 取落库的那个分值（含带入、已扣扣分），与读库口径一致
+      totals.set(entryId, {
+        raw: pts,
+        played: r.played + rec.played,
+        won: r.won + rec.won,
+        drawn: r.drawn + rec.drawn,
+        lost: r.lost + rec.lost,
+        gf: r.gf + rec.gf,
+        ga: r.ga + rec.ga,
+      });
+      return db
         .prepare(
-          `INSERT INTO standing (stage_id, group_id, entry_id, played, won, drawn, lost, pts, gf, ga, pen_won, pen_lost)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO standing (stage_id, group_id, entry_id, played, won, drawn, lost, pts, gf, ga, pen_won, pen_lost, carried_pts, deduct_pts)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           stageId,
           r.group_id,
           entryId,
-          r.played,
-          r.won,
-          r.drawn,
-          r.lost,
-          r.pts - r.deduct,
-          r.gf,
-          r.ga,
+          r.played + rec.played,
+          r.won + rec.won,
+          r.drawn + rec.drawn,
+          r.lost + rec.lost,
+          pts,
+          r.gf + rec.gf,
+          r.ga + rec.ga,
           r.pen_won,
-          r.pen_lost
-        )
-    ),
+          r.pen_lost,
+          carriedPts,
+          deduct
+        );
+    }),
   ];
+  return { stmts, totals };
+}
+
+// ---------- 级联重建：受影响的阶段 + 所有排在其后的积分阶段 ----------
+// 带入分与「从上游取人」都只允许引用排在前面的阶段，所以下游必在后方 —— 顺着 config 找引用反而会
+// 漏掉「缺省取上一阶段」这种隐式依赖，不如按 sort_order 把后面全部重算（阶段数很小，重建是幂等的）。
+// 不重算下游的后果：源阶段改分/改判后，下游榜里留着按旧分算出的带入分。
+//
+// 按 sort_order 顺序算：同一条链上的下游用本轮已算出的上游基数（computedTotals），
+// 而不是库里的旧值 —— 语句要等 batch 提交才生效，光靠读库会慢一拍。
+//
+// 写路径统一入口：stageIds 给受影响的阶段（null = 全赛事扣分 → 全部积分阶段）；
+// stageId 对应 buildStandingsChainStmts 的「本阶段 + 下游」。
+//
+// 重算条件：该阶段已经算过榜，或已经有完赛场次（首场报分后的第一次建榜）。
+// 两个都不满足的阶段跳过 —— 没开打又没算过榜的阶段不该因为删场次/改扣分凭空冒出一张全 0 的表。
+export async function buildStandingsForStagesStmts(
+  db: D1Database,
+  tournamentId: number,
+  stageIds: (number | null)[]
+): Promise<D1PreparedStatement[]> {
+  const res = await db
+    .prepare(
+      `SELECT s.id, s.sort_order,
+              (SELECT COUNT(*) FROM standing x WHERE x.stage_id = s.id) AS has_rows,
+              (SELECT COUNT(*) FROM match m WHERE m.stage_id = s.id AND m.status = 'finished') AS has_finished
+       FROM stage s
+       WHERE s.tournament_id = ? AND s.kind != 'elim'
+       ORDER BY s.sort_order`
+    )
+    .bind(tournamentId)
+    .all<{ id: number; sort_order: number; has_rows: number; has_finished: number }>();
+  const stages = res.results ?? [];
+  if (stages.length === 0) return [];
+  const orderOf = new Map(stages.map((s) => [s.id, s.sort_order]));
+  const allAffected = stageIds.some((id) => id == null);
+  const targets = allAffected
+    ? stages
+    : stages.filter((s) =>
+        stageIds.some((id) => {
+          const from = id == null ? undefined : orderOf.get(id);
+          return from != null && s.sort_order >= from;
+        })
+      );
+  const out: D1PreparedStatement[] = [];
+  const computedTotals = new Map<number, Map<number, StageTotals>>();
+  for (const s of targets) {
+    if (s.has_rows === 0 && s.has_finished === 0) continue;
+    const done = await computeStageStandings(db, s.id, computedTotals);
+    if (!done) continue;
+    computedTotals.set(s.id, done.totals);
+    out.push(...done.stmts);
+  }
+  return out;
+}
+
+export async function buildStandingsChainStmts(
+  db: D1Database,
+  stageId: number
+): Promise<D1PreparedStatement[]> {
+  const st = await db
+    .prepare("SELECT tournament_id FROM stage WHERE id = ?")
+    .bind(stageId)
+    .first<{ tournament_id: number }>();
+  if (!st) return [];
+  return buildStandingsForStagesStmts(db, st.tournament_id, [stageId]);
 }
 
 // ---------- 晋级器：把已决出的轮次胜者填进下一轮 slot ----------
@@ -346,7 +632,10 @@ export type StandRow = {
   penWon: number;
   penLost: number;
   pts: number;
+  /** 本阶段命中的扣分合计（阶段级 + 全赛事），已从 pts 扣掉 */
   pointsDeducted: number;
+  /** 从上游阶段带入的分（已含在 pts 里）；不带入时为 0 */
+  carriedPts: number;
   rank: number;
 };
 
@@ -359,7 +648,7 @@ export async function readStandings(
     .prepare(
       `SELECT s.entry_id, e.team_id, e.seed, e.group_id, t.name AS team_name, t.logo_key,
               s.played, s.won, s.drawn, s.lost,
-              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, e.points_deducted,
+              s.gf, s.ga, s.pen_won, s.pen_lost, s.pts, s.deduct_pts, s.carried_pts,
               st.kind AS stage_kind
        FROM standing s
        JOIN entry e ON e.id = s.entry_id
@@ -383,7 +672,8 @@ export async function readStandings(
       pen_won: number;
       pen_lost: number;
       pts: number;
-      points_deducted: number;
+      deduct_pts: number;
+      carried_pts: number;
       stage_kind: string;
     }>();
   const rows: StandRow[] = (res.results ?? []).map((r) => ({
@@ -401,7 +691,8 @@ export async function readStandings(
     penWon: r.pen_won,
     penLost: r.pen_lost,
     pts: r.pts,
-    pointsDeducted: r.points_deducted,
+    pointsDeducted: r.deduct_pts,
+    carriedPts: r.carried_pts,
     rank: 0,
   }));
   if (rows.length === 0) return [];
@@ -586,19 +877,45 @@ export async function readStageStandings(
   const [stages, chain] = await Promise.all([
     db
       .prepare(
-        `SELECT id, kind, name, sort_order FROM stage
+        `SELECT id, kind, name, sort_order, config_json FROM stage
          WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order`
       )
       .bind(tournamentId)
-      .all<{ id: number; kind: "group" | "round_robin"; name: string | null; sort_order: number }>(),
+      .all<{
+        id: number;
+        kind: "group" | "round_robin";
+        name: string | null;
+        sort_order: number;
+        config_json: string | null;
+      }>(),
     getTiebreakers(db, tournamentId),
   ]);
 
+  const stageRows = stages.results ?? [];
+  const stageById = new Map<number, StageLite>(
+    stageRows.map((s): [number, StageLite] => [s.id, s])
+  );
+
   // 各阶段并行计算：原先逐阶段串行等往返（2 阶段 = 8 连击），大陆高 RTT 下最差读路径
   const computed = await Promise.all(
-    (stages.results ?? []).map(async (st) => {
+    stageRows.map(async (st) => {
       const rows = await readStandings(db, st.id, chain);
       if (rows.length === 0) return null;
+      // 带入说明只作为榜单脚注下发（计算早已落在 standing.carried_pts 里）
+      const resolved = pickCarrySource(
+        st.kind,
+        st.sort_order,
+        parseStageConfigJson(st.config_json).carry,
+        stageRows
+      );
+      const carry = resolved
+        ? {
+            mode: resolved.mode,
+            multiplier: resolved.multiplier,
+            fromStageId: resolved.fromStageId,
+            fromStageName: stageDisplayName(stageById.get(resolved.fromStageId)),
+          }
+        : null;
       let groups: StandingGroupDTO[];
       if (st.kind === "group") {
         const gRes = await db
@@ -624,8 +941,15 @@ export async function readStageStandings(
       } else {
         groups = [{ groupId: null, name: "", rows }];
       }
-      return { stageId: st.id, kind: st.kind, name: st.name, sortOrder: st.sort_order, groups } satisfies StageStandingDTO;
+      return { stageId: st.id, kind: st.kind, name: st.name, sortOrder: st.sort_order, groups, carry } satisfies StageStandingDTO;
     })
   );
   return computed.filter((s): s is StageStandingDTO => s !== null);
+}
+
+// 阶段显示名兜底（与前端 stageTitle 同一口径）：管理员改过名就用改过的
+export function stageDisplayName(st?: Pick<StageLite, "kind" | "name">): string {
+  if (!st) return "";
+  if (st.name) return st.name;
+  return st.kind === "group" ? "小组赛" : "循环赛";
 }

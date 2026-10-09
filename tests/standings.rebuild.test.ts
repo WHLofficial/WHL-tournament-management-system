@@ -1,7 +1,8 @@
 // 积分榜全量重建与同分规则：worker/lib/standings.ts。
 // 设计口径（TECH_DESIGN §6）是不做增量累加——每场报分/改判/扣分都整阶段删表重建。
 // 这里钉四件事：
-//   1) 计分口径：胜 3 平 1 负 0、点球决胜（平局 + 点胜 2 分 / 点负 1 分）、双弃权不给分不计进失球、扣分可为负
+//   1) 计分口径：胜 3 平 1 负 0、点球决胜（平局 + 点胜 2 分 / 点负 1 分）、双弃权不给分不计进失球、
+//      扣分可为负（points_deduction 记录表，整表替换，可只作用于某个阶段）
 //   2) 重建幂等与作用域：改判只反映最后结果；只统计本阶段 finished 场次；榜单只列已重建过的阶段
 //   3) 排序链：pts → gd → gf → 相互战绩 → seed，链可由赛事配置改写（开赛后也可改）
 //   4) 分组边界：小组阶段按组隔离；循环赛阶段却按 entry.group_id 分子块编号（缺陷 D3）
@@ -406,35 +407,63 @@ describe("积分榜重建：小组、循环赛共存与扣分", () => {
     expect(dbRow(sqlite, 610, 84)).toMatchObject({ pts: 3, group_id: 900 });
   });
 
-  it("扣分经 superadmin 写入并立即重建（可为负分，0 可清除）", async () => {
+  it("扣分记录整表替换并立即重建（可为负分，[] 清除，可只作用于某阶段）", async () => {
     const { env, sqlite } = freshEnv();
     await shoot(env, addMatch(sqlite, 80, 600, 601), 3, 1);
     expect(dbRow(sqlite, 600)!.pts).toBe(3);
 
-    const deduct = (points: number) => patch(env, "/api/admin/tournaments/8/entries/600/deduction", { points });
+    const deduct = (items: unknown[]) =>
+      patch(env, "/api/admin/tournaments/8/entries/600/deduction", { items });
 
-    expect((await deduct(3)).status).toBe(200);
+    expect((await deduct([{ points: 3, stageId: null }])).status).toBe(200);
     expect(dbRow(sqlite, 600)!.pts).toBe(0);
 
-    await deduct(10);
+    await deduct([{ points: 10, stageId: 80 }]);
     expect(dbRow(sqlite, 600)!.pts).toBe(-7); // 扣分超过得分 → 负分
     const row = (await boardOf(env, 80))!.groups[0].rows.find((r) => r.entryId === 600);
     expect(row).toMatchObject({ pts: -7, pointsDeducted: 10 });
 
-    await deduct(0);
+    // 同一支队允许多条：全赛事 5 分 + 本阶段 1 分 = 本阶段共扣 6 分
+    await deduct([{ points: 5, stageId: null }, { points: 1, stageId: 80 }]);
+    expect(dbRow(sqlite, 600)!.pts).toBe(-3);
+    expect(
+      (await boardOf(env, 80))!.groups[0].rows.find((r) => r.entryId === 600)
+    ).toMatchObject({ pts: -3, pointsDeducted: 6 });
+
+    // 指定后面那个阶段（83 排名赛）→ 阶段 80 这张榜分文不动
+    await deduct([{ points: 4, stageId: 83 }]);
     expect(dbRow(sqlite, 600)!.pts).toBe(3);
 
-    expect((await deduct(-1)).status).toBe(400);
-    expect((await deduct(1000)).status).toBe(400);
-    expect((await deduct(1.5)).status).toBe(400);
-    expect((await patch(env, "/api/admin/tournaments/8/entries/999/deduction", { points: 1 })).status).toBe(404);
+    await deduct([]);
+    expect(dbRow(sqlite, 600)!.pts).toBe(3);
+    expect(
+      (await boardOf(env, 80))!.groups[0].rows.find((r) => r.entryId === 600)
+    ).toMatchObject({ pts: 3, pointsDeducted: 0 });
+
+    expect((await deduct([{ points: 0, stageId: null }])).status).toBe(400);
+    expect((await deduct([{ points: 1000, stageId: null }])).status).toBe(400);
+    expect((await deduct([{ points: 1.5, stageId: null }])).status).toBe(400);
+    // 阶段限定：淘汰赛没有积分榜，别的赛事的阶段也不行；stageId 不合法要挡在写库之前
+    expect((await deduct([{ points: 1, stageId: 82 }])).status).toBe(400);
+    expect((await deduct([{ points: 1, stageId: 81 }])).status).toBe(400);
+    expect((await deduct([{ points: 1, stageId: 999999 }])).status).toBe(400);
+    expect((await deduct(new Array(21).fill({ points: 1, stageId: null }))).status).toBe(400);
+    // 旧 body 形状（单个 points）不再接受，避免旧前端静默改错语义
+    expect((await patch(env, "/api/admin/tournaments/8/entries/600/deduction", { points: 2 })).status).toBe(400);
+    expect(
+      (await patch(env, "/api/admin/tournaments/8/entries/999/deduction", {
+        items: [{ points: 1, stageId: null }],
+      })).status
+    ).toBe(404);
   });
 
-  it("扣分后改判仍保留扣分（重建时按 entry.points_deducted 现算）", async () => {
+  it("扣分后改判仍保留扣分（重建时按 points_deduction 现算）", async () => {
     const { env, sqlite } = freshEnv();
     const mid = addMatch(sqlite, 80, 600, 601);
     await shoot(env, mid, 3, 1);
-    await patch(env, "/api/admin/tournaments/8/entries/600/deduction", { points: 2 });
+    await patch(env, "/api/admin/tournaments/8/entries/600/deduction", {
+      items: [{ points: 2, stageId: null }],
+    });
     expect(dbRow(sqlite, 600)!.pts).toBe(1);
 
     await shoot(env, mid, 5, 0);
@@ -447,9 +476,11 @@ describe("积分榜重建：小组、循环赛共存与扣分", () => {
     await shoot(env, addMatch(sqlite, 80, 600, 601), 1, 1); // 1:1 → 两队 pts 1 / gd 0 / gf 1
     expect(await orderOf(env, 80)).toEqual([600, 601, 602, 603, 604, 605]); // 咬平后按种子位
 
-    const deduct = await patch(env, "/api/admin/tournaments/8/entries/600/deduction", { points: 1 });
+    const deduct = await patch(env, "/api/admin/tournaments/8/entries/600/deduction", {
+      items: [{ points: 1, stageId: null }],
+    });
     expect(deduct.status).toBe(200);
-    expect(dbRow(sqlite, 600)).toMatchObject({ pts: 0 }); // 1 分 - 扣 1；扣分原值在 entry.points_deducted
+    expect(dbRow(sqlite, 600)).toMatchObject({ pts: 0 }); // 1 分 - 扣 1；扣分原值在 points_deduction
     // 名次真的动了（不只是分数显示变化）
     expect(await orderOf(env, 80)).toEqual([601, 600, 602, 603, 604, 605]);
     const row = (await boardOf(env, 80))!.groups[0].rows.find((r) => r.entryId === 600);

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { requirePermission } from "../../middleware/auth";
-import { buildStandingsStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
+import { buildStandingsChainStmts, buildAdvanceStmts, AdvancerError } from "../../lib/standings";
 import { firstRoundSizeError, type ManualRow } from "../../lib/manualBracket";
 import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig } from "../../lib/suspension";
@@ -305,7 +305,7 @@ app.post("/:id/finish", async (c) => {
       } else {
         // 2a) 先提交积分重算 + 审计：回填取人必须读到含末场的最新快照，
         //     否则末轮改变的名次会被旧快照覆盖（错队进入淘汰赛）
-        followUp = await buildStandingsStmts(c.env.DB, m.stage_id);
+        followUp = await buildStandingsChainStmts(c.env.DB, m.stage_id);
         followUp.push(auditStmt(c.env.DB, c.get("user")!.id, action, id, auditDetail));
         await c.env.DB.batch(followUp);
         // 2b) 小组/循环阶段全部完赛：按下一阶段的取人规则（cross 模板 / topN）自动生成首轮赛程；

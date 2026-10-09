@@ -102,7 +102,9 @@ app.get("/tournaments/:id", pubCache(300), async (c) => {
       .bind(id)
       .all<{ id: number; stage_id: number; name: string; sort_order: number }>(),
     c.env.DB.prepare(
-      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key,
+      `SELECT e.id, e.team_id, e.seed, e.group_id,
+         (SELECT COALESCE(SUM(d.points), 0) FROM points_deduction d WHERE d.entry_id = e.id) AS points_deducted,
+         tm.name AS team_name, tm.logo_key,
          (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
        FROM entry e JOIN team tm ON tm.id = e.team_id
        WHERE e.tournament_id = ? ORDER BY e.seed`

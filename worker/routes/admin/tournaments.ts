@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv, Bindings } from "../../env";
 import {
   DEFAULT_TOURNAMENT_CONFIG,
+  type DeductionDTO,
   type EntryDTO,
   type PlayerDTO,
   type TournamentDTO,
@@ -13,7 +14,7 @@ import {
   getTiebreakers,
   normalizeTiebreakers,
   readStageStandings,
-  buildStandingsStmts,
+  buildStandingsForStagesStmts,
   tiebreakersFromConfigJson,
 } from "../../lib/standings";
 import { buildStats } from "../../lib/topstats";
@@ -164,7 +165,7 @@ app.get("/:id", async (c) => {
     }>();
   if (!t) return c.json({ message: "赛事不存在" }, 404);
 
-  const [stages, groups, entries, tiebreakers] = await Promise.all([
+  const [stages, groups, entries, deductions, tiebreakers] = await Promise.all([
     c.env.DB.prepare(
       "SELECT id, kind, sort_order, name, config_json FROM stage WHERE tournament_id = ? ORDER BY sort_order"
     )
@@ -178,7 +179,9 @@ app.get("/:id", async (c) => {
       .bind(id)
       .all<{ id: number; stage_id: number; name: string; sort_order: number }>(),
     c.env.DB.prepare(
-      `SELECT e.id, e.team_id, e.seed, e.group_id, e.points_deducted, tm.name AS team_name, tm.logo_key,
+      `SELECT e.id, e.team_id, e.seed, e.group_id,
+         (SELECT COALESCE(SUM(d.points), 0) FROM points_deduction d WHERE d.entry_id = e.id) AS points_deducted,
+         tm.name AS team_name, tm.logo_key,
          (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
        FROM entry e JOIN team tm ON tm.id = e.team_id
        WHERE e.tournament_id = ? ORDER BY e.seed`
@@ -194,8 +197,22 @@ app.get("/:id", async (c) => {
         logo_key: string | null;
         player_count: number;
       }>(),
+    c.env.DB.prepare(
+      `SELECT d.id, d.entry_id, d.stage_id, d.points FROM points_deduction d
+       JOIN entry e ON e.id = d.entry_id WHERE e.tournament_id = ? ORDER BY d.id`
+    )
+      .bind(id)
+      .all<{ id: number; entry_id: number; stage_id: number | null; points: number }>(),
     getTiebreakers(c.env.DB, id),
   ]);
+
+  const deductionsByEntry = new Map<number, DeductionDTO[]>();
+  for (const d of deductions.results ?? []) {
+    const list = deductionsByEntry.get(d.entry_id);
+    const item: DeductionDTO = { id: d.id, points: d.points, stageId: d.stage_id };
+    if (list) list.push(item);
+    else deductionsByEntry.set(d.entry_id, [item]);
+  }
 
   const detail = {
     tournament: {
@@ -230,6 +247,7 @@ app.get("/:id", async (c) => {
         groupId: e.group_id,
         playerCount: e.player_count,
         pointsDeducted: e.points_deducted,
+        deductions: deductionsByEntry.get(e.id) ?? [],
         teamLogoUrl: mediaUrl(e.logo_key),
       })
     ),
@@ -744,17 +762,38 @@ app.delete("/:id/entries/:entryId", async (c) => {
   return c.json({ ok: true });
 });
 
-// 扣分（仅超管）：entry 级赛事扣分，写入后重算本赛事所有积分阶段
+// 扣分（仅超管）：一条扣分只作用于指定阶段（stageId = null → 全赛事所有积分阶段）。
+// 整表替换语义：body.items 就是这支队的全部扣分记录（[] = 清空），同一阶段允许多条。
+// 同一赛事可以有多支队各自扣分，互不影响；改完只重算「命中阶段及其下游」。
+const MAX_DEDUCTIONS = 20;
+
 app.patch(
   "/:id/entries/:entryId/deduction",
   requireSuperadmin,
   async (c) => {
     const id = Number(c.req.param("id"));
     const entryId = Number(c.req.param("entryId"));
-    const body = await c.req.json<{ points?: unknown }>().catch(() => null);
-    const points = Number(body?.points);
-    if (!Number.isInteger(points) || points < 0 || points > 999) {
-      return c.json({ message: "扣分必须是不超过 999 的非负整数（0 表示清除）" }, 400);
+    const body = await c.req.json<{ items?: unknown }>().catch(() => null);
+    if (!Array.isArray(body?.items)) {
+      return c.json({ message: "扣分要按记录整表提交（items: [{ points, stageId }]）" }, 400);
+    }
+    if (body.items.length > MAX_DEDUCTIONS) {
+      return c.json({ message: `单支队最多 ${MAX_DEDUCTIONS} 条扣分记录` }, 400);
+    }
+    const items: { points: number; stageId: number | null }[] = [];
+    for (const raw of body.items) {
+      const it = (raw ?? {}) as { points?: unknown; stageId?: unknown };
+      const points = Number(it.points);
+      if (!Number.isInteger(points) || points < 1 || points > 999) {
+        return c.json({ message: "扣分必须是 1 到 999 之间的整数（清掉直接删这条记录）" }, 400);
+      }
+      let stageId: number | null = null;
+      if (it.stageId != null) {
+        const sid = Number(it.stageId);
+        if (!Number.isInteger(sid)) return c.json({ message: "扣分生效阶段不合法" }, 400);
+        stageId = sid;
+      }
+      items.push({ points, stageId });
     }
     const entry = await c.env.DB.prepare(
       "SELECT id FROM entry WHERE id = ? AND tournament_id = ?"
@@ -763,22 +802,43 @@ app.patch(
       .first();
     if (!entry) return c.json({ message: "报名不存在" }, 404);
 
-    await c.env.DB.prepare(
-      "UPDATE entry SET points_deducted = ? WHERE id = ?"
-    )
-      .bind(points, entryId)
-      .run();
-    const stages = await c.env.DB.prepare(
-      `SELECT id FROM stage WHERE tournament_id = ? AND kind != 'elim'`
-    )
-      .bind(id)
-      .all<{ id: number }>();
-    const stmts = (
-      await Promise.all(
-        (stages.results ?? []).map((s) => buildStandingsStmts(c.env.DB, s.id))
+    const stageIds = [...new Set(items.map((it) => it.stageId))].filter(
+      (x): x is number => x != null
+    );
+    if (stageIds.length > 0) {
+      const found = await c.env.DB.prepare(
+        `SELECT id FROM stage WHERE tournament_id = ? AND kind != 'elim'
+           AND id IN (${stageIds.map(() => "?").join(",")})`
       )
-    ).flat();
-    if (stmts.length > 0) await c.env.DB.batch(stmts);
+        .bind(id, ...stageIds)
+        .all<{ id: number }>();
+      if ((found.results ?? []).length !== stageIds.length) {
+        return c.json({ message: "扣分生效阶段必须是本赛事的积分阶段（淘汰赛没有积分榜）" }, 400);
+      }
+    }
+
+    // 旧记录也要参与重算：把某阶段的扣分删掉，那张榜得跟着回涨
+    const old = await c.env.DB.prepare(
+      "SELECT DISTINCT stage_id FROM points_deduction WHERE entry_id = ?"
+    )
+      .bind(entryId)
+      .all<{ stage_id: number | null }>();
+    const affected: (number | null)[] = [
+      ...(old.results ?? []).map((r) => r.stage_id),
+      ...items.map((it) => it.stageId),
+    ];
+
+    const stmts: D1PreparedStatement[] = [
+      c.env.DB.prepare("DELETE FROM points_deduction WHERE entry_id = ?").bind(entryId),
+      ...items.map((it) =>
+        c.env.DB.prepare(
+          "INSERT INTO points_deduction (entry_id, stage_id, points) VALUES (?, ?, ?)"
+        ).bind(entryId, it.stageId, it.points)
+      ),
+    ];
+    await c.env.DB.batch(stmts);
+    const rebuilt = await buildStandingsForStagesStmts(c.env.DB, id, affected);
+    if (rebuilt.length > 0) await c.env.DB.batch(rebuilt);
     return c.json({ ok: true });
   }
 );

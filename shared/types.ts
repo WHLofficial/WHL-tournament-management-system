@@ -284,7 +284,19 @@ export interface ElimStageConfig {
 export interface RoundRobinStageConfig {
   loops?: 1 | 2;
   source?: StageSource;
+  carry?: CarryConfig;
 }
+
+// 循环赛阶段从上游循环赛阶段带分进来，按倍率折算。没有这个键 = 不带入（历史行为）。
+// 折算基数 = 源阶段榜上的实际积分（源榜的 pts，已扣过该阶段命中的扣分），四舍五入到整数分。
+export interface CarryConfig {
+  fromStage?: number; // 源阶段 id；缺省 = 排在本阶段前面的最近一个 round_robin 阶段
+  mode?: CarryMode; // 缺省 "points"
+  multiplier: number; // 百分比倍率：浮点且 ≥ 0（50.5 / 33.33 / 0 都合法），0 = 不折算积分
+}
+
+// points：只带折算后的分（场次列只算本阶段）；record：场次列也叠加源阶段战绩（苏超式总战绩）
+export type CarryMode = "points" | "record";
 
 export interface GroupStageConfig {
   group_count?: number;
@@ -396,8 +408,18 @@ export interface EntryDTO {
   seed: number;
   groupId: number | null;
   playerCount: number;
+  /** 该队全部扣分合计（各阶段明细见 deductions） */
   pointsDeducted: number;
   teamLogoUrl: string | null;
+  /** 扣分记录（仅管理端赛事详情带；公开端不带） */
+  deductions?: DeductionDTO[];
+}
+
+// 一条扣分：只作用于 stageId 那个阶段；stageId 为 null = 全赛事所有积分阶段
+export interface DeductionDTO {
+  id: number;
+  points: number;
+  stageId: number | null;
 }
 
 export interface StageDTO {
@@ -906,7 +928,10 @@ export interface StandingRowDTO {
   penWon: number;
   penLost: number;
   pts: number;
+  /** 本阶段命中的扣分合计（阶段级 + 全赛事），已从 pts 里扣掉 */
   pointsDeducted: number;
+  /** 从上游阶段带入的分（已含在 pts 里）；不带入时为 0 */
+  carriedPts: number;
   rank: number;
 }
 
@@ -923,6 +948,16 @@ export interface StageStandingDTO {
   name: string | null;
   sortOrder: number;
   groups: StandingGroupDTO[];
+  /** 本阶段的带入说明（供榜单脚注）；不带入时为 null */
+  carry: StageCarryInfoDTO | null;
+}
+
+export interface StageCarryInfoDTO {
+  mode: CarryMode;
+  multiplier: number;
+  fromStageId: number;
+  /** 源阶段显示名（含兜底），前端直接用 */
+  fromStageName: string;
 }
 
 // ---------- 排名常量（P2 才做成赛事级配置） ----------

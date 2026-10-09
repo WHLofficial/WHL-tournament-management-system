@@ -12,6 +12,7 @@ import {
 import {
   AdvancerError,
   buildAdvanceStmts,
+  buildStandingsChainStmts,
   getTiebreakers,
   readStandings,
 } from "../../lib/standings";
@@ -266,6 +267,91 @@ app.patch("/:id/stages/:stageId/name", async (c) => {
   return c.json({ ok: true, name: name === "" ? null : name });
 });
 
+// 带入积分配置：只循环赛阶段可用，且不套「已有场次即锁定」的赛制锁
+// —— 带入不碰场次结构，只影响积分榜，开打后照样能改（改完立刻重算本阶段与下游）。
+app.put("/:id/stages/:stageId/carry", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  const stage = await c.env.DB.prepare(
+    "SELECT id, kind, sort_order, config_json FROM stage WHERE id = ? AND tournament_id = ?"
+  )
+    .bind(stageId, tid)
+    .first<{ id: number; kind: string; sort_order: number; config_json: string | null }>();
+  if (!stage) return fail(c, 404, "阶段不存在");
+  if (stage.kind !== "round_robin") {
+    return fail(c, 400, "只有循环赛阶段支持带入积分");
+  }
+
+  const body = (await c.req.json<{ carry?: unknown }>().catch(() => null)) as {
+    carry?: unknown;
+  } | null;
+  // 必须显式给 carry 字段：body 缺失或坏 JSON 不当成「清空」，免得手滑把配置抹了
+  if (!body || !("carry" in body)) {
+    return fail(c, 400, "缺少 carry 字段（carry: null 表示不带入）");
+  }
+  // carry: null（或省略）= 不带入，直接删键
+  const raw = (body.carry ?? null) as
+    | { fromStage?: unknown; mode?: unknown; multiplier?: unknown }
+    | null;
+
+  const cfg = JSON.parse(stage.config_json || "{}") as Record<string, unknown>;
+  if (raw === null) {
+    delete cfg.carry;
+    await c.env.DB.prepare("UPDATE stage SET config_json = ? WHERE id = ?")
+      .bind(JSON.stringify(cfg), stageId)
+      .run();
+    await rebuildStandingsAfter(c.env.DB, stageId);
+    return c.json({ ok: true, carry: null });
+  }
+
+  const multiplier = Number(raw.multiplier);
+  if (!Number.isFinite(multiplier) || multiplier < 0) {
+    return fail(c, 400, "带入倍率必须是不小于 0 的数字（百分比，可带小数）");
+  }
+  const mode = raw.mode === "record" ? "record" : raw.mode === "points" ? "points" : null;
+  if (!mode) return fail(c, 400, "带入方式只能是「仅积分」或「积分+战绩」");
+
+  let fromStageId: number | undefined;
+  if (raw.fromStage != null) {
+    const fid = Number(raw.fromStage);
+    if (!Number.isInteger(fid)) return fail(c, 400, "带入来源阶段不合法");
+    const src = await c.env.DB.prepare(
+      "SELECT id, kind, sort_order FROM stage WHERE id = ? AND tournament_id = ?"
+    )
+      .bind(fid, tid)
+      .first<{ id: number; kind: string; sort_order: number }>();
+    if (!src) return fail(c, 400, "带入来源阶段不存在");
+    if (src.kind !== "round_robin") {
+      return fail(c, 400, "带入来源只能是循环赛阶段（小组赛/淘汰赛没有积分可带入）");
+    }
+    if (src.sort_order >= stage.sort_order) {
+      return fail(c, 400, "带入来源阶段必须排在当前阶段之前");
+    }
+    fromStageId = src.id;
+  } else {
+    // 不指定来源时按「最近的上游循环赛阶段」解析；一个都没有就直接挡掉，
+    // 免得配了个不生效的开关让编排页看起来带入了、榜上却没有
+    const earlier = await c.env.DB.prepare(
+      "SELECT id FROM stage WHERE tournament_id = ? AND kind = 'round_robin' AND sort_order < ? LIMIT 1"
+    )
+      .bind(tid, stage.sort_order)
+      .first<{ id: number }>();
+    if (!earlier) return fail(c, 400, "没有更早的循环赛阶段可以带入");
+  }
+
+  const carry = {
+    mode,
+    multiplier,
+    ...(fromStageId !== undefined ? { fromStage: fromStageId } : {}),
+  };
+  cfg.carry = carry;
+  await c.env.DB.prepare("UPDATE stage SET config_json = ? WHERE id = ?")
+    .bind(JSON.stringify(cfg), stageId)
+    .run();
+  await rebuildStandingsAfter(c.env.DB, stageId);
+  return c.json({ ok: true, carry });
+});
+
 // ---------- 自动生成阶段赛程 ----------
 
 app.post("/:id/stages/:stageId/generate", async (c) => {
@@ -393,12 +479,21 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       return fail(c, 400, "先抽签分组（且每组至少 2 队）才能生成小组赛程");
     }
     await env.DB.batch(stmts);
+    await rebuildStandingsAfter(env.DB, stageId);
     return c.json({ created, rounds, skippedGroups: skipped });
   }
 
   await env.DB.batch(stmts);
+  await rebuildStandingsAfter(env.DB, stageId);
   return c.json({ created, rounds, balanced });
 });
+
+// 重生成/删场次之后重算积分榜：必须等场次写入提交后再算（榜是从 match 现算的），
+// 参与集（配了 source 的循环赛阶段按场次取人）也跟着换。没算过榜的阶段由 helper 跳过。
+async function rebuildStandingsAfter(db: D1Database, stageId: number): Promise<void> {
+  const stmts = await buildStandingsChainStmts(db, stageId);
+  if (stmts.length > 0) await db.batch(stmts);
+}
 
 // ---------- 淘汰赛手动落位（首轮点选配对；后续轮由晋级器填充） ----------
 
@@ -1236,11 +1331,11 @@ app.delete("/:id/matches/:matchId", async (c) => {
   const tid = Number(c.req.param("id"));
   const matchId = Number(c.req.param("matchId"));
   const m = await c.env.DB.prepare(
-    `SELECT m.id, m.status, s.kind AS stage_kind FROM match m JOIN stage s ON s.id = m.stage_id
+    `SELECT m.id, m.status, m.stage_id, s.kind AS stage_kind FROM match m JOIN stage s ON s.id = m.stage_id
      WHERE m.id = ? AND s.tournament_id = ?`
   )
     .bind(matchId, tid)
-    .first<{ id: number; status: MatchDTO["status"]; stage_kind: string }>();
+    .first<{ id: number; status: MatchDTO["status"]; stage_id: number; stage_kind: string }>();
   if (!m) return fail(c, 404, "比赛不存在");
   // 淘汰赛的场次行只能整段在赛程页增删：单删两回合中的一条 leg 行会让总比分算不出、对手席位永不填充
   if (m.stage_kind === "elim") return fail(c, 400, "淘汰赛请在赛程页增删场次");
@@ -1248,6 +1343,7 @@ app.delete("/:id/matches/:matchId", async (c) => {
     return fail(c, 409, "只有未开打的比赛可以删除");
   }
   await c.env.DB.prepare("DELETE FROM match WHERE id = ?").bind(matchId).run();
+  await rebuildStandingsAfter(c.env.DB, m.stage_id);
   return c.json({ ok: true });
 });
 
@@ -1447,6 +1543,7 @@ app.delete("/:id/stages/:stageId/matches", async (c) => {
       .first<{ n: number }>();
     if ((n?.n ?? 0) === 0) return c.json({ ok: true, deleted: 0 });
     await c.env.DB.prepare("DELETE FROM match WHERE stage_id = ?").bind(stage.id).run();
+    await rebuildStandingsAfter(c.env.DB, stage.id);
     return c.json({ ok: true });
   } catch (e) {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
