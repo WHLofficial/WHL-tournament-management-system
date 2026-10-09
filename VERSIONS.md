@@ -41,7 +41,9 @@
 
 | 50 | v5.5.0 | 队长与定位球选人改版 + 跨仓 FC26 元数据链路：`shared/tactics.ts` 冻结属性/徽章口径（`ATTR_KEYS` 11 键、`ASSIGN_BADGE`（死球/精准头球/空中堡垒，psid 4/5/26）、`ASSIGN_RELEVANCE` 角色相关映射、`assignRelevanceScore`）与 `shared/fc26Playstyles.ts` 73 项徽章译名（金=psid≥101）；跨仓 meta 随名册同步入库（club v6.38.0 `GET /api/players/meta`，迁移 `0026_player_meta.sql`，失败不中断名册同步）+ `/me/team`、`/bootstrap`、代打板名册条目随包下发裁剪版 meta（11 属性+身高+playstyles 兜底）；战术页 18 槽位改只读 chip（两列等宽网格防组内漂移）+ 手机底部弹层选人、桌面独立编排页 `/tactics/assignments`（半场板钉子 ↔ 候选行双向悬停高亮、草稿两页共享、深链按组归属落位）+ 候选行两行式（属性胶囊 + 金银徽章 chip、冲突 ⚠ 仍可选提交拦截、无数据降级）+ `LineupView` 结构化徽章渲染；测试全量 574 passed | minor：新增用户可见能力（面板与编排页；跨仓端点为新增向后兼容，club 未上线时静默降级为无数据） |
 
-**当前版本：v5.5.0**
+| 51 | v5.6.0 | 循环赛带入积分（浮点倍率）+ 扣分改按阶段记录表：阶段级配置 `stage.config_json.carry = { fromStage?, mode: points/record, multiplier }`（没有该键 = 不带入，历史行为不变），`carriedPts = round(源阶段榜上的实际积分 × multiplier/100)`——折算基数就是源榜的 `pts`（净值，已扣过该阶段命中的扣分），所以罚分会沿带入链往下传导、不做「加回扣分」的还原，链式带入（A→B→C）自动成立；`pts = 本阶段得分 + carriedPts − 本阶段命中扣分`，mode=record 时场次列叠加源阶段战绩、points 时只算本阶段；落库新增 `standing.carried_pts` / `standing.deduct_pts`（读侧只取不算），迁移 `0027_stage_carry_and_deduction.sql` 建记录表 `points_deduction(id, entry_id, stage_id NULL=全赛事, points)` 并把 `entry.points_deducted` 回填成一条全赛事记录后置 0 废弃（同时给存量榜补 `deduct_pts`，保住「−N」标记）；新端点 `PUT …/stages/:stageId/carry`（不套「已有场次即锁」的赛制锁，带入不动场次结构）、扣分端点改整表替换 `items: [{ points, stageId }]`（`[]` = 清空）；级联重建 `buildStandingsForStagesStmts`（本阶段 + 其后所有积分阶段，同一轮把算出的分值直接喂给下游，避开 batch 生效前读到旧值的滞后）接上报分/改判、扣分、重新生成、删单场、清赛程；配了 `source` 的循环赛阶段参与集收敛为「本阶段场次出现过的 entry 并集」（无场次回退全量）；前端编排页带入三件套（来源 / 倍率(%) 可带小数且非负 / 方式）、新建阶段表单同款、积分榜「含带入 N」上标（负带入也显示）+ 阶段标题口径 chip + 脚注、扣分改记录列表面板（分数 + 生效阶段，最多 20 条）；测试 `tests/standings.carry.test.ts` 10 例 + 扣分旧用例改造，全量 584 passed | minor：新增用户可见能力（端点与迁移向后兼容） |
+
+**当前版本：v5.6.0**
 
 ## 落地位置
 
