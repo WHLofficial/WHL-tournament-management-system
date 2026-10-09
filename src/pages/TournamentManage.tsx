@@ -292,7 +292,14 @@ function EntriesTab({ detail, reload }: { detail: TournamentDetailDTO; reload: (
                   <Link to={`/admin/teams/${e.teamId}`}>{e.teamName}</Link>
                 </td>
                 <td>{e.playerCount}</td>
-                {isSuper && <DeductCell key={e.pointsDeducted} entry={e} tid={t.id} reload={reload} />}
+                {isSuper && (
+                  <DeductCell
+                    entry={e}
+                    tid={t.id}
+                    stages={detail.stages.filter((s) => s.kind !== "elim")}
+                    reload={reload}
+                  />
+                )}
                 {editable && (
                   <td>
                     <button className="btn btn-ghost btn-sm" onClick={() => void removeEntry(e)}>
@@ -890,45 +897,123 @@ function RankZoneCard({ detail }: { detail: TournamentDetailDTO }) {
   );
 }
 
-// 超管专属：单队扣分编辑，0 表示清除；保存后后端会重算积分榜
-function DeductCell({ entry, tid, reload }: { entry: EntryDTO; tid: number; reload: () => Promise<void> }) {
-  const [v, setV] = useState<string | null>(null);
+// 超管专属：扣分记录编辑。一条扣分只作用于所选阶段（不选 = 全赛事所有积分阶段），
+// 同一支队可以有多条；提交时整表替换 —— 面板里列出几条就是几条，删空即清空。
+function DeductCell({
+  entry,
+  tid,
+  stages,
+  reload,
+}: {
+  entry: EntryDTO;
+  tid: number;
+  stages: StageDTO[];
+  reload: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<{ points: string; stageId: string }[]>([]);
   const { busy, error, run } = useSubmit();
-  const shown = v ?? (entry.pointsDeducted > 0 ? String(entry.pointsDeducted) : "");
+  const total = entry.pointsDeducted;
+
+  const edit = (i: number, patch: Partial<{ points: string; stageId: string }>) =>
+    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+
+  const openPanel = () => {
+    setRows(
+      (entry.deductions ?? []).map((d) => ({
+        points: String(d.points),
+        stageId: d.stageId == null ? "" : String(d.stageId),
+      }))
+    );
+    setOpen(true);
+  };
+
+  const save = () =>
+    void run(async () => {
+      // 整表替换语义：明细没下发（非管理端详情）就绝不下手，免得把已有记录清空
+      if (!entry.deductions) throw new Error("扣分明细没加载出来，刷新页面再改");
+      const items = rows.map((r) => {
+        const p = Number(r.points);
+        if (!Number.isInteger(p) || p < 1 || p > 999) {
+          throw new Error("每条扣分要填 1 到 999 的整数");
+        }
+        return { points: p, stageId: r.stageId === "" ? null : Number(r.stageId) };
+      });
+      await api(`/api/admin/tournaments/${tid}/entries/${entry.id}/deduction`, {
+        method: "PATCH",
+        body: { items },
+      });
+      setOpen(false);
+      await reload();
+    });
+
   return (
-    <td>
-      <span className="deduct-edit">
-        <input
-          className="input"
-          type="number"
-          min="0"
-          max="999"
-          style={{ width: "4.5em" }}
-          value={shown}
-          placeholder="0"
-          onChange={(e) => setV(e.target.value)}
-        />
-        <button
-          className="btn btn-sm"
-          type="button"
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              const n = shown === "" ? 0 : Number(shown);
-              if (!Number.isInteger(n) || n < 0) throw new Error("扣分必须是非负整数");
-              await api(`/api/admin/tournaments/${tid}/entries/${entry.id}/deduction`, {
-                method: "PATCH",
-                body: { points: n },
-              });
-              setV(null);
-              await reload();
-            })
-          }
-        >
-          {busy ? "…" : "保存"}
-        </button>
-      </span>
-      {error && <span className="error-text">{error}</span>}
+    <td className="deduct-cell">
+      {total > 0 && (
+        <span className="deduct" title={`共扣 ${total} 分`}>
+          −{total}
+        </span>
+      )}
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={() => (open ? setOpen(false) : openPanel())}
+      >
+        {open ? "收起" : total > 0 ? "改扣分" : "扣分"}
+      </button>
+      {open && (
+        <div className="deduct-panel">
+          <p className="muted">扣分只影响所选阶段；不选阶段 = 全赛事所有积分阶段。</p>
+          {rows.length === 0 && <p className="muted">还没有扣分记录。</p>}
+          {rows.map((r, i) => (
+            <div className="deduct-row" key={i}>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                max="999"
+                style={{ width: "4.5em" }}
+                value={r.points}
+                placeholder="分数"
+                onChange={(e) => edit(i, { points: e.target.value })}
+              />
+              <select
+                className="input"
+                value={r.stageId}
+                onChange={(e) => edit(i, { stageId: e.target.value })}
+              >
+                <option value="">全部积分阶段</option>
+                {stages.map((s) => (
+                  <option key={s.id} value={String(s.id)}>
+                    {s.name || (s.kind === "group" ? "小组赛" : "循环赛")}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn-sm btn-ghost"
+                type="button"
+                onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+              >
+                删
+              </button>
+            </div>
+          ))}
+          <div className="logo-row">
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              disabled={rows.length >= 20}
+              onClick={() => setRows((rs) => [...rs, { points: "", stageId: "" }])}
+            >
+              ＋加一条
+            </button>
+            <button className="btn btn-sm" type="button" disabled={busy} onClick={save}>
+              {busy ? "…" : "保存"}
+            </button>
+          </div>
+          {error && <span className="error-text">{error}</span>}
+        </div>
+      )}
     </td>
   );
 }

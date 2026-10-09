@@ -994,11 +994,43 @@ button.btn-ghost:hover:not(:disabled) {
   font-size: 12px;
   font-weight: 600;
 }
-.deduct-edit {
-  display: inline-flex;
+/* 带入分标记：与扣分同位置、不同色，避免看成一个数 */
+.carried {
+  margin-left: 6px;
+  color: var(--muted, #8aa08f);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.carry-note {
+  font-size: 12px;
+  font-weight: 400;
+}
+/* 扣分记录面板（赛事详情报名表里展开编辑） */
+.deduct-cell { position: relative; white-space: nowrap; }
+.deduct-panel {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  width: 320px;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: normal;
+  background: var(--card, #fff);
+  border: 1px solid var(--border, #dfe5df);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+.deduct-panel p { margin: 0 0 8px; font-size: 12px; }
+.deduct-row {
+  display: flex;
   gap: 6px;
   align-items: center;
+  margin-bottom: 6px;
 }
+.deduct-row select { flex: 1; min-width: 0; }
 
 /* ---------- 点选式手动排赛 ---------- */
 .manual-pick {

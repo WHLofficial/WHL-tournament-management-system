@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type {
+  CarryConfig,
   EntryDTO,
   MatchDTO,
   StageDTO,
@@ -1029,6 +1030,132 @@ function StageConfigEditor({
           <option value="2">双循环</option>
         </select>
       </label>
+      <CarryEditor detail={detail} stage={stage} onSaved={onSaved} />
+    </span>
+  );
+}
+
+// 带入积分（只循环赛阶段有）：走独立端点 PUT /stages/:stageId/carry。
+// 改带入只影响积分榜、不碰场次，所以不套「已有场次即锁定」那把锁，开打中途也能改。
+function CarryEditor({
+  detail,
+  stage,
+  onSaved,
+}: {
+  detail: TournamentDetailDTO;
+  stage: StageDTO;
+  onSaved: () => void;
+}) {
+  const carry = (stage.config as { carry?: CarryConfig }).carry ?? null;
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // 来源只能是排在本阶段前面的循环赛阶段（小组赛/淘汰赛没有名次可折算）
+  const options = detail.stages
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => s.kind === "round_robin" && s.sortOrder < stage.sortOrder)
+    .map(({ s, idx }) => ({
+      id: String(s.id),
+      label: `第 ${idx + 1} 阶段 · ${s.name || stageTitle[s.kind]}`,
+    }));
+  if (options.length === 0 && !carry) return null;
+
+  const save = async (next: CarryConfig | null) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/carry`, {
+        method: "PUT",
+        body: { carry: next },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "保存带入设置失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 保留当前倍率/方式，只换来源（空 = 交回后端自动挑最近的上游循环赛）
+  const withSource = (sourceId: string): CarryConfig => ({
+    mode: carry?.mode ?? "points",
+    multiplier: carry?.multiplier ?? 100,
+    ...(sourceId ? { fromStage: Number(sourceId) } : {}),
+  });
+
+  return (
+    <span className="cfg-editor">
+      {err && <span className="error">{err}</span>}
+      <label>
+        带入积分
+        <select
+          value={carry ? "on" : "off"}
+          disabled={busy}
+          onChange={(e) =>
+            e.target.value === "on" ? save({ mode: "points", multiplier: 100 }) : save(null)
+          }
+        >
+          <option value="off">不带入</option>
+          <option value="on">从上游循环赛带入</option>
+        </select>
+      </label>
+      {carry && (
+        <>
+          <label>
+            来源
+            <select
+              value={carry.fromStage ? String(carry.fromStage) : ""}
+              disabled={busy}
+              onChange={(e) => save(withSource(e.target.value))}
+            >
+              <option value="">上一循环赛阶段</option>
+              {options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            倍率(%)
+            <input
+              key={String(carry.multiplier)}
+              type="number"
+              min={0}
+              step="any"
+              defaultValue={carry.multiplier}
+              disabled={busy}
+              style={{ width: 72 }}
+              onBlur={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isFinite(v) || v < 0) {
+                  setErr("带入倍率要不小于 0 的数字（百分比，可带小数）");
+                  e.target.value = String(carry.multiplier);
+                  return;
+                }
+                if (v === carry.multiplier) return;
+                save({ ...withSource(carry.fromStage ? String(carry.fromStage) : ""), multiplier: v });
+              }}
+            />
+          </label>
+          <label>
+            方式
+            <select
+              value={carry.mode ?? "points"}
+              disabled={busy}
+              onChange={(e) =>
+                save({
+                  ...withSource(carry.fromStage ? String(carry.fromStage) : ""),
+                  mode: e.target.value === "record" ? "record" : "points",
+                })
+              }
+            >
+              <option value="points">仅积分</option>
+              <option value="record">积分+战绩</option>
+            </select>
+          </label>
+        </>
+      )}
     </span>
   );
 }
@@ -1055,6 +1182,10 @@ function AddStageForm({
   const [rangeTo, setRangeTo] = useState("");
   const [fromStage, setFromStage] = useState(""); // 空 = 上一阶段；否则为 stage id
   const [cross, setCross] = useState("");
+  // 带入积分（仅循环赛阶段可选）：新阶段排在最后，所以已有的循环赛阶段都是「更早的」
+  const [carryMode, setCarryMode] = useState<"off" | "points" | "record">("off");
+  const [carryFrom, setCarryFrom] = useState("");
+  const [carryPct, setCarryPct] = useState("100");
   const [err, setErr] = useState<string | null>(null);
 
   const isFirst = detail.stages.length === 0;
@@ -1076,6 +1207,14 @@ function AddStageForm({
       return { id: String(s.id), label: `第 ${idx + 1} 阶段 · ${stageTitle[s.kind]}${suffix}` };
     });
   const fromStageLabel = sourceStageOptions.find((o) => o.id === fromStage)?.label ?? "上一阶段";
+
+  const carryOptions = detail.stages
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => s.kind === "round_robin")
+    .map(({ s, idx }) => ({
+      id: String(s.id),
+      label: `第 ${idx + 1} 阶段 · ${s.name || stageTitle[s.kind]}`,
+    }));
 
   // 上一阶段是小组赛时，跨组模板给个默认值（组两两交叉：A1-B2、B1-A2…）
   const defaultCross = () => {
@@ -1104,6 +1243,13 @@ function AddStageForm({
     } else {
       body.loops = Number(loops) === 2 ? 2 : 1;
     }
+    // 带入倍率先校验再建阶段，免得建完才发现填错
+    const carryPctNum = Number(carryPct);
+    const carryOn = kind === "round_robin" && carryMode !== "off";
+    if (carryOn && (!Number.isFinite(carryPctNum) || carryPctNum < 0)) {
+      setErr("带入倍率要不小于 0 的数字（百分比，可带小数）");
+      return;
+    }
     const crossList = cross
       .split(/[,，\n]/)
       .map((x) => x.trim())
@@ -1128,10 +1274,33 @@ function AddStageForm({
       };
     }
     try {
-      await api(`/api/admin/tournaments/${detail.tournament.id}/stages`, {
-        method: "POST",
-        body,
-      });
+      const created = await api<{ stageId: number }>(
+        `/api/admin/tournaments/${detail.tournament.id}/stages`,
+        { method: "POST", body }
+      );
+      // 带入设置走独立端点（赛制参数的 PATCH 会按阶段类型刷给所有同类阶段）
+      if (carryOn) {
+        try {
+          await api(`/api/admin/tournaments/${detail.tournament.id}/stages/${created.stageId}/carry`, {
+            method: "PUT",
+            body: {
+              carry: {
+                mode: carryMode === "record" ? "record" : "points",
+                multiplier: carryPctNum,
+                ...(carryFrom ? { fromStage: Number(carryFrom) } : {}),
+              },
+            },
+          });
+        } catch (e) {
+          // 阶段已经建出来了，表单要收起（否则再点一次会建重复阶段），错误只能用弹窗报
+          window.alert(
+            `阶段已建好，但带入设置没保存：${e instanceof Error ? e.message : "请到阶段上重新设置"}`
+          );
+          setOpen(false);
+          onAdded();
+          return;
+        }
+      }
       setOpen(false);
       setRangeFrom("");
       setRangeTo("");
@@ -1139,6 +1308,9 @@ function AddStageForm({
       setCross("");
       setGroupCount("4");
       setGroupSize("4");
+      setCarryMode("off");
+      setCarryFrom("");
+      setCarryPct("100");
       onAdded();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "添加阶段失败");
@@ -1215,13 +1387,58 @@ function AddStageForm({
             </label>
           </>
         ) : (
-          <label>
-            循环
-            <select value={loops} onChange={(e) => setLoops(e.target.value)}>
-              <option value="1">单循环</option>
-              <option value="2">双循环</option>
-            </select>
-          </label>
+          <>
+            <label>
+              循环
+              <select value={loops} onChange={(e) => setLoops(e.target.value)}>
+                <option value="1">单循环</option>
+                <option value="2">双循环</option>
+              </select>
+            </label>
+            {!isFirst && carryOptions.length > 0 && (
+              <>
+                <label>
+                  带入积分
+                  <select
+                    value={carryMode}
+                    onChange={(e) =>
+                      setCarryMode(e.target.value as "off" | "points" | "record")
+                    }
+                  >
+                    <option value="off">不带入</option>
+                    <option value="points">带积分</option>
+                    <option value="record">带积分+战绩</option>
+                  </select>
+                </label>
+                {carryMode !== "off" && (
+                  <>
+                    <label>
+                      来源
+                      <select value={carryFrom} onChange={(e) => setCarryFrom(e.target.value)}>
+                        <option value="">上一循环赛阶段</option>
+                        {carryOptions.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      倍率(%)
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={carryPct}
+                        onChange={(e) => setCarryPct(e.target.value)}
+                        style={{ width: 72 }}
+                      />
+                    </label>
+                  </>
+                )}
+              </>
+            )}
+          </>
         )}
         {kind === "elim" && (
           <label className="check">

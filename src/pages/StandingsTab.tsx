@@ -3,7 +3,13 @@ import { api } from "../api";
 import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawTableCard } from "../lib/share";
-import type { StageStandingDTO, RankZone, RankZoneSettings, TiebreakerKey } from "../../shared/types";
+import type {
+  StageStandingDTO,
+  StandingRowDTO,
+  RankZone,
+  RankZoneSettings,
+  TiebreakerKey,
+} from "../../shared/types";
 import { formatRankRange, matchRankZone, zonesForTable } from "../../shared/rankZones";
 
 // 积分榜：小组/循环阶段各一张表，行序已由后端排好（积分→净胜→进球→相互战绩）。
@@ -114,6 +120,17 @@ export function StandingsTables({
         <section key={st.stageId} className="standings-stage">
           <h3 className="stage-head">
             <span>{stageName}</span>
+            {st.carry && (
+              <span
+                className="muted carry-note"
+                title={`积分列已按${st.carry.fromStageName}榜上的实际积分 × ${st.carry.multiplier}% 带入${
+                  st.carry.mode === "record" ? "，场次列也累计了源阶段战绩" : ""
+                }`}
+              >
+                带入：{st.carry.fromStageName} × {st.carry.multiplier}%
+                {st.carry.mode === "record" ? "（含战绩）" : ""}
+              </span>
+            )}
             {share && tableRows.length > 0 && (
               <ShareButton
                 title={`分享「${stageName}积分榜」`}
@@ -151,6 +168,8 @@ export function StandingsTables({
       })}
       <p className="muted standings-note">
         * 积分：胜 3、平 1、负 0；平局后点球决胜的点球胜者记 2 分、负者记 1 分。
+        {standings.some((s) => s.carry) &&
+          "「含带入」标明积分里来自上游阶段的部分（按上游榜上的实际积分与倍率折算，所以上游扣分会带下来）；被扣分只在本阶段生效。"}
         {tiebreakerNote(tiebreakers)}
       </p>
     </>
@@ -168,6 +187,25 @@ function tiebreakerNote(chain?: TiebreakerKey[] | null): string {
   if (chain === undefined || chain === null) return "排名依次比较积分、净胜球、进球数、相互战绩。";
   if (chain.length === 0) return "当前未启用其他同分规则，同分按报名顺序排列。";
   return `排名依次比较积分、${chain.map((t) => TB_LABEL[t]).join("、")}。`;
+}
+
+// 积分格：分值已含带入分、已扣扣分，两个来源各自标注在分数旁边，悬停看明细
+function PtsCell({ r }: { r: StandingRowDTO }) {
+  return (
+    <td className="num pts">
+      {r.pts}
+      {r.carriedPts !== 0 && (
+        <span className="carried" title={`其中带入 ${r.carriedPts} 分`}>
+          含带入 {r.carriedPts}
+        </span>
+      )}
+      {r.pointsDeducted > 0 && (
+        <span className="deduct" title={`被扣 ${r.pointsDeducted} 分`}>
+          −{r.pointsDeducted}
+        </span>
+      )}
+    </td>
+  );
 }
 
 // 单张积分表：排名段渲染（strip=左缘色条+图例；divider=区间分隔线）与普通行共用一套列。
@@ -212,14 +250,7 @@ function RankZoneTable({
           <td className="num">{r.goalsFor}</td>
           <td className="num">{r.goalsAgainst}</td>
           <td className="num">{r.goalsFor - r.goalsAgainst}</td>
-          <td className="num pts">
-            {r.pts}
-            {r.pointsDeducted > 0 && (
-              <span className="deduct" title={`被扣 ${r.pointsDeducted} 分`}>
-                −{r.pointsDeducted}
-              </span>
-            )}
-          </td>
+          <PtsCell r={r} />
         </tr>,
       );
     } else {
@@ -239,14 +270,7 @@ function RankZoneTable({
           <td className="num">{r.goalsFor}</td>
           <td className="num">{r.goalsAgainst}</td>
           <td className="num">{r.goalsFor - r.goalsAgainst}</td>
-          <td className="num pts">
-            {r.pts}
-            {r.pointsDeducted > 0 && (
-              <span className="deduct" title={`被扣 ${r.pointsDeducted} 分`}>
-                −{r.pointsDeducted}
-              </span>
-            )}
-          </td>
+          <PtsCell r={r} />
         </tr>,
       );
       // 分隔线跟随名次区间末行：范围超出本表行数时画在最后一行之后
