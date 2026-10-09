@@ -43,7 +43,9 @@
 
 | 51 | v5.6.0 | 循环赛带入积分（浮点倍率）+ 扣分改按阶段记录表：阶段级配置 `stage.config_json.carry = { fromStage?, mode: points/record, multiplier }`（没有该键 = 不带入，历史行为不变），`carriedPts = round(源阶段榜上的实际积分 × multiplier/100)`——折算基数就是源榜的 `pts`（净值，已扣过该阶段命中的扣分），所以罚分会沿带入链往下传导、不做「加回扣分」的还原，链式带入（A→B→C）自动成立；`pts = 本阶段得分 + carriedPts − 本阶段命中扣分`，mode=record 时场次列叠加源阶段战绩、points 时只算本阶段；落库新增 `standing.carried_pts` / `standing.deduct_pts`（读侧只取不算），迁移 `0027_stage_carry_and_deduction.sql` 建记录表 `points_deduction(id, entry_id, stage_id NULL=全赛事, points)` 并把 `entry.points_deducted` 回填成一条全赛事记录后置 0 废弃（同时给存量榜补 `deduct_pts`，保住「−N」标记）；新端点 `PUT …/stages/:stageId/carry`（不套「已有场次即锁」的赛制锁，带入不动场次结构）、扣分端点改整表替换 `items: [{ points, stageId }]`（`[]` = 清空）；级联重建 `buildStandingsForStagesStmts`（本阶段 + 其后所有积分阶段，同一轮把算出的分值直接喂给下游，避开 batch 生效前读到旧值的滞后）接上报分/改判、扣分、重新生成、删单场、清赛程；配了 `source` 的循环赛阶段参与集收敛为「本阶段场次出现过的 entry 并集」（无场次回退全量）；前端编排页带入三件套（来源 / 倍率(%) 可带小数且非负 / 方式）、新建阶段表单同款、积分榜「含带入 N」上标（负带入也显示）+ 阶段标题口径 chip + 脚注、扣分改记录列表面板（分数 + 生效阶段，最多 20 条）；测试 `tests/standings.carry.test.ts` 10 例 + 扣分旧用例改造，全量 584 passed | minor：新增用户可见能力（端点与迁移向后兼容） |
 
-**当前版本：v5.6.0**
+| 52 | v5.6.1 | 带入口径改「倍数」+ 默认值翻转 + 窄屏溢出修复：`config_json.carry.multiplier` 从百分数改成倍数（1 = 源分照搬、0.5 = 一半、0 = 不带分），折算式由 `round(源阶段榜上的实际积分 × multiplier/100)` 改为 `round(源阶段榜上的实际积分 × multiplier)`，迁移 `0028_carry_multiplier_to_factor.sql` 把 5.6.0 期间界面写下的百分数一次性 ÷100（`json_set` 只覆盖 `carry.multiplier`、只处理数值型，其余键与坏 JSON 原样保留；线上赛事 2 阶段 3 的 `{mode:record, multiplier:100}` → `1`）；「方式」缺省值从 `points` 翻成 `record`（`normalizeCarry` 与 `PUT …/stages/:stageId/carry` 同源，显式给了仍只收这两档），编排页带入开关与新建阶段表单默认「带入 + 积分+战绩 + 1 倍」（第一个阶段没有上游循环赛时不算「要带入」，不白报错）、「倍率(%)」标签与校验文案改「倍数」（`1 = 源分照搬`）＋界面 chip/脚注去掉百分号（`带入：预赛阶段 × 1 倍`，title 写明「按源榜实际积分 × N 倍」）；窄屏溢出三处：积分榜带入标记窄屏缩成「带 N」（`.carried-full`/`.carried-short` 在 ≤640px 互换，此前 10 列表格被「含带入 17」撑宽 16px 触发横向滚动）、编排页 `.cfg-editor` 允许换行且子项 `max-width: 100%`（带入三件套 4 个控件不再撑破卡片）、报名表扣分面板宽改 `min(320px, calc(100vw - 24px))` 且 ≤640px 变底部固定抽屉（赛事表在窄屏是横滚容器，绝对定位面板会被裁掉）；测试 `tests/standings.carry.test.ts` 改倍数口径并新增「方式缺省 = 积分+战绩」与迁移 0028 换算用例（12 例），全量 586 passed | patch：口径与默认值调整 + 窄屏缺陷修补（存储语义变更由迁移 0028 自动换算，端点契约不变） |
+
+**当前版本：v5.6.1**
 
 ## 落地位置
 
