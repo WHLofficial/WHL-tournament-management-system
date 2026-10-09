@@ -123,11 +123,11 @@ export function StandingsTables({
             {st.carry && (
               <span
                 className="muted carry-note"
-                title={`积分列已按${st.carry.fromStageName}榜上的实际积分 × ${st.carry.multiplier}% 带入${
+                title={`积分列已按${st.carry.fromStageName}榜上的实际积分 × ${st.carry.multiplier} 倍带入${
                   st.carry.mode === "record" ? "，场次列也累计了源阶段战绩" : ""
                 }`}
               >
-                带入：{st.carry.fromStageName} × {st.carry.multiplier}%
+                带入：{st.carry.fromStageName} × {st.carry.multiplier} 倍
                 {st.carry.mode === "record" ? "（含战绩）" : ""}
               </span>
             )}
@@ -169,7 +169,7 @@ export function StandingsTables({
       <p className="muted standings-note">
         * 积分：胜 3、平 1、负 0；平局后点球决胜的点球胜者记 2 分、负者记 1 分。
         {standings.some((s) => s.carry) &&
-          "「含带入」标明积分里来自上游阶段的部分（按上游榜上的实际积分与倍率折算，所以上游扣分会带下来）；被扣分只在本阶段生效。"}
+          "「含带入」（窄屏显示为「带 N」）标明积分里来自上游阶段的部分（按上游榜上的实际积分乘倍数折算，所以上游扣分会带下来）；被扣分只在本阶段生效。"}
         {tiebreakerNote(tiebreakers)}
       </p>
     </>
@@ -196,7 +196,8 @@ function PtsCell({ r }: { r: StandingRowDTO }) {
       {r.pts}
       {r.carriedPts !== 0 && (
         <span className="carried" title={`其中带入 ${r.carriedPts} 分`}>
-          含带入 {r.carriedPts}
+          <span className="carried-full">含带入 {r.carriedPts}</span>
+          <span className="carried-short">带{r.carriedPts}</span>
         </span>
       )}
       {r.pointsDeducted > 0 && (

@@ -1076,10 +1076,10 @@ function CarryEditor({
     }
   };
 
-  // 保留当前倍率/方式，只换来源（空 = 交回后端自动挑最近的上游循环赛）
+  // 保留当前倍数/方式，只换来源（空 = 交回后端自动挑最近的上游循环赛）
   const withSource = (sourceId: string): CarryConfig => ({
-    mode: carry?.mode ?? "points",
-    multiplier: carry?.multiplier ?? 100,
+    mode: carry?.mode ?? "record",
+    multiplier: carry?.multiplier ?? 1,
     ...(sourceId ? { fromStage: Number(sourceId) } : {}),
   });
 
@@ -1092,7 +1092,7 @@ function CarryEditor({
           value={carry ? "on" : "off"}
           disabled={busy}
           onChange={(e) =>
-            e.target.value === "on" ? save({ mode: "points", multiplier: 100 }) : save(null)
+            e.target.value === "on" ? save({ mode: "record", multiplier: 1 }) : save(null)
           }
         >
           <option value="off">不带入</option>
@@ -1117,7 +1117,7 @@ function CarryEditor({
             </select>
           </label>
           <label>
-            倍率(%)
+            倍数
             <input
               key={String(carry.multiplier)}
               type="number"
@@ -1129,7 +1129,7 @@ function CarryEditor({
               onBlur={(e) => {
                 const v = Number(e.target.value);
                 if (!Number.isFinite(v) || v < 0) {
-                  setErr("带入倍率要不小于 0 的数字（百分比，可带小数）");
+                  setErr("带入倍数要不小于 0 的数字（1 = 源分照搬，可带小数）");
                   e.target.value = String(carry.multiplier);
                   return;
                 }
@@ -1141,7 +1141,7 @@ function CarryEditor({
           <label>
             方式
             <select
-              value={carry.mode ?? "points"}
+              value={carry.mode ?? "record"}
               disabled={busy}
               onChange={(e) =>
                 save({
@@ -1183,9 +1183,10 @@ function AddStageForm({
   const [fromStage, setFromStage] = useState(""); // 空 = 上一阶段；否则为 stage id
   const [cross, setCross] = useState("");
   // 带入积分（仅循环赛阶段可选）：新阶段排在最后，所以已有的循环赛阶段都是「更早的」
-  const [carryMode, setCarryMode] = useState<"off" | "points" | "record">("off");
+  // 默认值自 v5.6.1 起是「带入 + 积分+战绩 + 1 倍」，不带入要在表单里显式选
+  const [carryMode, setCarryMode] = useState<"off" | "points" | "record">("record");
   const [carryFrom, setCarryFrom] = useState("");
-  const [carryPct, setCarryPct] = useState("100");
+  const [carryMult, setCarryMult] = useState("1");
   const [err, setErr] = useState<string | null>(null);
 
   const isFirst = detail.stages.length === 0;
@@ -1243,11 +1244,12 @@ function AddStageForm({
     } else {
       body.loops = Number(loops) === 2 ? 2 : 1;
     }
-    // 带入倍率先校验再建阶段，免得建完才发现填错
-    const carryPctNum = Number(carryPct);
-    const carryOn = kind === "round_robin" && carryMode !== "off";
-    if (carryOn && (!Number.isFinite(carryPctNum) || carryPctNum < 0)) {
-      setErr("带入倍率要不小于 0 的数字（百分比，可带小数）");
+    // 带入倍数先校验再建阶段，免得建完才发现填错；
+    // 没有可带入的上游循环赛阶段（第一个阶段）时不能算「要带入」，否则会白报一次错
+    const carryMultNum = Number(carryMult);
+    const carryOn = kind === "round_robin" && carryMode !== "off" && carryOptions.length > 0;
+    if (carryOn && (!Number.isFinite(carryMultNum) || carryMultNum < 0)) {
+      setErr("带入倍数要不小于 0 的数字（1 = 源分照搬，可带小数）");
       return;
     }
     const crossList = cross
@@ -1286,7 +1288,7 @@ function AddStageForm({
             body: {
               carry: {
                 mode: carryMode === "record" ? "record" : "points",
-                multiplier: carryPctNum,
+                multiplier: carryMultNum,
                 ...(carryFrom ? { fromStage: Number(carryFrom) } : {}),
               },
             },
@@ -1308,9 +1310,9 @@ function AddStageForm({
       setCross("");
       setGroupCount("4");
       setGroupSize("4");
-      setCarryMode("off");
+      setCarryMode("record");
       setCarryFrom("");
-      setCarryPct("100");
+      setCarryMult("1");
       onAdded();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "添加阶段失败");
@@ -1424,13 +1426,13 @@ function AddStageForm({
                       </select>
                     </label>
                     <label>
-                      倍率(%)
+                      倍数
                       <input
                         type="number"
                         min={0}
                         step="any"
-                        value={carryPct}
-                        onChange={(e) => setCarryPct(e.target.value)}
+                        value={carryMult}
+                        onChange={(e) => setCarryMult(e.target.value)}
                         style={{ width: 72 }}
                       />
                     </label>

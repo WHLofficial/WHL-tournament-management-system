@@ -585,9 +585,9 @@ button.btn-ghost:hover:not(:disabled) {
 .stage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .stage-head h3 { margin: 0; }
 .stage-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cfg-editor { display: inline-flex; align-items: center; gap: 8px; margin-right: 8px; }
-.cfg-editor label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
-.cfg-editor select { padding: 2px 6px; }
+.cfg-editor { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-right: 8px; max-width: 100%; }
+.cfg-editor label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); max-width: 100%; }
+.cfg-editor select { padding: 2px 6px; max-width: 100%; }
 .round-group { margin-top: 10px; }
 .round-title { margin: 8px 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .schedule-tab table td { padding: 6px 8px; }
@@ -1003,6 +1003,7 @@ button.btn-ghost:hover:not(:disabled) {
   font-weight: 600;
   white-space: nowrap;
 }
+.carried-short { display: none; }
 .carry-note {
   font-size: 12px;
   font-weight: 400;
@@ -1014,7 +1015,7 @@ button.btn-ghost:hover:not(:disabled) {
   right: 0;
   top: 100%;
   z-index: 20;
-  width: 320px;
+  width: min(320px, calc(100vw - 24px));
   padding: 10px 12px;
   text-align: left;
   white-space: normal;
@@ -2845,6 +2846,21 @@ button.add-stage {
   }
   .standings-table .team-col {
     min-width: 4em;
+  }
+  /* 带入标记窄屏缩短：完整文案会把「积分」列撑宽 16px，10 列就挤不进 360px 屏了 */
+  .carried-full { display: none; }
+  .carried-short { display: inline; }
+  /* 扣分面板窄屏改底部抽屉：赛事表在窄屏是横滚容器，绝对定位面板会被裁掉 */
+  .deduct-panel {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    top: auto;
+    width: auto;
+    max-height: 70vh;
+    overflow-y: auto;
+    z-index: 60;
   }
   /* 赛程卡与时间线：收窄间距，事件块允许折行，避免撑爆时间轴轨道 */
   .mr-line {
