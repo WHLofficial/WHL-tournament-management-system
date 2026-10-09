@@ -287,12 +287,12 @@ export interface RoundRobinStageConfig {
   carry?: CarryConfig;
 }
 
-// 循环赛阶段从上游循环赛阶段带分进来，按倍率折算。没有这个键 = 不带入（历史行为）。
+// 循环赛阶段从上游循环赛阶段带分进来，按倍数折算。没有这个键 = 不带入（历史行为）。
 // 折算基数 = 源阶段榜上的实际积分（源榜的 pts，已扣过该阶段命中的扣分），四舍五入到整数分。
 export interface CarryConfig {
   fromStage?: number; // 源阶段 id；缺省 = 排在本阶段前面的最近一个 round_robin 阶段
-  mode?: CarryMode; // 缺省 "points"
-  multiplier: number; // 百分比倍率：浮点且 ≥ 0（50.5 / 33.33 / 0 都合法），0 = 不折算积分
+  mode?: CarryMode; // 缺省 "record"
+  multiplier: number; // 倍数：浮点且 ≥ 0，1 = 源分照搬、0.5 = 一半、0 = 不带分（v5.6.1 起从百分数改口径）
 }
 
 // points：只带折算后的分（场次列只算本阶段）；record：场次列也叠加源阶段战绩（苏超式总战绩）

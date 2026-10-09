@@ -306,9 +306,17 @@ app.put("/:id/stages/:stageId/carry", async (c) => {
 
   const multiplier = Number(raw.multiplier);
   if (!Number.isFinite(multiplier) || multiplier < 0) {
-    return fail(c, 400, "带入倍率必须是不小于 0 的数字（百分比，可带小数）");
+    return fail(c, 400, "带入倍数必须是不小于 0 的数字（1 = 源分照搬，可带小数）");
   }
-  const mode = raw.mode === "record" ? "record" : raw.mode === "points" ? "points" : null;
+  // 方式缺省按默认值「积分+战绩」；显式给了就必须是这两个之一
+  const mode =
+    raw.mode == null
+      ? "record"
+      : raw.mode === "record"
+        ? "record"
+        : raw.mode === "points"
+          ? "points"
+          : null;
   if (!mode) return fail(c, 400, "带入方式只能是「仅积分」或「积分+战绩」");
 
   let fromStageId: number | undefined;

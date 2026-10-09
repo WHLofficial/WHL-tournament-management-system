@@ -1,7 +1,7 @@
 // 循环赛阶段的带入积分（stage.config_json.carry）与阶段级扣分的对外口径：
 // worker/lib/standings.ts 的带入计算 + 级联重建，以及 admin 侧两个端点。
 // 钉六件事：
-//   1) carriedPts = round(源阶段榜上的实际积分 × 倍率/100)：倍率是浮点百分比，源阶段的扣分会顺着带入下来
+//   1) carriedPts = round(源阶段榜上的实际积分 × 倍数)：倍数是浮点倍数（1 = 源分照搬），源阶段的扣分会顺着带入下来
 //   2) mode=points 时场次列只算本阶段；mode=record 把源阶段战绩叠进场次列（积分一律带入）
 //   3) 链式带入：下游带的是上游「已含带入」的积分，上游改判/改扣分沿链级联
 //   4) 来源解析：缺省取最近的上游循环赛阶段；显式 fromStage 必须更早且同为循环赛
@@ -163,18 +163,18 @@ const dbRow = (sqlite: DatabaseSync, entryId: number, stageId: number) =>
   sqlGet<StandingDbRow>(sqlite, "SELECT * FROM standing WHERE stage_id = ? AND entry_id = ?", stageId, entryId);
 
 describe("带入积分：折算口径", () => {
-  it("倍率折算进 pts，mode=points 场次列只算本阶段；改倍率立刻重算（开打后也不锁）", async () => {
+  it("倍数折算进 pts，mode=points 场次列只算本阶段；改倍数立刻重算（开打后也不锁）", async () => {
     const { env, sqlite } = freshEnv();
     await shoot(env, addMatch(sqlite, 80, 600, 601), 3, 1); // 600 拿 3 分
     await shoot(env, addMatch(sqlite, 80, 602, 603), 0, 0); // 602/603 各 1 分
 
-    expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 })).status).toBe(200);
+    expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 })).status).toBe(200);
     await shoot(env, addMatch(sqlite, 83, 600, 602), 2, 0); // 本阶段 600 再拿 3 分
 
     const b83 = await boardOf(env, 83);
     expect(b83!.carry).toEqual({
       mode: "points",
-      multiplier: 100,
+      multiplier: 1,
       fromStageId: 80,
       fromStageName: "循环赛",
     });
@@ -199,13 +199,13 @@ describe("带入积分：折算口径", () => {
     // 上游那张榜不受影响（带入是单向的）
     expect(rowOf(await boardOf(env, 80), 600)).toMatchObject({ pts: 3, carriedPts: 0 });
 
-    // 浮点倍率：3 分 × 50.5% = 1.515 → 四舍五入 2 分；1 分 × 50.5% = 0.505 → 1 分
-    expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 50.5 })).status).toBe(200);
+    // 浮点倍数：3 分 × 0.505 = 1.515 → 四舍五入 2 分；1 分 × 0.505 = 0.505 → 1 分
+    expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 0.505 })).status).toBe(200);
     const b83b = await boardOf(env, 83);
     expect(rowOf(b83b, 600)).toMatchObject({ carriedPts: 2, pts: 5 });
     expect(rowOf(b83b, 602)).toMatchObject({ carriedPts: 1, pts: 1 });
 
-    // 倍率 0：开关还开着但不折算（榜上不带入，模式注解仍在）
+    // 倍数 0：开关还开着但不折算（榜上不带入，模式注解仍在）
     await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 0 });
     const b83c = await boardOf(env, 83);
     expect(b83c!.carry).toMatchObject({ multiplier: 0, fromStageId: 80 });
@@ -219,8 +219,8 @@ describe("带入积分：折算口径", () => {
     expect((await deduct(env, 600, [{ points: 2, stageId: 80 }])).status).toBe(200);
     expect(rowOf(await boardOf(env, 80), 600)).toMatchObject({ pts: 1, pointsDeducted: 2 });
 
-    // 基数 = 榜上那 1 分（而不是扣分前的 3 分）：1 × 150% = 1.5 → 2 分
-    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 150 });
+    // 基数 = 榜上那 1 分（而不是扣分前的 3 分）：1 × 1.5 = 1.5 → 2 分
+    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1.5 });
     await shoot(env, addMatch(sqlite, 83, 600, 602), 0, 0);
     const b83 = await boardOf(env, 83);
     expect(rowOf(b83, 600)).toMatchObject({ carriedPts: 2, pts: 3, played: 1, pointsDeducted: 0 });
@@ -230,7 +230,7 @@ describe("带入积分：折算口径", () => {
     const { env, sqlite } = freshEnv();
     await shoot(env, addMatch(sqlite, 80, 600, 601), 3, 1);
     await shoot(env, addMatch(sqlite, 80, 602, 603), 0, 0);
-    expect((await putCarry(env, 83, { fromStage: 80, mode: "record", multiplier: 100 })).status).toBe(200);
+    expect((await putCarry(env, 83, { fromStage: 80, mode: "record", multiplier: 1 })).status).toBe(200);
     await shoot(env, addMatch(sqlite, 83, 600, 602), 2, 0);
 
     // 600：源 1 胜(3:1) + 本阶段 1 胜(2:0) → 2 战 2 胜，进 5 失 1
@@ -257,7 +257,7 @@ describe("带入积分：折算口径", () => {
     });
 
     // 切回「仅积分」：场次列只剩本阶段，积分不变
-    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 });
+    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 });
     expect(rowOf(await boardOf(env, 83), 600)).toMatchObject({
       played: 1,
       won: 1,
@@ -271,42 +271,61 @@ describe("带入积分：折算口径", () => {
   it("链式带入：下游带的是上游已含带入的积分；缺省来源取最近的上游循环赛阶段", async () => {
     const { env, sqlite } = freshEnv();
     await shoot(env, addMatch(sqlite, 80, 600, 601), 3, 1);
-    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 });
+    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 });
     await shoot(env, addMatch(sqlite, 83, 600, 602), 2, 0);
     expect(rowOf(await boardOf(env, 83), 600)).toMatchObject({ carriedPts: 3, pts: 6 });
 
     // 85 不带 fromStage → 最近的上游循环赛阶段就是 83，带的是 83 的 6 分（含 83 自己带入的 3 分）
-    expect((await putCarry(env, 85, { mode: "points", multiplier: 100 })).status).toBe(200);
+    expect((await putCarry(env, 85, { mode: "points", multiplier: 1 })).status).toBe(200);
     await shoot(env, addMatch(sqlite, 85, 600, 601), 1, 1);
     const b85 = await boardOf(env, 85);
     expect(b85!.carry).toEqual({
       mode: "points",
-      multiplier: 100,
+      multiplier: 1,
       fromStageId: 83,
       fromStageName: "排名赛",
     });
     expect(rowOf(b85, 600)).toMatchObject({ carriedPts: 6, pts: 7, played: 1, drawn: 1 });
   });
+
+  it("方式缺省 = 积分+战绩（v5.6.1 起的默认口径）", async () => {
+    const { env, sqlite } = freshEnv();
+    await shoot(env, addMatch(sqlite, 80, 600, 601), 3, 1);
+    // 只给倍数、不给方式：按默认当「积分+战绩」处理，场次列跟着叠源阶段战绩
+    expect((await putCarry(env, 83, { fromStage: 80, multiplier: 1 })).status).toBe(200);
+    await shoot(env, addMatch(sqlite, 83, 600, 602), 2, 0);
+
+    const b = await boardOf(env, 83);
+    expect(b!.carry).toMatchObject({ mode: "record", multiplier: 1, fromStageId: 80 });
+    expect(rowOf(b, 600)).toMatchObject({
+      carriedPts: 3,
+      pts: 6,
+      played: 2,
+      won: 2,
+      goalsFor: 5,
+      goalsAgainst: 1,
+    });
+  });
 });
 
 describe("带入积分：端点校验与清空", () => {
-  it("来源与参数校验：非循环赛阶段、非更早阶段、坏倍率都挡在写库之前", async () => {
+  it("来源与参数校验：非循环赛阶段、非更早阶段、坏倍数都挡在写库之前", async () => {
     const { env, sqlite } = freshEnv();
     // 第一个循环赛阶段没有更早的循环赛阶段可带
-    expect((await putCarry(env, 80, { mode: "points", multiplier: 100 })).status).toBe(400);
+    expect((await putCarry(env, 80, { mode: "points", multiplier: 1 })).status).toBe(400);
     // 淘汰赛 / 小组赛阶段没有积分榜
-    expect((await putCarry(env, 82, { fromStage: 80, mode: "points", multiplier: 100 })).status).toBe(400);
-    expect((await putCarry(env, 81, { fromStage: 80, mode: "points", multiplier: 100 }, 9)).status).toBe(400);
+    expect((await putCarry(env, 82, { fromStage: 80, mode: "points", multiplier: 1 })).status).toBe(400);
+    expect((await putCarry(env, 81, { fromStage: 80, mode: "points", multiplier: 1 }, 9)).status).toBe(400);
     // 来源必须同为循环赛（淘汰赛/小组赛）、必须排在本阶段之前、必须在同一赛事
-    expect((await putCarry(env, 83, { fromStage: 82, mode: "points", multiplier: 100 })).status).toBe(400);
-    expect((await putCarry(env, 83, { fromStage: 85, mode: "points", multiplier: 100 })).status).toBe(400);
-    expect((await putCarry(env, 83, { fromStage: 81, mode: "points", multiplier: 100 })).status).toBe(400);
-    // 倍率：只要求有限且非负（浮点可以，负数/非数字不行）；方式只有两档
+    expect((await putCarry(env, 83, { fromStage: 82, mode: "points", multiplier: 1 })).status).toBe(400);
+    expect((await putCarry(env, 83, { fromStage: 85, mode: "points", multiplier: 1 })).status).toBe(400);
+    expect((await putCarry(env, 83, { fromStage: 81, mode: "points", multiplier: 1 })).status).toBe(400);
+    // 倍数：只要求有限且非负（浮点可以，负数/非数字不行）；方式只有两档
     expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: -0.5 })).status).toBe(400);
     expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: "abc" })).status).toBe(400);
-    expect((await putCarry(env, 83, { fromStage: 80, mode: "avg", multiplier: 100 })).status).toBe(400);
+    expect((await putCarry(env, 83, { fromStage: 80, mode: "avg", multiplier: 1 })).status).toBe(400);
     // 阶段不存在 / 不属于本赛事
-    expect((await putCarry(env, 999, { mode: "points", multiplier: 100 })).status).toBe(404);
+    expect((await putCarry(env, 999, { mode: "points", multiplier: 1 })).status).toBe(404);
     // 校验失败的都没写库
     expect(sqlAll(sqlite, "SELECT id FROM stage WHERE config_json LIKE '%carry%'")).toEqual([]);
   });
@@ -314,7 +333,7 @@ describe("带入积分：端点校验与清空", () => {
   it("清空（carry: null）删掉配置键，榜上的带入分与注解一起归零", async () => {
     const { env, sqlite } = freshEnv();
     await shoot(env, addMatch(sqlite, 80, 600, 601), 3, 1);
-    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 });
+    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 });
     await shoot(env, addMatch(sqlite, 83, 600, 602), 2, 0);
     expect(rowOf(await boardOf(env, 83), 600)).toMatchObject({ carriedPts: 3, pts: 6 });
 
@@ -335,8 +354,8 @@ describe("带入积分：级联与参赛集", () => {
     const { env, sqlite } = freshEnv();
     const m80 = addMatch(sqlite, 80, 600, 601);
     await shoot(env, m80, 3, 1);
-    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 });
-    await putCarry(env, 85, { mode: "points", multiplier: 100 });
+    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 });
+    await putCarry(env, 85, { mode: "points", multiplier: 1 });
     await shoot(env, addMatch(sqlite, 83, 600, 602), 2, 0);
     await shoot(env, addMatch(sqlite, 85, 600, 601), 0, 0);
     expect(rowOf(await boardOf(env, 85), 600)).toMatchObject({ carriedPts: 6, pts: 7 });
@@ -377,7 +396,7 @@ describe("带入积分：级联与参赛集", () => {
     sqlite
       .prepare("UPDATE stage SET config_json = ? WHERE id = 83")
       .run(JSON.stringify({ source: { take: 4 } }));
-    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 });
+    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 });
     const narrowed = await boardOf(env, 83);
     expect(narrowed!.groups[0].rows.map((r) => r.entryId).sort((a, b) => a - b)).toEqual([600, 602]);
     expect(rowOf(narrowed, 600)).toMatchObject({ carriedPts: 3, pts: 6 });
@@ -387,7 +406,7 @@ describe("带入积分：级联与参赛集", () => {
     // 「配了 source 但场次被清空」的中间态：接口不允许删已完赛场次，这里直接改库模拟，
     // 期望参赛集回退全量（榜上只剩带入分），不至于显示一张空榜
     sqlite.prepare("DELETE FROM match WHERE stage_id = 83").run();
-    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 });
+    await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 });
     const fallback = await boardOf(env, 83);
     expect(fallback!.groups[0].rows).toHaveLength(6);
     expect(rowOf(fallback, 600)).toMatchObject({ carriedPts: 3, pts: 3, played: 0 });
@@ -395,7 +414,7 @@ describe("带入积分：级联与参赛集", () => {
 
   it("没算过榜的阶段不会因为配带入/扣分凭空冒出一张全 0 榜", async () => {
     const { env, sqlite } = freshEnv();
-    expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 100 })).status).toBe(200);
+    expect((await putCarry(env, 83, { fromStage: 80, mode: "points", multiplier: 1 })).status).toBe(200);
     expect((await deduct(env, 600, [{ points: 5, stageId: 85 }])).status).toBe(200);
 
     expect((await boards(env)).map((s) => s.stageId)).toEqual([]);
@@ -470,5 +489,67 @@ describe("迁移 0027：存量扣分回填成记录表", () => {
     const cols = sqlAll<{ name: string }>(sqlite, "PRAGMA table_info(standing)").map((c) => c.name);
     expect(cols).toContain("carried_pts");
     expect(cols).toContain("deduct_pts");
+  });
+});
+
+describe("迁移 0028：百分数倍率换算成倍数", () => {
+  const dir = fileURLToPath(new URL("../migrations/", import.meta.url));
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+
+  it("v5.6.0 期间写下的百分数 ÷100（只动 carry.multiplier，其余键与非数字值不碰）", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    // 先停在 0027：0028 单独执行，能真实走一遍「线上库升级」路径
+    for (const f of files) {
+      if (f.startsWith("0028_")) continue;
+      sqlite.exec(readFileSync(dir + f, "utf8"));
+    }
+    const iso = "2026-02-01T00:00:00Z";
+    sqlite
+      .prepare(
+        "INSERT INTO user (id, name, email, password_hash, role, locked, must_change_pw) VALUES (1, '超管', '', 'x', 'superadmin', 0, 0)"
+      )
+      .run();
+    sqlite
+      .prepare(
+        "INSERT INTO tournament (id, org_id, name, format, status, created_by, created_at) VALUES (8, 1, '联赛', 'round_robin', 'running', 1, ?)"
+      )
+      .run(iso);
+    const st = sqlite.prepare(
+      "INSERT INTO stage (id, tournament_id, kind, sort_order, name, config_json) VALUES (?, 8, 'round_robin', ?, ?, ?)"
+    );
+    // 线上真实形态：percent 配置带着 loops/source/fromStage 一起，换算只能动 multiplier
+    st.run(
+      80,
+      1,
+      "预赛",
+      JSON.stringify({
+        loops: 2,
+        source: { from: 1, to: 4, fromStage: 2 },
+        carry: { mode: "record", multiplier: 100, fromStage: 2 },
+      })
+    );
+    // 小数百分数：50.5% → 0.505
+    st.run(81, 2, "半决赛", JSON.stringify({ carry: { mode: "points", multiplier: 50.5 } }));
+    // 没有 carry 键（只有坏 JSON 之外的老配置）与倍数不是数字的：原样留着，不塞新键也不改类型
+    st.run(82, 3, "无带入", JSON.stringify({ loops: 1 }));
+    st.run(83, 4, "坏值", JSON.stringify({ carry: { mode: "points", multiplier: "abc" } }));
+    st.run(84, 5, "坏 JSON", "{oops");
+
+    sqlite.exec(readFileSync(dir + "0028_carry_multiplier_to_factor.sql", "utf8"));
+
+    const cfg = (id: number) =>
+      sqlGet<{ config_json: string }>(sqlite, "SELECT config_json FROM stage WHERE id = ?", id)!.config_json;
+    expect(JSON.parse(cfg(80))).toEqual({
+      loops: 2,
+      source: { from: 1, to: 4, fromStage: 2 },
+      carry: { mode: "record", multiplier: 1, fromStage: 2 },
+    });
+    expect(JSON.parse(cfg(81))).toEqual({ carry: { mode: "points", multiplier: 0.505 } });
+    expect(JSON.parse(cfg(82))).toEqual({ loops: 1 });
+    expect(JSON.parse(cfg(83))).toEqual({ carry: { mode: "points", multiplier: "abc" } });
+    expect(cfg(84)).toBe("{oops");
   });
 });

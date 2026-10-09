@@ -20,11 +20,13 @@ type FinishedMatchRow = {
   walkover_side: string | null;
 };
 
-// ---------- 带入积分：从上游循环赛阶段按倍率带分 ----------
+// ---------- 带入积分：从上游循环赛阶段按倍数带分 ----------
 // 配置写在目标阶段自己的 config_json.carry（见 shared/types.ts 的 CarryConfig）。
 // 折算基数就是源阶段榜上的实际积分（源 standing.pts，注意它已经扣过该阶段命中的扣分）：
 // 罚分把源阶段的分打低，下游带入的部分就跟着少，不做任何「加回扣分」的还原；
 // 链式带入（A→B→C）自动成立，因为 B.pts 里已经含了 B 带入的分。
+// 倍数是浮点倍数：1 = 源分照搬、0.5 = 一半、0 = 不带分（v5.6.1 起从百分数改口径，
+// 5.6.0 期间写下的百分数由迁移 0028 一次性换算成倍数）。
 type StageLite = { id: number; kind: string; name: string | null; sort_order: number };
 
 type CarryResolution = { fromStageId: number; mode: CarryMode; multiplier: number };
@@ -42,12 +44,13 @@ export function normalizeCarry(
   if (!raw || typeof raw !== "object") return null;
   const c = raw as { fromStage?: unknown; mode?: unknown; multiplier?: unknown };
   const m = typeof c.multiplier === "number" ? c.multiplier : Number(c.multiplier);
-  // 倍率是百分比浮点：非有限值或负数一律当没配（非法配置由写入端点拦，读侧稳健降级）
+  // 倍数是浮点倍数（1 = 原分）：非有限值或负数一律当没配（非法配置由写入端点拦，读侧稳健降级）
   if (!Number.isFinite(m) || m < 0) return null;
   const from = Number(c.fromStage);
   return {
     fromStage: Number.isInteger(from) && from > 0 ? from : undefined,
-    mode: c.mode === "record" ? "record" : "points",
+    // 方式缺省「积分+战绩」（v5.6.1 起的默认值；界面也按这个默认值写配置）
+    mode: c.mode === "points" ? "points" : "record",
     multiplier: m,
   };
 }
@@ -140,7 +143,7 @@ async function readStageTotals(db: D1Database, stageId: number): Promise<Map<num
   );
 }
 
-// 按倍率折算带入分（百分比浮点，四舍五入到整数分）
+// 按倍数折算带入分（倍数浮点，1 = 源分照搬；四舍五入到整数分）
 function applyCarry(
   totals: Map<number, StageTotals>,
   multiplier: number
@@ -149,7 +152,7 @@ function applyCarry(
     [...totals.entries()].map(([entryId, t]) => [
       entryId,
       {
-        pts: Math.round((t.raw * multiplier) / 100),
+        pts: Math.round(t.raw * multiplier),
         played: t.played,
         won: t.won,
         drawn: t.drawn,
