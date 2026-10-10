@@ -994,15 +994,6 @@ button.btn-ghost:hover:not(:disabled) {
   font-size: 12px;
   font-weight: 600;
 }
-/* 带入分标记：与扣分同位置、不同色，避免看成一个数 */
-.carried {
-  margin-left: 6px;
-  color: var(--muted, #8aa08f);
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
 .carry-note {
   font-size: 12px;
   font-weight: 400;
@@ -2846,9 +2837,6 @@ button.add-stage {
   .standings-table .team-col {
     min-width: 4em;
   }
-  /* 带入标记窄屏直接不显示：完整文案会把「积分」列撑宽 16px，10 列就挤不进 360px 屏；
-     带入信息在阶段标题的 chip 与脚注里，列里不必再挤一行小字 */
-  .carried { display: none; }
   /* 扣分面板窄屏改底部抽屉：赛事表在窄屏是横滚容器，绝对定位面板会被裁掉 */
   .deduct-panel {
     position: fixed;

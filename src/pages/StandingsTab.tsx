@@ -169,7 +169,7 @@ export function StandingsTables({
       <p className="muted standings-note">
         * 积分：胜 3、平 1、负 0；平局后点球决胜的点球胜者记 2 分、负者记 1 分。
         {standings.some((s) => s.carry) &&
-          "「含带入」标明积分里来自上游阶段的部分（按上游榜上的实际积分乘倍数折算，所以上游扣分会带下来）；被扣分只在本阶段生效。"}
+          "带入分已按上游榜上的实际积分乘倍数计入积分列（所以上游扣分会带下来）；被扣分只在本阶段生效。"}
         {tiebreakerNote(tiebreakers)}
       </p>
     </>
@@ -189,16 +189,11 @@ function tiebreakerNote(chain?: TiebreakerKey[] | null): string {
   return `排名依次比较积分、${chain.map((t) => TB_LABEL[t]).join("、")}。`;
 }
 
-// 积分格：分值已含带入分、已扣扣分，两个来源各自标注在分数旁边，悬停看明细
+// 积分格：分值已含带入分与扣分，只把扣分标在分数旁边（带入信息在阶段标题的 chip 与脚注）
 function PtsCell({ r }: { r: StandingRowDTO }) {
   return (
     <td className="num pts">
       {r.pts}
-      {r.carriedPts !== 0 && (
-        <span className="carried" title={`其中带入 ${r.carriedPts} 分`}>
-          含带入 {r.carriedPts}
-        </span>
-      )}
       {r.pointsDeducted > 0 && (
         <span className="deduct" title={`被扣 ${r.pointsDeducted} 分`}>
           −{r.pointsDeducted}
