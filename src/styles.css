@@ -934,8 +934,11 @@ button.btn-ghost:hover:not(:disabled) {
 .standings-table .team-col { text-align: left; min-width: 7em; }
 .standings-table .pts { font-weight: 700; }
 /* 近 5 场列：表格里是圆点，整组贴列右缘（场次少的行从左边参差、最近一场上下对齐）；
-   居中会左右都不齐，窄屏整列隐藏（见下面的 640px 规则） */
-.standings-table .form-col { text-align: right; white-space: nowrap; }
+   居中会左右都不齐，窄屏整列隐藏（见下面的 640px 规则）。
+   宽度必须写死：表格是 width:100% 的自动布局，没指定宽度的列会去平分剩余空间，
+   本列不设宽就被撑成 269px 的空档，把「赛…积分」一串挤到表格中间（实测）；
+   7em ≈ 92px = 5 个圆点 76px + 左右各 8px 内边距，刚好够 */
+.standings-table .form-col { text-align: right; white-space: nowrap; width: 7em; }
 .standings-table tbody tr:nth-child(2n) { background: #fafcf9; }
 .pen-hint { font-weight: 400; font-size: 11px; }
 .standings-note { font-size: 12px; margin-top: 6px; }
