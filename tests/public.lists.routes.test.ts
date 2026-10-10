@@ -128,6 +128,71 @@ describe("公开端待打列表", () => {
   });
 });
 
+// 「一个赛事最多显示一轮」的专用夹具（用户反馈）：
+//   联赛 7：第一阶段 r1 两场 + r2 一场，第二阶段 r1 一场 ⇒ 只该出现第一阶段的 r1
+//   冠军杯 9：r1 六场 + r2 一场 ⇒ r1 六场全在（凑满 8 场），r2 整轮让位
+function freshEnvRoundLock() {
+  const sqlite = new DatabaseSync(":memory:");
+  applyMigrations(sqlite);
+  sqlite
+    .prepare("INSERT INTO user (id, name, email, password_hash, role, locked, must_change_pw) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(1, "管理员", "", "x", "admin", 0, 0);
+
+  const iso = "2026-01-01T00:00:00Z";
+  for (const [id, name] of [[10, "红队"], [11, "蓝队"], [12, "黄队"]] as const) {
+    sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (?, 1, ?, ?)").run(id, name, iso);
+  }
+  for (const [id, name] of [[7, "联赛"], [9, "冠军杯"]] as const) {
+    sqlite
+      .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by, created_at) VALUES (?, 1, ?, 'round_robin', 'running', 1, ?)")
+      .run(id, name, iso);
+  }
+  for (const [id, tid, sort] of [[70, 7, 1], [71, 7, 2], [90, 9, 1]] as const) {
+    sqlite
+      .prepare("INSERT INTO stage (id, tournament_id, kind, sort_order, name) VALUES (?, ?, 'round_robin', ?, '循环赛')")
+      .run(id, tid, sort);
+  }
+  for (const [id, tid, team, seed] of [
+    [500, 7, 10, 1], [501, 7, 11, 2],
+    [600, 9, 10, 1], [601, 9, 12, 2],
+  ] as const) {
+    sqlite.prepare("INSERT INTO entry (id, tournament_id, team_id, seed) VALUES (?, ?, ?, ?)").run(id, tid, team, seed);
+  }
+  const pending = (id: number, stage: number, round: number, slot: number, home: number, away: number) =>
+    sqlite
+      .prepare("INSERT INTO match (id, stage_id, round, slot, home_entry_id, away_entry_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')")
+      .run(id, stage, round, slot, home, away);
+  pending(801, 70, 1, 1, 500, 501);
+  pending(810, 70, 1, 2, 501, 500);
+  pending(811, 70, 2, 1, 500, 501);
+  pending(812, 71, 1, 1, 501, 500);
+  for (let i = 0; i < 6; i++) pending(820 + i, 90, 1, i + 1, 600, 601);
+  pending(826, 90, 2, 1, 600, 601);
+
+  const env: Record<string, unknown> = {
+    DB: createTestD1(sqlite),
+    KV: createTestKV(new Map()) as unknown as KVNamespace,
+    MEDIA: {} as never,
+    ASSETS: {} as never,
+  };
+  return env;
+}
+
+describe("公开端待打列表：一个赛事最多一轮", () => {
+  it("同一赛事只留排序最靠前的那一轮，更晚轮次整轮丢弃，总数仍封顶 8", async () => {
+    const res = await pub(freshEnvRoundLock(), "/api/public/upcoming");
+    expect(res.status).toBe(200);
+    const { upcoming } = (await res.json()) as { upcoming: Upcoming[] };
+
+    // 联赛：第一阶段第 1 轮两场留下；第 2 轮（811）与第二阶段（812）整轮让位
+    expect(upcoming.map((u) => u.matchId)).toEqual([801, 810, 820, 821, 822, 823, 824, 825]);
+    const ids = upcoming.map((u) => u.matchId);
+    expect(ids).not.toContain(811); // 同赛事第 2 轮
+    expect(ids).not.toContain(812); // 同赛事第二阶段
+    expect(ids).not.toContain(826); // 冠军杯第 2 轮：前一轮已占满 8 场，轮次锁 + 封顶都起作用
+  });
+});
+
 describe("公开端赛事摘要", () => {
   it("/tournaments/:id/matches/summary 的 recent 按完赛时间倒序，upcoming 沿用既有口径", async () => {
     const { env } = freshEnv();

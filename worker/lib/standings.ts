@@ -1,5 +1,6 @@
 import type {
   CarryMode,
+  FormLetter,
   StageStandingDTO,
   StandingGroupDTO,
   TiebreakerKey,
@@ -618,6 +619,62 @@ export async function buildAdvanceStmts(
   return updates;
 }
 
+// ---------- 近 5 场状态（积分榜末列 + 分享卡） ----------
+// 口径：该队在本届赛事内全部已完赛场次（含小组赛/淘汰赛/往期循环赛），
+// 取数与排列都以轮次为准 —— 按（阶段顺序、轮次、回合、场序）倒序取最近 5 场，
+// 下发时反转成正序（左边最早、最近一场在最右）。不用 finished_at 排序：改判会改
+// updated_at（历史的 finished_at 就是回填的 updated_at），轮次才是稳定的顺序键。
+const FORM_LENGTH = 5;
+
+// 单场结果（本队视角）：W/D/L。双弃权双方记负；平分看点球决胜——与 H2H 面板同口径
+// （worker/routes/public.ts 的 formLetter，那边按 team_id 跨赛事）。
+function formLetterOf(m: FinishedMatchRow, entryId: number): FormLetter {
+  if (m.walkover_side === "both") return "L";
+  const home = m.home_entry_id === entryId;
+  const mine = (home ? m.score_home : m.score_away) ?? 0;
+  const theirs = (home ? m.score_away : m.score_home) ?? 0;
+  if (mine !== theirs) return mine > theirs ? "W" : "L";
+  const pm = home ? m.pen_home : m.pen_away;
+  const pt = home ? m.pen_away : m.pen_home;
+  if (pm != null && pt != null && pm !== pt) return pm > pt ? "W" : "L";
+  return "D";
+}
+
+export async function readTournamentForm(
+  db: D1Database,
+  tournamentId: number
+): Promise<Map<number, FormLetter[]>> {
+  const res = await db
+    .prepare(
+      `SELECT m.home_entry_id, m.away_entry_id, m.score_home, m.score_away,
+              m.pen_home, m.pen_away, m.walkover_side
+       FROM match m
+       JOIN stage s ON s.id = m.stage_id
+       WHERE s.tournament_id = ? AND m.status = 'finished'
+         AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
+         AND COALESCE(m.note, '') != '轮空'
+       ORDER BY s.sort_order DESC, s.id DESC, m.round DESC,
+                COALESCE(m.leg, 0) DESC, m.slot DESC, m.id DESC`
+    )
+    .bind(tournamentId)
+    .all<FinishedMatchRow>();
+  const byEntry = new Map<number, FormLetter[]>();
+  // 倒序扫描：每队收满 5 条即不再追加，收完反转回正序
+  for (const m of res.results ?? []) {
+    if (m.home_entry_id === null || m.away_entry_id === null) continue;
+    for (const entryId of [m.home_entry_id, m.away_entry_id]) {
+      let list = byEntry.get(entryId);
+      if (!list) {
+        list = [];
+        byEntry.set(entryId, list);
+      }
+      if (list.length < FORM_LENGTH) list.push(formLetterOf(m, entryId));
+    }
+  }
+  for (const list of byEntry.values()) list.reverse();
+  return byEntry;
+}
+
 // ---------- 积分榜读取：排序 = 积分 → 净胜球 → 进球 → 相互战绩 ----------
 // 管理端与公开页共用。standing 表存重算结果，这里只做排序，不写库。
 export type StandRow = {
@@ -639,6 +696,8 @@ export type StandRow = {
   pointsDeducted: number;
   /** 从上游阶段带入的分（已含在 pts 里）；不带入时为 0 */
   carriedPts: number;
+  /** 近 5 场状态（赛事内全部已完赛场次，按轮次正序）；本函数不填，由 readStageStandings 挂 */
+  form?: FormLetter[];
   rank: number;
 };
 
@@ -876,8 +935,8 @@ export async function readStageStandings(
   db: D1Database,
   tournamentId: number
 ): Promise<StageStandingDTO[]> {
-  // 阶段清单与破同分规则互不依赖，并行发
-  const [stages, chain] = await Promise.all([
+  // 阶段清单、破同分规则、近 5 场状态互不依赖，并行发
+  const [stages, chain, formMap] = await Promise.all([
     db
       .prepare(
         `SELECT id, kind, name, sort_order, config_json FROM stage
@@ -892,6 +951,7 @@ export async function readStageStandings(
         config_json: string | null;
       }>(),
     getTiebreakers(db, tournamentId),
+    readTournamentForm(db, tournamentId),
   ]);
 
   const stageRows = stages.results ?? [];
@@ -904,6 +964,8 @@ export async function readStageStandings(
     stageRows.map(async (st) => {
       const rows = await readStandings(db, st.id, chain);
       if (rows.length === 0) return null;
+      // 近 5 场状态只挂在展示行上（小组赛与循环赛都带；淘汰赛没有积分榜所以不涉及）
+      for (const r of rows) r.form = formMap.get(r.entryId) ?? [];
       // 带入说明只作为榜单脚注下发（计算早已落在 standing.carried_pts 里）
       const resolved = pickCarrySource(
         st.kind,

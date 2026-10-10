@@ -1,5 +1,6 @@
 import QRCode from "qrcode";
 import whlLogoUrl from "../assets/whl-logo.png";
+import type { FormLetter } from "../../shared/types";
 
 // 分享卡片绘制库：800×N 竖版 canvas，V7 定稿浅色纸面风（样式以 style-v7-full.png A'' 列为准）。
 // 数据契约不动：drawXxxCard 签名、调用方传参、字段集合全不变（coverUrl 保留字段但头部不再用封面）。
@@ -17,6 +18,9 @@ const ink = (a: number): string => `rgba(34,33,29,${a})`;
 
 const PALETTE = ["#0e7a46", "#e8590c", "#1971c2", "#9c36b5", "#e64980", "#f08c00"];
 const FONT = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+// 近 5 场圆点配色（与网页端 .fdot-W/D/L 同色）
+const FORM_DOT_COLORS: Record<FormLetter, string> = { W: "#0e7a46", D: "#b7c2ba", L: "#b05a3a" };
 
 export interface ShareTeam {
   name: string;
@@ -233,6 +237,12 @@ export interface TableCardData {
   };
   /** 多组分组榜：每组独立小节（橙 kicker 组标 + 自带表头），组内名次独立 */
   groups?: { label: string; rows: string[][] }[];
+  /** 近 5 场圆点列序号：该列的 rows 文本留空，改由这里画圆点（不足 5 场画实际场次，空则画「—」） */
+  formCol?: number;
+  /** 近 5 场数据，与 rows / 分组扁平拼接同序（左边最早、最近一场在最右） */
+  forms?: FormLetter[][];
+  /** 加粗强调列序号（默认最后一列，如积分） */
+  strongCol?: number;
 }
 
 // 单场卡事件链条几何常量（样稿 ×~2.1）：事件行 63、助攻行 42、节点间 29
@@ -903,8 +913,9 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
     }
     // 逐行量宽后协商预算：数字列居中、可向两侧邻列的留白扩界（修两位数名次被截成「1…」），
     // 名称列右界收到右邻列文本左缘（修长队名压到「赛」列数字上）。
+    const strong = data.strongCol ?? row.length - 1;
     const fonts = row.map((_, ci) =>
-      ci === row.length - 1 ? [800, 28] : nameCols.has(ci) ? [700, 26] : [400, 24],
+      ci === strong ? [800, 28] : nameCols.has(ci) ? [700, 26] : [400, 24],
     );
     const tw = row.map((cell, ci) => {
       font(ctx, fonts[ci][0], fonts[ci][1]);
@@ -939,10 +950,9 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
     });
     row.forEach((cell, ci) => {
       ctx.textAlign = nameCols.has(ci) ? "left" : "center";
-      const last = ci === row.length - 1;
       font(ctx, fonts[ci][0], fonts[ci][1]);
       ctx.fillStyle =
-        zc && (ci === 0 || nameCols.has(ci)) ? zc : last ? INK : ink(0.85);
+        zc && (ci === 0 || nameCols.has(ci)) ? zc : ci === strong ? INK : ink(0.85);
       if (nameCols.has(ci)) {
         // 名称列：整名优先（字号缩档），极端长名才省略号（用户反馈 Sergej Milinković-Savić 类）
         ctx.fillText(fitNameCell(ctx, cell, cellMax[ci], 700, 26), cellX(ci), ry + rowH / 2 + 1);
@@ -950,6 +960,28 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
         ctx.fillText(fitText(ctx, cell, cellMax[ci]), cellX(ci), ry + rowH / 2 + 1);
       }
     });
+    // 近 5 场圆点：按轮次正序从左往右（最近一场在最右），列内居中；一场未完画「—」
+    if (data.formCol != null) {
+      const form = data.forms?.[it.idx] ?? [];
+      if (form.length === 0) {
+        font(ctx, 400, 24);
+        ctx.fillStyle = ink(0.4);
+        ctx.textAlign = "center";
+        ctx.fillText("—", cellX(data.formCol), ry + rowH / 2 + 1);
+      } else {
+        const d = 12;
+        const gap = 4;
+        const total = form.length * d + (form.length - 1) * gap;
+        let dx = colLeft[data.formCol] + (colWs[data.formCol] - total) / 2;
+        for (const f of form) {
+          ctx.beginPath();
+          ctx.arc(dx + d / 2, ry + rowH / 2, d / 2, 0, Math.PI * 2);
+          ctx.fillStyle = FORM_DOT_COLORS[f];
+          ctx.fill();
+          dx += d + gap;
+        }
+      }
+    }
     ry += rowH;
     // 行底 1px 细线（无斑马纹）
     ctx.fillStyle = BORDER;

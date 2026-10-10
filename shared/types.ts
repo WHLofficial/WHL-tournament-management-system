@@ -914,6 +914,9 @@ export interface MatchEventDTO {
 }
 
 // ---------- 积分榜（管理端与公开页共用） ----------
+/** 近 5 场状态：W/D/L，按轮次正序（左边最早、最近一场在最右）；不足 5 场就是实际场次 */
+export type FormLetter = "W" | "D" | "L";
+
 export interface StandingRowDTO {
   entryId: number;
   teamName: string;
@@ -932,6 +935,8 @@ export interface StandingRowDTO {
   pointsDeducted: number;
   /** 从上游阶段带入的分（已含在 pts 里）；不带入时为 0 */
   carriedPts: number;
+  /** 近 5 场状态（本赛事全部已完赛场次，含小组赛/淘汰赛，按轮次正序）；一场未完时为空 */
+  form?: FormLetter[];
   rank: number;
 }
 

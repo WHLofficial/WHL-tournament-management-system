@@ -1203,6 +1203,20 @@ async function fetchTeamNamesForMatches(
 // 两段式：第一段只取排序键与场次 id（三表），第二段只为最终 8 场补队名。
 // 原七表 join 版 LIMIT 8 在 join 之后才生效 ⇒ 149 场待打比赛每场都付 7 张表（实测 1192 行）。
 // home/away_entry_id 的 IS NOT NULL 顶掉原来靠 INNER JOIN 隐式完成的「队伍待定」排除。
+// 每个赛事最多出现一轮（用户反馈）：同一赛事只保留排序最靠前的那一轮（stage_order+round），
+// 更晚轮次整轮丢弃，剩下的名额让给别的赛事；因此 SQL 先多取若干行，筛选在 JS 里做。
+// 窗口不能收太紧：被锁赛事后面几轮的待打行照样占窗口预算，首轮只剩零星补赛时会把窗口耗光，
+// 列表就不足 8 条（120 行 × 3 表的小列，比原来的 40 行只多回几十行；要彻底消除得在 SQL 里
+// 按赛事取首个待打轮，为此上窗口函数不值当）。
+const UPCOMING_SCAN = 120;
+const UPCOMING_LIMIT = 8;
+
+type UpcomingRow = {
+  tournament_id: number; tournament_name: string; tournament_status: string;
+  match_id: number; stage_kind: "elim" | "round_robin" | "group";
+  stage_order: number; round: number;
+};
+
 export async function buildUpcomingList(db: D1Database): Promise<UpcomingDTO[]> {
   const rows = await db.prepare(
     `SELECT t.id AS tournament_id, t.name AS tournament_name, t.status AS tournament_status,
@@ -1215,13 +1229,19 @@ export async function buildUpcomingList(db: D1Database): Promise<UpcomingDTO[]> 
        AND (m.note IS NULL OR m.note != '轮空')
      ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END,
        t.id, s.sort_order, m.round, m.slot
-     LIMIT 8`
-  ).all<{
-    tournament_id: number; tournament_name: string; tournament_status: string;
-    match_id: number; stage_kind: "elim" | "round_robin" | "group";
-    stage_order: number; round: number;
-  }>();
-  const picked = rows.results ?? [];
+     LIMIT ${UPCOMING_SCAN}`
+  ).all<UpcomingRow>();
+  // 同一赛事锁定首个 (stage_order, round)，之后只收同轮场次，凑满 8 场即停
+  const lockedRound = new Map<number, string>();
+  const picked: UpcomingRow[] = [];
+  for (const r of rows.results ?? []) {
+    const roundKey = `${r.stage_order}:${r.round}`;
+    const locked = lockedRound.get(r.tournament_id);
+    if (locked === undefined) lockedRound.set(r.tournament_id, roundKey);
+    else if (locked !== roundKey) continue;
+    picked.push(r);
+    if (picked.length === UPCOMING_LIMIT) break;
+  }
   const names = await fetchTeamNamesForMatches(db, picked.map((r) => r.match_id));
   return picked.map((r) => ({
     tournamentId: r.tournament_id,

@@ -4,6 +4,7 @@ import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { drawTableCard } from "../lib/share";
 import type {
+  FormLetter,
   StageStandingDTO,
   StandingRowDTO,
   RankZone,
@@ -66,8 +67,11 @@ export function StandingsTables({
         const allRows = st.groups.flatMap((g) => g.rows.map((r) => ({ g, r })));
         const multi = st.groups.length > 1;
         // 分组榜分享卡每组独立小节（组标+自带表头），不再用「组」列
-        const columns = ["#", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分"];
-        const colWidths = [0.6, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1];
+        // 末列「近 5 场」在表格里是圆点（FormCell），分享卡里由 drawTableCard 按 formCol 画
+        const columns = ["#", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分", "近 5 场"];
+        const colWidths = [0.6, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1, 1.6];
+        const ptsCol = 9;
+        const formCol = 10;
         const rowStr = (r: (typeof allRows)[number]["r"]) => [
           String(r.rank),
           r.teamName,
@@ -79,8 +83,10 @@ export function StandingsTables({
           String(r.goalsAgainst),
           String(r.goalsFor - r.goalsAgainst),
           String(r.pts),
+          "",
         ];
         const tableRows = allRows.map(({ r }) => rowStr(r));
+        const forms = allRows.map(({ r }) => r.form ?? []);
         const groupBlocks = st.groups.map((g) => ({
           label: `${g.name || "-"} 组`,
           rows: g.rows.map(rowStr),
@@ -143,6 +149,10 @@ export function StandingsTables({
                     columns,
                     colWidths,
                     nameCol: 1,
+                    // 末列画近 5 场圆点；积分列保持末列级的加粗强调
+                    formCol,
+                    forms,
+                    strongCol: ptsCol,
                     rows: multi ? undefined : tableRows,
                     groups: multi ? groupBlocks : undefined,
                     zones: stageZoneColors(zoneRowColors, zoneLegendForStage, zoneDividers),
@@ -170,6 +180,7 @@ export function StandingsTables({
         * 积分：胜 3、平 1、负 0；平局后点球决胜的点球胜者记 2 分、负者记 1 分。
         {standings.some((s) => s.carry) &&
           "带入分已按上游榜上的实际积分乘倍数计入积分列（所以上游扣分会带下来）；被扣分只在本阶段生效。"}
+        {" 近 5 场圆点：绿=胜、灰=平、红=负，统计本赛事全部已完赛场次，最近一场在最右。"}
         {tiebreakerNote(tiebreakers)}
       </p>
     </>
@@ -199,6 +210,32 @@ function PtsCell({ r }: { r: StandingRowDTO }) {
           −{r.pointsDeducted}
         </span>
       )}
+    </td>
+  );
+}
+
+// 近 5 场状态：圆点按轮次正序（左边最早），颜色复用 H2H 的 .fdot-W/D/L；一场未完显示「—」
+const FORM_LABEL: Record<FormLetter, string> = { W: "胜", D: "平", L: "负" };
+function FormCell({ r }: { r: StandingRowDTO }) {
+  const form = r.form ?? [];
+  if (form.length === 0) {
+    return (
+      <td className="form-col">
+        <span className="muted">—</span>
+      </td>
+    );
+  }
+  return (
+    <td className="form-col">
+      <span className="form-dots">
+        {form.map((f, i) => (
+          <i
+            key={i}
+            className={`fdot-mini fdot-${f}`}
+            title={`近 ${form.length - i} 场：${FORM_LABEL[f]}`}
+          />
+        ))}
+      </span>
     </td>
   );
 }
@@ -246,6 +283,7 @@ function RankZoneTable({
           <td className="num">{r.goalsAgainst}</td>
           <td className="num">{r.goalsFor - r.goalsAgainst}</td>
           <PtsCell r={r} />
+          <FormCell r={r} />
         </tr>,
       );
     } else {
@@ -266,6 +304,7 @@ function RankZoneTable({
           <td className="num">{r.goalsAgainst}</td>
           <td className="num">{r.goalsFor - r.goalsAgainst}</td>
           <PtsCell r={r} />
+          <FormCell r={r} />
         </tr>,
       );
       // 分隔线跟随名次区间末行：范围超出本表行数时画在最后一行之后
@@ -273,7 +312,7 @@ function RankZoneTable({
         if (z.to === r.rank || (isLast && z.to > r.rank)) {
           bodyRows.push(
             <tr key={`${r.entryId}-div-${z.id}`} className="standings-divider">
-              <td colSpan={10}>
+              <td colSpan={11}>
                 <div className="standings-divider-line" style={{ borderTopColor: z.color }}>
                   <span className="standings-divider-label" style={{ background: z.color }}>
                     {z.name}
@@ -303,13 +342,16 @@ function RankZoneTable({
           <th className="num">
             积分<span className="pen-hint">*</span>
           </th>
+          <th className="form-col" title="近 5 场：本赛事全部已完赛场次，绿=胜、灰=平、红=负，最近一场在最右">
+            近 5 场
+          </th>
         </tr>
       </thead>
       <tbody>{bodyRows}</tbody>
       {zoneStyle === "strip" && applicable.length > 0 && (
         <tfoot>
           <tr>
-            <td colSpan={10}>
+            <td colSpan={11}>
               <div className="standings-legend">
                 {applicable.map((z) => (
                   <span key={z.id}>
