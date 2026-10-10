@@ -6,7 +6,11 @@ import type { FormLetter } from "../../shared/types";
 // 数据契约不动：drawXxxCard 签名、调用方传参、字段集合全不变（coverUrl 保留字段但头部不再用封面）。
 // 队徽缺失时按队名 hash 取色画色块+首字（与 TeamLogo 组件同款色板）。
 
-export const CARD_W = 800;
+// 画布宽度：分享面板按定宽展示（max-width: 100%），卡越宽内容被等比缩得越小，
+// 所以宽度不随列内容涨，要加宽列就从别列挪（见 StandingsTab 的 colWidths）。
+// 890 是按列内容反推出来的落点：数字列一律按「24px 字号下 3 位数也放得下」定宽（≈54px，
+// 两位数时相邻数字之间有 ~25px 空档，不再密密麻麻），球队列同时留够 6 个汉字满字号的宽度。
+export const CARD_W = 890;
 
 // V7 色板：纸底 + 墨字 + 橙强调
 const INK = "#22211d";
@@ -951,7 +955,10 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       font(ctx, fonts[ci][0], fonts[ci][1]);
       return ctx.measureText(cell).width;
     });
-    const GAP = 10;
+    // 相邻数字文本的最小间距（列里文字都居中，这个值直接决定两块数字之间的留白）：
+    // 预算 = 2×min(左距, 右距)，两侧各让 GAP。12 是「3 位数之间也不贴住」的下限：
+    // 数字列按 3 位数定宽（≈54px）后，两位数的实际空档 ≈25px，GAP 只在 3 位数的行上生效
+    const GAP = 12;
     const cellMax = row.map((_, ci) => colWs[ci] - 16);
     const nameDrawn = new Map<number, number>();
     nameCols.forEach((ci) => {
@@ -960,7 +967,9 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
         ci + 1 < row.length && !nameCols.has(ci + 1)
           ? colLeft[ci + 1] + colWs[ci + 1] / 2 - tw[ci + 1] / 2 - NAME_GAP
           : x + w - 8;
-      cellMax[ci] = Math.max(colWs[ci] - padL(ci) - NAME_EDGE_PAD, rightEdge - start);
+      // 两个都是「不许超过」的上界（本列右缘、与右邻数字文本的 NAME_GAP 间距），取小的那个：
+      // 用 max 会让长队名吃掉数字列预留的间距，把右邻两位数字挤成「2…」（800 宽下暴露）
+      cellMax[ci] = Math.max(0, Math.min(colWs[ci] - padL(ci) - NAME_EDGE_PAD, rightEdge - start));
       // 名称实际画出的宽度：fitNameCell 会缩字号/省略号，拿未缩的 tw 当宽度会把右邻数字列的
       // 预算算窄，一位数被截成「5…」（NAME_GAP 放宽后暴露；fitNameCell 退出时 ctx.font 即实际字号）
       nameDrawn.set(ci, ctx.measureText(fitNameCell(ctx, row[ci], cellMax[ci], 700, 26)).width);
