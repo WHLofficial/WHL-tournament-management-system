@@ -69,9 +69,12 @@ export function StandingsTables({
         // 分组榜分享卡每组独立小节（组标+自带表头），不再用「组」列
         // 末列「近 5 场」在表格里是圆点（FormCell），分享卡里由 drawTableCard 按 formCol 画
         const columns = ["#", "球队", "赛", "胜", "平", "负", "进", "失", "净", "积分", "近 5 场"];
-        const colWidths = [0.6, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1, 1.6];
+        // 权重只作用于分享卡（网页表格列宽走 CSS）：球队列留出队徽位并加宽，
+        // 数字列略收一点让一栏数字抱得更紧，近 5 场列不动（圆点 76px + 右缘留白刚够）
+        const colWidths = [0.6, 3.1, 0.85, 0.85, 0.85, 0.85, 0.85, 0.85, 0.85, 1.05, 1.6];
         const ptsCol = 9;
         const formCol = 10;
+        const teamCol = 1;
         const rowStr = (r: (typeof allRows)[number]["r"]) => [
           String(r.rank),
           r.teamName,
@@ -87,6 +90,7 @@ export function StandingsTables({
         ];
         const tableRows = allRows.map(({ r }) => rowStr(r));
         const forms = allRows.map(({ r }) => r.form ?? []);
+        const logos = allRows.map(({ r }) => r.teamLogoUrl);
         const groupBlocks = st.groups.map((g) => ({
           label: `${g.name || "-"} 组`,
           rows: g.rows.map(rowStr),
@@ -148,7 +152,10 @@ export function StandingsTables({
                     coverUrl: share.coverUrl ?? null,
                     columns,
                     colWidths,
-                    nameCol: 1,
+                    nameCol: teamCol,
+                    // 队名左侧先画队徽（缺徽走队名 hash 色块 + 首字）
+                    logoCol: teamCol,
+                    logos,
                     // 末列画近 5 场圆点；积分列保持末列级的加粗强调
                     formCol,
                     forms,

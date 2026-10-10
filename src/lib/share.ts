@@ -243,6 +243,10 @@ export interface TableCardData {
   forms?: FormLetter[][];
   /** 加粗强调列序号（默认最后一列，如积分） */
   strongCol?: number;
+  /** 队徽列序号（默认第一个对齐名称列，如积分榜的「球队」列）：该列文本左侧先画队徽 */
+  logoCol?: number;
+  /** 队徽 URL，与 rows / 分组扁平拼接同序；缺项按队名 hash 画色块 + 首字 */
+  logos?: (string | null)[];
 }
 
 // 单场卡事件链条几何常量（样稿 ×~2.1）：事件行 63、助攻行 42、节点间 29
@@ -315,8 +319,10 @@ async function drawTeamBadge(
   x: number,
   y: number,
   size: number,
+  // 表格卡一次要画几十行队徽，图片由调用方并发预载后传进来（不传则自己按 URL 加载）
+  preloaded?: HTMLImageElement | null,
 ): Promise<void> {
-  const img = team.logoUrl ? await loadImg(team.logoUrl) : null;
+  const img = preloaded !== undefined ? preloaded : team.logoUrl ? await loadImg(team.logoUrl) : null;
   roundRectPath(ctx, x, y, size, size, Math.round(size * 0.22));
   ctx.save();
   ctx.clip();
@@ -883,6 +889,27 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
   // 近 5 场圆点列：圆点锚在列右缘（8 = 本函数里文字预算用的右界 x + w - 8），
   // 表头也跟着右对齐 —— 缺场次的行从左边参差，最近一场始终上下对齐
   const formRight = data.formCol == null ? 0 : colLeft[data.formCol] + colWs[data.formCol] - 8;
+  // 队徽列（如积分榜「球队」列）：徽标占掉列内一段宽度，名称列文本起点与预算同步右移
+  const logoUrls = data.logos ?? [];
+  const logoCol = data.logos ? data.logoCol ?? [...nameCols][0] ?? null : null;
+  const BADGE = 32;
+  const BADGE_GAP = 10;
+  // 队名与右邻列（数字列）的最小间距：比数字列之间的 GAP 更宽，长队名不贴着下一列数字（用户要的呼吸感）
+  const NAME_GAP = 20;
+  // 名称列右界还要收回本列内这么多：长名顶满时也不越到本列右缘，留出列与列之间的呼吸
+  const NAME_EDGE_PAD = 6;
+  const padL = (ci: number) => 16 + (ci === logoCol ? BADGE + BADGE_GAP : 0);
+  const nameX = (ci: number) => cellX(ci) + (ci === logoCol ? BADGE + BADGE_GAP : 0);
+  // 队徽并发预载：串行 await 会让每行各付一次图片往返（12 行 = 12 次）
+  const logoImgs =
+    logoCol == null
+      ? []
+      : await Promise.all(
+          shown.map((_, i) => {
+            const u = logoUrls[i];
+            return u ? loadImg(u) : Promise.resolve(null);
+          }),
+        );
 
   ctx.textBaseline = "middle";
   let ry = rowsStart;
@@ -926,13 +953,17 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
     });
     const GAP = 10;
     const cellMax = row.map((_, ci) => colWs[ci] - 16);
+    const nameDrawn = new Map<number, number>();
     nameCols.forEach((ci) => {
-      const start = colLeft[ci] + 16;
+      const start = colLeft[ci] + padL(ci);
       const rightEdge =
         ci + 1 < row.length && !nameCols.has(ci + 1)
-          ? colLeft[ci + 1] + colWs[ci + 1] / 2 - tw[ci + 1] / 2 - GAP
+          ? colLeft[ci + 1] + colWs[ci + 1] / 2 - tw[ci + 1] / 2 - NAME_GAP
           : x + w - 8;
-      cellMax[ci] = Math.max(colWs[ci] - 16, rightEdge - start);
+      cellMax[ci] = Math.max(colWs[ci] - padL(ci) - NAME_EDGE_PAD, rightEdge - start);
+      // 名称实际画出的宽度：fitNameCell 会缩字号/省略号，拿未缩的 tw 当宽度会把右邻数字列的
+      // 预算算窄，一位数被截成「5…」（NAME_GAP 放宽后暴露；fitNameCell 退出时 ctx.font 即实际字号）
+      nameDrawn.set(ci, ctx.measureText(fitNameCell(ctx, row[ci], cellMax[ci], 700, 26)).width);
     });
     row.forEach((_, ci) => {
       if (nameCols.has(ci)) return;
@@ -941,7 +972,7 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
         ci === 0
           ? x + 2
           : nameCols.has(ci - 1)
-            ? colLeft[ci - 1] + 16 + Math.min(tw[ci - 1], cellMax[ci - 1]) + GAP
+            ? colLeft[ci - 1] + padL(ci - 1) + (nameDrawn.get(ci - 1) ?? 0) + NAME_GAP
             : colLeft[ci - 1] + colWs[ci - 1] / 2 + tw[ci - 1] / 2 + GAP;
       const edgeR =
         ci === row.length - 1
@@ -951,6 +982,17 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
             : colLeft[ci + 1] + colWs[ci + 1] / 2 - tw[ci + 1] / 2 - GAP;
       cellMax[ci] = Math.max(12, 2 * Math.min(c - edgeL, edgeR - c));
     });
+    // 队徽：画在名称列文本左侧，行高 64 内垂直居中（缺徽走队名 hash 色块 + 首字）
+    if (logoCol != null && logoCol < row.length) {
+      await drawTeamBadge(
+        ctx,
+        { name: row[logoCol], logoUrl: logoUrls[it.idx] ?? null },
+        colLeft[logoCol] + 16,
+        ry + (rowH - BADGE) / 2,
+        BADGE,
+        logoImgs[it.idx] ?? null,
+      );
+    }
     row.forEach((cell, ci) => {
       ctx.textAlign = nameCols.has(ci) ? "left" : "center";
       font(ctx, fonts[ci][0], fonts[ci][1]);
@@ -958,7 +1000,7 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
         zc && (ci === 0 || nameCols.has(ci)) ? zc : ci === strong ? INK : ink(0.85);
       if (nameCols.has(ci)) {
         // 名称列：整名优先（字号缩档），极端长名才省略号（用户反馈 Sergej Milinković-Savić 类）
-        ctx.fillText(fitNameCell(ctx, cell, cellMax[ci], 700, 26), cellX(ci), ry + rowH / 2 + 1);
+        ctx.fillText(fitNameCell(ctx, cell, cellMax[ci], 700, 26), nameX(ci), ry + rowH / 2 + 1);
       } else {
         ctx.fillText(fitText(ctx, cell, cellMax[ci]), cellX(ci), ry + rowH / 2 + 1);
       }
