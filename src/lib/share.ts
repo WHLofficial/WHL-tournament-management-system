@@ -880,6 +880,9 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
   const rawName = data.nameCol ?? 1;
   const nameCols = new Set(Array.isArray(rawName) ? rawName : [rawName]);
   const cellX = (ci: number) => colLeft[ci] + (nameCols.has(ci) ? 16 : colWs[ci] / 2);
+  // 近 5 场圆点列：圆点锚在列右缘（8 = 本函数里文字预算用的右界 x + w - 8），
+  // 表头也跟着右对齐 —— 缺场次的行从左边参差，最近一场始终上下对齐
+  const formRight = data.formCol == null ? 0 : colLeft[data.formCol] + colWs[data.formCol] - 8;
 
   ctx.textBaseline = "middle";
   let ry = rowsStart;
@@ -895,8 +898,8 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
       ctx.fillStyle = ink(0.6);
       ctx.textBaseline = "middle";
       data.columns.forEach((c, i) => {
-        ctx.textAlign = nameCols.has(i) ? "left" : "center";
-        ctx.fillText(c, cellX(i), ry + 18);
+        ctx.textAlign = nameCols.has(i) ? "left" : i === data.formCol ? "right" : "center";
+        ctx.fillText(c, i === data.formCol ? formRight : cellX(i), ry + 18);
       });
       ry += GROUP_HEADER_H;
       continue;
@@ -960,19 +963,20 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
         ctx.fillText(fitText(ctx, cell, cellMax[ci]), cellX(ci), ry + rowH / 2 + 1);
       }
     });
-    // 近 5 场圆点：按轮次正序从左往右（最近一场在最右），列内居中；一场未完画「—」
+    // 近 5 场圆点：按轮次正序从左往右（最近一场在最右），整组锚在列右缘 —— 场次少的行
+    // 左边参差、最近一场上下对齐（居中会左右都不齐，用户反馈改右对齐）；一场未完画「—」
     if (data.formCol != null) {
       const form = data.forms?.[it.idx] ?? [];
       if (form.length === 0) {
         font(ctx, 400, 24);
         ctx.fillStyle = ink(0.4);
-        ctx.textAlign = "center";
-        ctx.fillText("—", cellX(data.formCol), ry + rowH / 2 + 1);
+        ctx.textAlign = "right";
+        ctx.fillText("—", formRight, ry + rowH / 2 + 1);
       } else {
         const d = 12;
         const gap = 4;
         const total = form.length * d + (form.length - 1) * gap;
-        let dx = colLeft[data.formCol] + (colWs[data.formCol] - total) / 2;
+        let dx = formRight - total;
         for (const f of form) {
           ctx.beginPath();
           ctx.arc(dx + d / 2, ry + rowH / 2, d / 2, 0, Math.PI * 2);

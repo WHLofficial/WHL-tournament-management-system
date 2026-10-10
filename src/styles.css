@@ -933,8 +933,9 @@ button.btn-ghost:hover:not(:disabled) {
 .standings-table .num { text-align: center; font-family: var(--mono); font-variant-numeric: tabular-nums; width: 2.4em; }
 .standings-table .team-col { text-align: left; min-width: 7em; }
 .standings-table .pts { font-weight: 700; }
-/* 近 5 场列：表格里是圆点，窄屏整列隐藏（见下面的 640px 规则） */
-.standings-table .form-col { text-align: center; white-space: nowrap; }
+/* 近 5 场列：表格里是圆点，整组贴列右缘（场次少的行从左边参差、最近一场上下对齐）；
+   居中会左右都不齐，窄屏整列隐藏（见下面的 640px 规则） */
+.standings-table .form-col { text-align: right; white-space: nowrap; }
 .standings-table tbody tr:nth-child(2n) { background: #fafcf9; }
 .pen-hint { font-weight: 400; font-size: 11px; }
 .standings-note { font-size: 12px; margin-top: 6px; }
