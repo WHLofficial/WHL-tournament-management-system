@@ -29,6 +29,7 @@ import { fetchMatchLineup, LineupError, parseSlotsJson } from "../lib/lineup";
 import { FORMS } from "../../shared/tactics";
 import type { StoredLineupSlot } from "../../shared/types";
 import { pubCache } from "../lib/cache";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 // 公开页接口：无登录墙，游客可看。draft（草稿）赛事不对外——列表不含、详情按 404 处理。
 const app = new Hono<AppEnv>();
@@ -383,7 +384,7 @@ async function buildElimPlaceholders(
     let ctxLoaded = false;
     let ctx: Awaited<ReturnType<typeof loadQualifierContext>> | null = null;
     for (const r of rows) {
-      if ((r.note ?? "") === "轮空") continue;
+      if ((r.note ?? "") === BYE_NOTE) continue;
       if (r.home_entry_id != null && r.away_entry_id != null) continue;
       const ph: { home: string | null; away: string | null } = { home: null, away: null };
       if (r.round === 1) {
@@ -795,7 +796,7 @@ const PAIR_COLS = `
 // 两个 IS NOT NULL 守卫是必需的：PAIR_FROM 用 INNER JOIN entry，本来就把队伍待定的行丢掉；
 // 换成 `IN (子查询)` 后 `NULL IN (...)` 为 NULL 不为真，但 OR 另一支可能为真 ⇒ 必须显式排除。
 export const H2H_FORM_SQL = `${PAIR_COLS} ${PAIR_FROM}
-    WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
+    WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '${BYE_NOTE}') AND m.id != ?
       AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
       AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
            OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
@@ -803,7 +804,7 @@ export const H2H_FORM_SQL = `${PAIR_COLS} ${PAIR_FROM}
 
 // 两队之间的交锋记录：两个「主客对」的 OR，两支各自都是 IN 子查询。
 export const H2H_MEETINGS_SQL = `${PAIR_COLS} ${PAIR_FROM}
-       WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '轮空') AND m.id != ?
+       WHERE m.status = 'finished' AND (m.note IS NULL OR m.note != '${BYE_NOTE}') AND m.id != ?
          AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
          AND ((m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
                AND m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
@@ -845,7 +846,7 @@ app.get("/tournaments/:id/matches/:mid/h2h", pubCache(60), async (c) => {
       away_logo: string | null;
     }>();
   if (!m) return c.json({ message: "比赛不存在" }, 404);
-  if (m.home_tid == null || m.away_tid == null || m.note === "轮空") return c.json(H2H_EMPTY);
+  if (m.home_tid == null || m.away_tid == null || m.note === BYE_NOTE) return c.json(H2H_EMPTY);
 
   const [meetingsRes, homeFormRes, awayFormRes, stageList] = await Promise.all([
     c.env.DB.prepare(H2H_MEETINGS_SQL)
@@ -1164,7 +1165,7 @@ app.get("/tournaments/:id/matches/:mid/lineup-stats", pubCache(60), async (c) =>
       away_name: string | null;
     }>();
   if (!m) return c.json({ message: "比赛不存在" }, 404);
-  if (m.home_tid == null || m.away_tid == null || m.note === "轮空")
+  if (m.home_tid == null || m.away_tid == null || m.note === BYE_NOTE)
     return c.json({ home: null, away: null } satisfies LineupStatsDTO);
 
   const [home, away] = await Promise.all([
@@ -1226,7 +1227,7 @@ export async function buildUpcomingList(db: D1Database): Promise<UpcomingDTO[]> 
      JOIN tournament t ON t.id = s.tournament_id
      WHERE t.status != 'draft' AND m.status = 'pending'
        AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
-       AND (m.note IS NULL OR m.note != '轮空')
+       AND (m.note IS NULL OR m.note != '${BYE_NOTE}')
      ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END,
        t.id, s.sort_order, m.round, m.slot
      LIMIT ${UPCOMING_SCAN}`

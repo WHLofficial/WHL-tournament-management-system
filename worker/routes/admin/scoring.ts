@@ -8,6 +8,7 @@ import { getSuspensionConfig } from "../../lib/suspension";
 import { fetchMatchLineup, LineupError } from "../../lib/lineup";
 import { auditStmt } from "../../lib/audit";
 import type { MatchEventDTO, MatchEventType, MatchLineupDTO } from "../../../shared/types";
+import { BYE_NOTE } from "../../../shared/matchNotes";
 
 const app = new Hono<AppEnv>();
 // 比分录入 ≡ 旧 requireAdmin（tour.match.manage，行为等价）
@@ -128,7 +129,7 @@ app.post("/:id/start", async (c) => {
     const ctx = await loadMatchCtx(c.env.DB, id);
     const m = ctx.m;
     await assertBracketReady(c.env.DB, ctx);
-    if (m.note === "轮空") return fail(c, 400, "轮空场无需开赛");
+    if (m.note === BYE_NOTE) return fail(c, 400, "轮空场无需开赛");
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法开赛");
     if (m.status !== "pending") return fail(c, 400, "仅待开打的比赛可以开赛");
@@ -161,7 +162,7 @@ app.post("/:id/finish", async (c) => {
     const ctx = await loadMatchCtx(c.env.DB, id);
     const m = ctx.m;
     await assertBracketReady(c.env.DB, ctx);
-    if (m.note === "轮空") return fail(c, 400, "轮空场无需报分");
+    if (m.note === BYE_NOTE) return fail(c, 400, "轮空场无需报分");
     if (m.home_entry_id == null || m.away_entry_id == null)
       return fail(c, 400, "对阵双方尚未确定，无法报分");
 

@@ -8,6 +8,7 @@ import type {
   StageDTO,
   TournamentDetailDTO,
 } from "../../shared/types";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 /** 同一轮同一场次的多回合行 */
 export interface SlotGroup {
@@ -104,7 +105,7 @@ export function pendingSeatLabel(
 /** 比分文案：两回合制「首回合 x:y · 次回合 y:x · 总比分 A:B」（次回合按存储的主客直接展示） */
 export function slotScoreLabel(legs: MatchDTO[]): string {
   const leg1 = legs.find((l) => l.leg === 1) ?? legs[0];
-  if (!leg1 || leg1.note === "轮空") return "—";
+  if (!leg1 || leg1.note === BYE_NOTE) return "—";
   const two = legs.find((l) => l.leg === 2);
   const dash = (v: number | null) => (v == null ? "-" : String(v));
   if (!two) {
@@ -236,7 +237,7 @@ export default function KnockoutStageView({
 
   const byeAdvanced = (g: SlotGroup) => {
     const leg = g.legs[0];
-    if (!leg || leg.note !== "轮空" || leg.winnerEntryId == null) return false;
+    if (!leg || leg.note !== BYE_NOTE || leg.winnerEntryId == null) return false;
     return matches.some(
       (m) =>
         m.round > g.round &&

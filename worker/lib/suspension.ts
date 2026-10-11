@@ -8,6 +8,7 @@
 import type { SuspensionConfig, SuspensionStatusDTO } from "../../shared/types";
 import { buildToplists, type Toplists } from "./topstats";
 import { listActiveInjuryPlayerIds } from "./injury";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 export const DEFAULT_SUSPENSION: SuspensionConfig = {
   redBan: 2,
@@ -211,7 +212,7 @@ export async function computeSuspensions(
   // 每支参赛队的比赛序列（排除轮空场——没打的比赛不消耗停赛）
   const byEntry = new Map<number, MatchSeqRow[]>();
   for (const m of matches.results ?? []) {
-    if (m.note === "轮空") continue;
+    if (m.note === BYE_NOTE) continue;
     for (const eid of [m.home_entry_id, m.away_entry_id]) {
       if (eid == null) continue;
       const list = byEntry.get(eid);

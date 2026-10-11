@@ -6,6 +6,7 @@ import type {
   TiebreakerKey,
 } from "../../shared/types";
 import { mediaUrl } from "./media";
+import { BYE_NOTE } from "../../shared/matchNotes";
 // 积分重算 + 淘汰晋级器（TECH_DESIGN §6：全量重算而非增量累加，
 // 报分/改分/改判走同一条路径，永远收敛到正确结果）
 // 两个构建器都只读 + 返回 D1PreparedStatement[]，由调用方与报分写入合并进
@@ -652,7 +653,7 @@ export async function readTournamentForm(
        JOIN stage s ON s.id = m.stage_id
        WHERE s.tournament_id = ? AND m.status = 'finished'
          AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
-         AND COALESCE(m.note, '') != '轮空'
+         AND COALESCE(m.note, '') != '${BYE_NOTE}'
        ORDER BY s.sort_order DESC, s.id DESC, m.round DESC,
                 COALESCE(m.leg, 0) DESC, m.slot DESC, m.id DESC`
     )
@@ -766,7 +767,7 @@ export async function readStandings(
     .prepare(
       `SELECT home_entry_id, away_entry_id, score_home, score_away, pen_home, pen_away, walkover_side
        FROM match WHERE stage_id = ? AND status = 'finished'
-         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '轮空'`
+         AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL AND COALESCE(note, '') != '${BYE_NOTE}'`
     )
     .bind(stageId)
     .all<FinishedMatchRow>();

@@ -4,6 +4,7 @@
 // 差异只在「首轮从 entryCount 推 vs 从已有首轮场次数 N 推」——两者等价：size = 2N。
 
 import type { PlanMatch } from "./seeding";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 export type ManualCfg = { legs: 1 | 2; finalLegs?: 1 | 2; thirdPlace: boolean };
 
@@ -84,7 +85,7 @@ export function slotRows(
   legs: 1 | 2
 ): SlotRowValue[] {
   if (home != null && away == null) {
-    return [{ leg: null, home, away: null, winner: home, note: "轮空" }];
+    return [{ leg: null, home, away: null, winner: home, note: BYE_NOTE }];
   }
   if (home == null && away == null) {
     return [{ leg: null, home: null, away: null, winner: null, note: null }];

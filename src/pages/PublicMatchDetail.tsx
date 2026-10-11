@@ -16,6 +16,7 @@ import type {
   MatchLineupDTO,
   PublicAbsenceDTO,
 } from "../../shared/types";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 const STAGE_TITLE: Record<string, string> = {
   elim: "淘汰赛",
@@ -128,7 +129,7 @@ export default function PublicMatchDetail() {
 
   // 提交阵容：开赛（live/finished）后公开接口才有数据，pending 不拉
   useEffect(() => {
-    if (!m || m.status === "pending" || m.note === "轮空") {
+    if (!m || m.status === "pending" || m.note === BYE_NOTE) {
       setLineup(null);
       setLineupErr(null);
       return;
@@ -228,10 +229,10 @@ export default function PublicMatchDetail() {
               {m.walkoverSide && <span className="m-badge ms-wo">弃权</span>}
               {m.rescored && <span className="m-badge ms-rescored">比分经改判</span>}
             </div>
-            {m.walkoverSide && m.note && m.note !== "轮空" && (
+            {m.walkoverSide && m.note && m.note !== BYE_NOTE && (
               <p className="muted md-wo-note">{m.note}</p>
             )}
-            {m.note !== "轮空" && absences && (
+            {m.note !== BYE_NOTE && absences && (
               <AbsenceBlock
                 home={absences.home}
                 away={absences.away}
@@ -242,11 +243,11 @@ export default function PublicMatchDetail() {
             {m.status === "pending" &&
               m.homeEntryId != null &&
               m.awayEntryId != null &&
-              m.note !== "轮空" && (
+              m.note !== BYE_NOTE && (
                 <PreMatchTabs tid={tid} match={m} absences={absences} />
               )}
             <EventTimeline events={m.events ?? []} showAll />
-            {(m.events ?? []).length === 0 && m.note !== "轮空" && m.status !== "pending" && (
+            {(m.events ?? []).length === 0 && m.note !== BYE_NOTE && m.status !== "pending" && (
               <p className="muted md-empty">还没有事件记录。</p>
             )}
             {lineup && (lineup.home || lineup.away) && (

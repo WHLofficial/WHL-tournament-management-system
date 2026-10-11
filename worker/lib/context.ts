@@ -9,6 +9,7 @@ import { getSuspensionConfig } from "./suspension";
 import type { MatchEventType } from "../../shared/types";
 import { elimRoundName } from "../../shared/rounds";
 import { shanghaiDateOf } from "./time";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 export interface FinishedMatch {
   id: number;
@@ -122,7 +123,7 @@ export async function fetchTournamentFinished(
   const res = await db
     .prepare(
       `${FINISHED_COLS} ${FINISHED_FROM}
-       WHERE s.tournament_id = ? AND m.status = 'finished' AND COALESCE(m.note, '') != '轮空'
+       WHERE s.tournament_id = ? AND m.status = 'finished' AND COALESCE(m.note, '') != '${BYE_NOTE}'
        ORDER BY m.finished_at ASC, m.id ASC`
     )
     .bind(tid)

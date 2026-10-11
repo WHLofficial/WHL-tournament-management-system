@@ -22,6 +22,7 @@ import type {
   TournamentDetailDTO,
 } from "../../shared/types";
 import { elimRoundName } from "../../shared/rounds";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   pending: "未开打",
@@ -260,7 +261,7 @@ export default function MatchesTab({
         roundLabel,
         live: list.filter((m) => m.status === "live").length,
         // 未开打 = 还要打的场次；轮空（note='轮空'）虽 status=pending 但不会再打，不计入
-        pending: list.filter((m) => m.status === "pending" && m.note !== "轮空").length,
+        pending: list.filter((m) => m.status === "pending" && m.note !== BYE_NOTE).length,
       };
     })
     .sort(
@@ -401,7 +402,7 @@ function MatchRow({
   panelOpen: boolean;
   togglePanel: () => void;
 }) {
-  const bye = m.note === "轮空";
+  const bye = m.note === BYE_NOTE;
   const [lineupOpen, setLineupOpen] = useState(false);
 
   return (

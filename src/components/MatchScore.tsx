@@ -1,10 +1,11 @@
 import type { MatchDTO } from "../../shared/types";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 // 双回合总比分：同 slot 另一 leg 也完赛后，以本行主队视角返回 [aggHome, aggAway]
 export function computeAgg(m: MatchDTO, roundList: MatchDTO[]): [number, number] | null {
-  if (m.leg == null || m.note === "轮空") return null;
+  if (m.leg == null || m.note === BYE_NOTE) return null;
   const sib = roundList.find(
-    (x) => x.id !== m.id && x.slot === m.slot && x.leg != null && x.note !== "轮空",
+    (x) => x.id !== m.id && x.slot === m.slot && x.leg != null && x.note !== BYE_NOTE,
   );
   if (!sib) return null;
   const leg1 = m.leg === 1 ? m : sib;
@@ -26,7 +27,7 @@ export function computeAgg(m: MatchDTO, roundList: MatchDTO[]): [number, number]
 // 比分格：主比分一行，点球 / 双回合总比分放第二行小字，行宽风格与无点球场次一致
 export function MatchScore({ m, agg }: { m: MatchDTO; agg: [number, number] | null }) {
   const s = (v: number | null) => (v === null ? "-" : String(v));
-  const bye = m.note === "轮空";
+  const bye = m.note === BYE_NOTE;
   const showPen = !bye && m.penHome !== null && m.penAway !== null;
   return (
     <span className="mr-scorebox">

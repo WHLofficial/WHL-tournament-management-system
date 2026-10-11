@@ -8,6 +8,7 @@ import type {
   ProxyMatchSidesDTO,
   TournamentDTO,
 } from "../../shared/types";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 const STAGE_ZH: Record<string, string> = { elim: "淘汰赛", round_robin: "循环赛", group: "小组赛" };
 
@@ -89,7 +90,7 @@ export function ProxyGrantAdmin({ tournaments }: { tournaments: TournamentDTO[] 
     api<{ matches: MatchDTO[] }>(`/api/admin/tournaments/${tid}/matches`)
       .then((b) => {
         if (dead) return;
-        setMatches((b.matches ?? []).filter((m) => m.status === "pending" && m.note !== "轮空"));
+        setMatches((b.matches ?? []).filter((m) => m.status === "pending" && m.note !== BYE_NOTE));
       })
       .catch((e: unknown) => {
         if (dead) return;

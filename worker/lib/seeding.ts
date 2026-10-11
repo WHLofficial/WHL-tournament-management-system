@@ -2,6 +2,8 @@
 // match 计划里 home/away 统一存"bracket 种子位"（1-based，≤ entryCount 为真实队，
 // > entryCount 为补幂用的虚拟位）；循环赛函数直接输出队号（0-based）。
 
+import { BYE_NOTE } from "../../shared/matchNotes";
+
 export interface SeedEntry {
   id: number;
   seed: number;
@@ -68,7 +70,7 @@ export function buildElimPlan(
         slot: i + 1,
         home: isReal(posA) ? seedA : seedB,
         away: isReal(posA) ? seedB : seedA,
-        note: "轮空",
+        note: BYE_NOTE,
       });
       continue;
     }

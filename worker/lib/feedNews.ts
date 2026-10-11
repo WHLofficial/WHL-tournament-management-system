@@ -47,6 +47,7 @@ import {
   walkoverTitle,
   weeklyTitle,
 } from "./copybanks";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 // ---------- 周报（自然周，周一起算，上海口径；本周空回退最近有比赛的一周） ----------
 
@@ -664,7 +665,7 @@ export async function buildFeed(
        JOIN stage s ON s.id = m.stage_id
        JOIN tournament t ON t.id = s.tournament_id
        WHERE t.status != 'draft' AND m.home_entry_id IS NOT NULL AND m.away_entry_id IS NOT NULL
-         AND COALESCE(m.note, '') != '轮空'
+         AND COALESCE(m.note, '') != '${BYE_NOTE}'
          -- 先限定「至少有一场完赛」的轮，缩小 GROUP BY 的输入：规划器原本走 idx_match_stage
          -- 全索引扫描（实测 665 行 → 407 行，−38.8%）。语义等价：某轮若没有任何完赛场次，
          -- COUNT(*) 必然大于 SUM(finished)，HAVING 本就不成立。
@@ -1152,7 +1153,7 @@ export async function buildRoundRecap(
       `SELECT COUNT(*) AS n FROM match
        WHERE stage_id = ? AND round = ?
          AND home_entry_id IS NOT NULL AND away_entry_id IS NOT NULL
-         AND COALESCE(note, '') != '轮空'`,
+         AND COALESCE(note, '') != '${BYE_NOTE}'`,
     )
     .bind(stageId, round)
     .first<{ n: number }>();

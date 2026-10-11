@@ -9,6 +9,7 @@ import type {
 } from "../../shared/types";
 import KnockoutStageView from "../components/KnockoutStageView";
 import DraftSaveBar from "../components/DraftSaveBar";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   pending: "未开打",
@@ -463,7 +464,7 @@ function StageBlock({
                     canDelete={
                       stage.kind !== "elim" &&
                       m.status === "pending" &&
-                      m.note !== "轮空" &&
+                      m.note !== BYE_NOTE &&
                       m.homeEntryId !== null
                     }
                     pendingDelete={draft?.deletes.includes(m.id) ?? false}
@@ -553,7 +554,7 @@ function MatchRow({
       <td>
         {pendingDelete ? (
           <span className="badge badge-wo">待删除</span>
-        ) : match.note === "轮空" ? (
+        ) : match.note === BYE_NOTE ? (
           <span className="badge">轮空</span>
         ) : (
           <>

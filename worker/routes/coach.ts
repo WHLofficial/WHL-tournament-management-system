@@ -27,6 +27,7 @@ import type {
   ProxyBoardResp,
   TacticArchiveDTO,
 } from "../../shared/types";
+import { BYE_NOTE } from "../../shared/matchNotes";
 
 // 教练侧：凭认证码绑定球队 + 我的球队。一账号一队；解绑只走管理员接口。
 // v1.0.0：绑定真源在 auth 库（team_binding），本仓只读派生（AUTH_DB）。
@@ -168,7 +169,7 @@ export const COACH_ME_MATCHES_SQL = `SELECT m.id, m.round, m.leg, m.note,
      LEFT JOIN lineup_proxy_grant g ON g.id = (SELECT MIN(g2.id) FROM lineup_proxy_grant g2
        WHERE g2.match_id = m.id AND g2.team_id = ? AND g2.revoked_at IS NULL)
      WHERE m.status = 'pending' AND t.status != 'draft'
-       AND (m.note IS NULL OR m.note != '轮空')
+       AND (m.note IS NULL OR m.note != '${BYE_NOTE}')
        AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
             OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
      ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot`;
@@ -253,7 +254,7 @@ export const COACH_DEFAULT_TOURNAMENT_SQL = `SELECT t.id AS tournament_id
        LEFT JOIN entry he ON he.id = m.home_entry_id
        LEFT JOIN entry ae ON ae.id = m.away_entry_id
        WHERE m.status = 'pending' AND t.status != 'draft'
-         AND (m.note IS NULL OR m.note != '轮空')
+         AND (m.note IS NULL OR m.note != '${BYE_NOTE}')
          AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
               OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))
        ORDER BY t.created_at DESC, s.sort_order, m.round, m.slot LIMIT 1`;
