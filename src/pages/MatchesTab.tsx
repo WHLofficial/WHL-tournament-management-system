@@ -53,6 +53,21 @@ export const stageTitle: Record<StageDTO["kind"], string> = {
   group: "小组赛",
 };
 
+type RoundChipKey = { key: string; live: number; pending: number };
+
+// 默认选中轮：进行中轮 > 最早未开打轮 > 第一轮（全完赛时回第一轮，保留改动前行为；
+// 公开页兜底取最后一轮，两侧未统一）。
+// 轮空场 status 也是 pending 但不会再打（见 worker/lib/standings.ts:507），故 pending 计数须排除轮空，
+// 否则「首轮有轮空 + 首轮其余场次已完赛」时默认轮会停在已打完的首轮。
+export function defaultRoundKey(chips: RoundChipKey[]): string | null {
+  return (
+    chips.find((c) => c.live > 0)?.key ??
+    chips.find((c) => c.pending > 0)?.key ??
+    chips[0]?.key ??
+    null
+  );
+}
+
 export default function MatchesTab({
   detail,
   reload,
@@ -78,7 +93,7 @@ export default function MatchesTab({
   const [injuriesByTeam, setInjuriesByTeam] = useState<Map<number, InjuryStatusDTO[]>>(
     new Map(),
   );
-  // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 第一个轮）
+  // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 最早未开打轮 > 第一轮）
   const [selRoundRaw, setSelRoundRaw] = useState<string | null>(null);
 
   const entryById = useMemo(
@@ -244,6 +259,8 @@ export default function MatchesTab({
         stageName: stage.name?.trim() || stageTitle[stage.kind],
         roundLabel,
         live: list.filter((m) => m.status === "live").length,
+        // 未开打 = 还要打的场次；轮空（note='轮空'）虽 status=pending 但不会再打，不计入
+        pending: list.filter((m) => m.status === "pending" && m.note !== "轮空").length,
       };
     })
     .sort(
@@ -252,12 +269,12 @@ export default function MatchesTab({
         a.round - b.round,
     );
 
-  // 当前选中轮：点选 > 记住的轮仍存在 > live 轮 > 第一个轮（赛程重建后自动回退，无需 effect）
-  const fallbackChip = roundChips.find((c) => c.live > 0) ?? roundChips[0];
+  // 当前选中轮：点选 > 记住的轮仍存在 > 默认轮（live 轮 > 最早未开打轮 > 第一轮）
+  // （赛程重建后自动回退，无需 effect）
   const selRound =
     selRoundRaw && matchesByRoundKey.has(selRoundRaw)
       ? selRoundRaw
-      : (fallbackChip?.key ?? null);
+      : defaultRoundKey(roundChips);
   const selMatches = selRound ? (matchesByRoundKey.get(selRound) ?? null) : null;
   const selStage = selMatches ? (stageById.get(selMatches[0].stageId) ?? null) : null;
   const selChip = roundChips.find((c) => c.key === selRound);
