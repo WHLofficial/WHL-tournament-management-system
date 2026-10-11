@@ -53,7 +53,7 @@
 
 | 56 | v5.7.3 | 顶栏「显示时区」三档与「登出」收进右上角 ≡ 菜单（对齐 club 仓 v6.41.0 同款改动，纯收纳）：`TopBar` 删平铺 `.tz-wrap` 时钟下拉与 userbox 平铺登出按钮，新增 `.user-menu-wrap` 容器（放在用户三态条件**之后** ⇒ 未登录也渲染，时区对公开页生效）+ `.user-menu-btn`（三横线图标，`aria-label="菜单"` / `aria-haspopup="menu"` / `aria-expanded`，`title` 带当前档）+ `.user-menu` 弹层（`role="menu"`：小标题「显示时区：…」+ 三档 `role="menuitemradio"` 当前档 ✓ 前缀 + 分隔线 + 登出项 `role="menuitem"`，仅登录态出现）；登出仍是客户端 `logout()` 两段式确认（「登出」→「再点一次确认退出」，5 秒自动还原），确认文案在菜单内可见、二击后菜单收起（审查发现登出生效后弹层滞留匿名态，已修）；Esc / 点外部关闭 effect 由原时区下拉改名复用；样式沿用本仓 token（`var(--card)`/`var(--border)`/`var(--pitch)`，右锚 `right: 0`，`min-width: 148px` 容小标题 11 个全角字符单行）；时区偏好链（`whl.tz` / `whl:tz-change`）与登出后端链路一字未动，「改密码」链接留在原地；测试 `tests/topbar.userMenu.ui.test.tsx` 8 例（未登录也渲染 / 两段式 / 兼容模式 / 切 UTC 落盘收起 / Esc 外点 / 5 秒还原 / ≡ 是右侧集群最后一格）+ `tests/topbar.userMenu.static.test.ts` 静态锁 3 例（aria 契约与图标锚进按钮自身标签片段 / 菜单切片成员与索引序 / 三态之后 + 旧 `.tz-*` 零残留 + CSS 右锚在场），变异 3 枚（登出搬回平铺 / 删 `aria-haspopup` / 改坏 CSS 右锚）全红验证闸门有效，全量 610 passed；375 宽真浏览器实测：无横向溢出（docClient = scrollWidth = 375；旧布局本也不溢出，收益是收掉低频控件、让出首行余量）、弹层右缘 300.5 不越视口、切 UTC 后快讯时间串 16:35 → 08:35 即时变化、Esc/外点关闭、两段式登出后会话失效（`/api/auth/me` user=null） | patch：交互收纳（能力不变：时区三档可切、登出可走；无新增端点 / 字段 / 依赖） |
 
-**当前版本：v5.7.2**
+**当前版本：v5.7.3**
 
 ## 落地位置
 
