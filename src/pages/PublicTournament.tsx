@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { POLL_MS } from "../lib/polling";
 import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { StandingsTables } from "./StandingsTab";
@@ -88,6 +89,9 @@ export function emptyElimStages(stages: StageDTO[], meta: StageRoundsDTO[]): Sta
 export default function PublicTournament() {
   const { id } = useParams();
   const tid = Number(id);
+  const { user } = useAuth();
+  // 管理入口：只有管理员/超管看得到（公开页无登录墙，教练与游客不显示）
+  const canManage = user?.role === "admin" || user?.role === "superadmin";
   const [detail, setDetail] = useState<TournamentDetailDTO | null>(null);
   const [meta, setMeta] = useState<StageRoundsDTO[] | null>(null);
   const [summary, setSummary] = useState<MatchSummaryDTO | null>(null);
@@ -289,6 +293,11 @@ export default function PublicTournament() {
         <h1>{t.name}</h1>
         <span className="pub-head-side">
           <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
+          {canManage && (
+            <Link className="pub-manage-btn" to={`/admin/t/${tid}`}>
+              管理
+            </Link>
+          )}
           <ShareButton
             title={`分享「${t.name}」`}
             url={`${origin}/t/${tid}`}

@@ -1654,7 +1654,8 @@ button.add-stage {
 }
 
 /* 分享按钮 + 预览弹窗 */
-.share-btn {
+.share-btn,
+.pub-manage-btn {
   border: 1.5px solid var(--border);
   background: var(--card);
   color: var(--muted);
@@ -1663,9 +1664,17 @@ button.add-stage {
   font-size: 13px;
   cursor: pointer;
 }
-.share-btn:hover {
+.share-btn:hover,
+.pub-manage-btn:hover {
   border-color: var(--pitch);
   color: var(--pitch-deep);
+}
+/* 公开页头部「管理」入口：与分享按钮同款胶囊。
+   a 标签套不上 button.btn / button.btn-ghost（选择器带 button. 前缀），故单列一个类 */
+.pub-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 .share-dialog-mask {
   position: fixed;
@@ -2818,7 +2827,8 @@ button.add-stage {
   .rt-chip {
     padding: 9px 14px;
   }
-  .share-btn {
+  .share-btn,
+  .pub-manage-btn {
     padding: 8px 16px;
   }
   button.btn-ghost {

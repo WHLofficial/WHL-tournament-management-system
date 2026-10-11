@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // T10 公开赛程页：淘汰赛两回合分块、空席位占位、零场次阶段提示。
 // 仓库未装 @testing-library，沿用 tests/datetime.test.tsx 的 react-dom/client + act 手搓根节点范式。
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -14,10 +14,29 @@ import PublicTournament, {
 } from "../src/pages/PublicTournament";
 import type { MatchDTO, StageDTO, StageRoundsDTO, TournamentDetailDTO } from "../shared/types";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
+const { apiMock, authMock } = vi.hoisted(() => ({ apiMock: vi.fn(), authMock: vi.fn() }));
 vi.mock("../src/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/api")>();
   return { ...actual, api: apiMock };
+});
+// 公开页头部「管理」入口靠 useAuth 判角色：默认未登录（既有用例不受影响），用例内按需改
+vi.mock("../src/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/auth")>();
+  return { ...actual, useAuth: () => authMock() };
+});
+
+const ANON_AUTH = {
+  user: null,
+  loading: false,
+  authMode: "shared" as const,
+  authHome: null,
+  refresh: async () => {},
+  applyUser: () => {},
+  logout: async () => {},
+};
+
+beforeEach(() => {
+  authMock.mockReturnValue({ ...ANON_AUTH });
 });
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,7 +44,16 @@ vi.mock("../src/api", async (importOriginal) => {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
+function unmountCurrent() {
+  const r = root;
+  if (r) act(() => r.unmount());
+  root = null;
+  host?.remove();
+  host = null;
+}
+
 function mount(node: ReactNode) {
+  unmountCurrent();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -39,11 +67,7 @@ async function flush() {
 }
 
 afterEach(() => {
-  const r = root;
-  if (r) act(() => r.unmount());
-  root = null;
-  host?.remove();
-  host = null;
+  unmountCurrent();
   apiMock.mockReset();
 });
 
@@ -404,5 +428,38 @@ describe("公开赛程页整页", () => {
     expect(host!.textContent).toContain("次回合");
     expect(host!.textContent).toContain("总比分");
     expect(host!.textContent).not.toContain("赛程待编排");
+  });
+
+  function setRole(role: "coach" | "admin" | "superadmin" | null) {
+    authMock.mockReturnValue({
+      ...ANON_AUTH,
+      user:
+        role === null
+          ? null
+          : { id: 7, name: "测试号", role, teamId: null, locked: false, mustChangePassword: false },
+    });
+  }
+
+  it("管理员与超管看得到头部「管理」入口，指向对应赛事的管理页", async () => {
+    for (const role of ["admin", "superadmin"] as const) {
+      setRole(role);
+      mockApi();
+      mountPage();
+      await flush();
+      const link = host!.querySelector("a.pub-manage-btn");
+      expect(link?.getAttribute("href")).toBe("/admin/t/1");
+      expect(link?.textContent).toBe("管理");
+    }
+  });
+
+  it("教练与游客看不到「管理」入口", async () => {
+    for (const role of ["coach", null] as const) {
+      setRole(role);
+      mockApi();
+      mountPage();
+      await flush();
+      expect(host!.querySelector("a.pub-manage-btn")).toBeNull();
+      expect(host!.querySelectorAll('.pub-head-side a[href^="/admin"]')).toHaveLength(0);
+    }
   });
 });
