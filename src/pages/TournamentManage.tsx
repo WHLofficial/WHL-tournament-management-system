@@ -90,7 +90,8 @@ export function TournamentManage() {
       <div className="page-head">
         <div>
           <p className="muted">
-            <Link to="/admin">← 赛事列表</Link>
+            <Link to="/admin">← 赛事列表</Link> ·{" "}
+            <Link to={`/t/${t.id}`}>查看公开页 →</Link>
           </p>
           <h2>
             {t.name} <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
