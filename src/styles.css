@@ -282,12 +282,13 @@ button.btn-ghost:hover:not(:disabled) {
   justify-content: flex-end;
   gap: 12px;
 }
-/* 显示时区切换（右侧集群）：时钟图标 + 三档下拉，面板样式向 .nav-menu-list 看齐 */
-.tz-wrap {
+/* 右上角 ≡ 菜单（右侧集群）：平铺的时区三档与登出并进同一弹层（原 .tz-wrap/.tz-pop 时区下拉 +
+   userbox 里平铺的登出按钮），面板样式向 .nav-menu-list 看齐 */
+.user-menu-wrap {
   position: relative;
   display: inline-flex;
 }
-.tz-btn {
+.user-menu-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -298,25 +299,33 @@ button.btn-ghost:hover:not(:disabled) {
   color: #cfe0d5;
   cursor: pointer;
 }
-.tz-btn:hover {
+.user-menu-btn:hover {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
 }
-.tz-pop {
+.user-menu {
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
   z-index: 50;
   display: flex;
   flex-direction: column;
-  min-width: 132px;
+  /* 148px：小标题「显示时区：北京时间」11 个全角字符单行放下的最小值 */
+  min-width: 148px;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--card);
   box-shadow: 0 12px 32px rgba(26, 36, 32, 0.28);
 }
-.tz-pop button {
+/* 小标题：顶栏不再挂时钟图标，当前时区档只在这里能一眼看到 */
+.user-menu-head {
+  margin: 2px 6px 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.user-menu button {
   padding: 8px 10px;
   border: none;
   border-radius: 6px;
@@ -328,12 +337,24 @@ button.btn-ghost:hover:not(:disabled) {
   white-space: nowrap;
   cursor: pointer;
 }
-.tz-pop button:hover {
+.user-menu button:hover {
   background: var(--chalk);
 }
-.tz-pop button[aria-checked="true"] {
+.user-menu button[aria-checked="true"] {
   color: var(--pitch);
   font-weight: 600;
+}
+/* 菜单内登出：平时同普通项加粗，确认态整块转危险红（原平铺按钮 btn-danger 的语义搬进来） */
+.user-menu button.menu-logout {
+  font-weight: 600;
+}
+.user-menu button.menu-logout.confirming {
+  background: #dc2626;
+  color: #fff;
+}
+.user-menu .user-menu-sep {
+  margin: 4px 6px;
+  border-top: 1px solid var(--border);
 }
 
 .page-head {

@@ -46,17 +46,18 @@ export function TopBar() {
       document.removeEventListener("mousedown", onDown);
     };
   }, [menuOpen]);
-  // 时区切换下拉：未登录也可见（公开页的时间显示对所有访客生效），交互与「账号与审计」同款
+  // 右上角 ≡ 菜单：平铺的时区三档与登出并进这里，未登录也可见（公开页的时间显示对所有访客
+  // 生效），交互与「账号与审计」同款（Esc / 点外部关闭）
   const tz = useTzPref();
-  const [tzOpen, setTzOpen] = useState(false);
-  const tzRef = useRef<HTMLDivElement | null>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!tzOpen) return;
+    if (!userMenuOpen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setTzOpen(false);
+      if (e.key === "Escape") setUserMenuOpen(false);
     }
     function onDown(e: MouseEvent) {
-      if (!tzRef.current?.contains(e.target as Node)) setTzOpen(false);
+      if (!userMenuRef.current?.contains(e.target as Node)) setUserMenuOpen(false);
     }
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDown);
@@ -64,7 +65,7 @@ export function TopBar() {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onDown);
     };
-  }, [tzOpen]);
+  }, [userMenuOpen]);
   useEffect(() => {
     setMenuOpen(false);
   }, [pathname]);
@@ -76,6 +77,8 @@ export function TopBar() {
     }
     if (timer.current !== null) window.clearTimeout(timer.current);
     void logout();
+    // 登出已生效，别让弹层停在匿名态；确认文案只在菜单内展示，一击后仍保持展开
+    setUserMenuOpen(false);
   }
 
   const accountMenu: NavItem[] = [
@@ -166,42 +169,7 @@ export function TopBar() {
             去竞猜站↗
           </a>
         )}
-        {/* 显示时区切换：时钟图标 + 下拉，偏好本地持久化，全站时间随档即时刷新 */}
-        <div className="tz-wrap" ref={tzRef}>
-          <button
-            type="button"
-            className="tz-btn"
-            aria-label="显示时区"
-            aria-haspopup="menu"
-            aria-expanded={tzOpen}
-            title={`显示时区：${tzLabel(tz)}`}
-            onClick={() => setTzOpen((v) => !v)}
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
-              <path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
-          {tzOpen ? (
-            <div className="tz-pop" role="menu">
-              {TZ_OPTIONS.map(([value, text]) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={tz === value}
-                  onClick={() => {
-                    setTzPref(value);
-                    setTzOpen(false);
-                  }}
-                >
-                  {tz === value ? "✓ " : ""}
-                  {text}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        {/* 显示时区三档与登出已收进右上角 ≡ 菜单（见 .user-menu-wrap） */}
         {loading ? null : user ? (
           <span className="userbox">
             {user.name}
@@ -211,12 +179,6 @@ export function TopBar() {
             ) : (
               <Link to="/password">改密码</Link>
             )}
-            <button
-              className={`btn ${confirming ? "btn-danger" : "btn-ghost"}`}
-              onClick={requestLogout}
-            >
-              {confirming ? "再点一次确认退出" : "登出"}
-            </button>
           </span>
         ) : (
           <span className="userbox">
@@ -234,6 +196,61 @@ export function TopBar() {
             )}
           </span>
         )}
+        {/* 右上角 ≡ 菜单：时区三档与登出并进同一弹层；未登录也渲染（时区对公开页生效），
+            登出项只在已登录态出现。放在用户三态条件之后是这条约束的唯一实现方式 */}
+        <div className="user-menu-wrap" ref={userMenuRef}>
+          <button
+            type="button"
+            className="user-menu-btn"
+            aria-label="菜单"
+            aria-haspopup="menu"
+            aria-expanded={userMenuOpen}
+            title={`菜单（显示时区：${tzLabel(tz)}）`}
+            onClick={() => setUserMenuOpen((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+          {userMenuOpen ? (
+            <div className="user-menu" role="menu" aria-label="用户菜单">
+              {/* 顶栏不再挂时钟图标，当前时区档只在这里能一眼看到 */}
+              <p className="user-menu-head" role="presentation">
+                显示时区：{tzLabel(tz)}
+              </p>
+              {TZ_OPTIONS.map(([value, text]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={tz === value}
+                  onClick={() => {
+                    setTzPref(value);
+                    setUserMenuOpen(false);
+                  }}
+                >
+                  {tz === value ? "✓ " : ""}
+                  {text}
+                </button>
+              ))}
+              {/* 登出保持客户端 logout() 两段式确认（「登出」→「再点一次确认退出」，5 秒自动还原）；
+                  改密码链接留在用户区不收进来 */}
+              {user ? (
+                <>
+                  <div className="user-menu-sep" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={`menu-logout${confirming ? " confirming" : ""}`}
+                    onClick={requestLogout}
+                  >
+                    {confirming ? "再点一次确认退出" : "登出"}
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
   );

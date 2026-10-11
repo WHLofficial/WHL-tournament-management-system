@@ -219,7 +219,7 @@
 5. **TC-AUTH-005 静默同步探测** `P1` — 已登录状态刷新页面；预期：`GET /api/auth/sync`（`prompt=none`）不闪屏、不误踢登录态；`/api/auth/me` 的 `MeEnvelope` 含 `syncProbe` 结果。
 6. **TC-AUTH-006 后台登出通知** `P1` — 对 `/api/auth/backchannel-logout` 发带 `logout_token` 的请求；预期：本地会话被撤销，后续请求 401。
 7. **TC-AUTH-007 兼容模式登录** `P1` — 去掉 `AUTH_MODE` 环境变量，用本地账号（901–903 / `TestPass123`）登录；预期：PBKDF2 校验通过，Cookie 为 `whl_session`，KV `sess:<token>` 有值。
-8. **TC-AUTH-008 登出清彻底** `P0` — 点登出；预期：KV 会话删除、Cookie 清除，再请求 `/api/auth/me` 返回 401。
+8. **TC-AUTH-008 登出清彻底** `P0` — 点右上角 ≡ 菜单里的登出（两段式：「登出」→「再点一次确认退出」，5 秒不二击自动还原）；预期：KV 会话删除、Cookie 清除，再请求 `/api/auth/me` 返回 401。
 9. **TC-AUTH-009 /me 字段完整** `P1` — 请求 `/api/auth/me`；预期：`{user, authMode, authHome, syncProbe}` 齐全，`authHome` 指向认证中心。
 10. **TC-AUTH-010 正常注册** `P0` — 用 8 位注册码在 `/register` 注册（昵称 + 密码）；预期：建号成功、注册码标记已用、可立即登录。
 11. **TC-AUTH-011 注册码异常** `P0` — 用错误码 / 已用码 / 过期码注册；预期：各给出明确文案，且不创建 `user` 行。
