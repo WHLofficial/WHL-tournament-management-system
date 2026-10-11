@@ -824,10 +824,10 @@ export interface CoachStatusResp {
 
 export interface RoundMetaDTO {
   round: number;
-  count: number;
+  count: number; // 本轮的场次数（含轮空）
   live: number;
   finished: number;
-  pending: number;
+  pending: number; // 还要打的场次数（不含轮空——轮空 status 也是 pending 但不会再打）
 }
 
 export interface StageRoundsDTO {

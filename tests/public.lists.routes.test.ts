@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
 import { applyMigrations, createTestD1, createTestKV } from "./d1";
+import type { StageRoundsDTO } from "../shared/types";
 
 // 公开端列表路由（/upcoming 与 /tournaments/:id/matches/summary）挂了 pubCache，
 // 测试环境补最小桩；match 恒回 undefined ⇒ 每次都是冷路径，断言的是真实查询结果。
@@ -217,5 +218,25 @@ describe("公开端赛事摘要", () => {
     expect(draft.status).toBe(404);
     const missing = await pub(env, "/api/public/tournaments/999/matches/summary");
     expect(missing.status).toBe(404);
+  });
+});
+
+describe("公开端轮次条", () => {
+  it("/tournaments/:id/matches/rounds 的 pending 只数还要打的场次：轮空不计入", async () => {
+    const { env } = freshEnv();
+    const res = await pub(env, "/api/public/tournaments/7/matches/rounds");
+    expect(res.status).toBe(200);
+    const { stages } = (await res.json()) as { stages: StageRoundsDTO[] };
+
+    expect(stages.map((s) => s.stageId)).toEqual([70]);
+    // [轮次, 总场次, 进行中, 已完赛, 还要打]
+    expect(stages[0].rounds.map((r) => [r.round, r.count, r.live, r.finished, r.pending])).toEqual([
+      [1, 1, 0, 1, 0],
+      [2, 1, 0, 0, 1],
+      [3, 2, 0, 0, 0], // 两场轮空（802 对手位为空、803 两侧都有 entry）：算总场次，不算「还要打」
+      [4, 1, 0, 0, 1], // 队伍待定（806）：还要打
+      [5, 1, 1, 0, 0], // 已开打（807）
+      [6, 1, 0, 1, 0],
+    ]);
   });
 });

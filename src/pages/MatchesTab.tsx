@@ -23,6 +23,7 @@ import type {
 } from "../../shared/types";
 import { elimRoundName } from "../../shared/rounds";
 import { BYE_NOTE } from "../../shared/matchNotes";
+import { defaultRoundIndex } from "../../shared/defaultRound";
 
 const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   pending: "未开打",
@@ -56,17 +57,13 @@ export const stageTitle: Record<StageDTO["kind"], string> = {
 
 type RoundChipKey = { key: string; live: number; pending: number };
 
-// 默认选中轮：进行中轮 > 最早未开打轮 > 第一轮（全完赛时回第一轮，保留改动前行为；
-// 公开页兜底取最后一轮，两侧未统一）。
-// 轮空场 status 也是 pending 但不会再打（见 worker/lib/standings.ts:507），故 pending 计数须排除轮空，
+// 默认选中轮：进行中轮 > 最早未开打轮 > 最后一轮（全完赛时停在最近打完的一轮）。
+// 规则实现在 shared/defaultRound.ts，与公开赛事页同口径。
+// 轮空场 status 也是 pending 但不会再打（见 worker/lib/standings.ts:508），故 pending 计数须排除轮空，
 // 否则「首轮有轮空 + 首轮其余场次已完赛」时默认轮会停在已打完的首轮。
 export function defaultRoundKey(chips: RoundChipKey[]): string | null {
-  return (
-    chips.find((c) => c.live > 0)?.key ??
-    chips.find((c) => c.pending > 0)?.key ??
-    chips[0]?.key ??
-    null
-  );
+  const i = defaultRoundIndex(chips);
+  return i < 0 ? null : chips[i].key;
 }
 
 export default function MatchesTab({
@@ -94,7 +91,7 @@ export default function MatchesTab({
   const [injuriesByTeam, setInjuriesByTeam] = useState<Map<number, InjuryStatusDTO[]>>(
     new Map(),
   );
-  // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 最早未开打轮 > 第一轮）
+  // 轮次分页（对齐公开页）：用户点选的轮；null = 跟随默认（live 轮 > 最早未开打轮 > 最后一轮）
   const [selRoundRaw, setSelRoundRaw] = useState<string | null>(null);
 
   const entryById = useMemo(
@@ -270,7 +267,7 @@ export default function MatchesTab({
         a.round - b.round,
     );
 
-  // 当前选中轮：点选 > 记住的轮仍存在 > 默认轮（live 轮 > 最早未开打轮 > 第一轮）
+  // 当前选中轮：点选 > 记住的轮仍存在 > 默认轮（live 轮 > 最早未开打轮 > 最后一轮）
   // （赛程重建后自动回退，无需 effect）
   const selRound =
     selRoundRaw && matchesByRoundKey.has(selRoundRaw)

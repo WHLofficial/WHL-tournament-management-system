@@ -430,6 +430,41 @@ describe("公开赛程页整页", () => {
     expect(host!.textContent).not.toContain("赛程待编排");
   });
 
+  it("全部完赛时默认停在最后一轮（与管理页「比赛」tab 同口径）", async () => {
+    mockApi({
+      "/api/public/tournaments/1/matches/rounds": {
+        stages: [
+          {
+            stageId: 9,
+            name: "复赛",
+            kind: "elim",
+            sortOrder: 2,
+            rounds: [
+              { round: 1, count: 1, live: 0, finished: 1, pending: 0 },
+              { round: 2, count: 1, live: 0, finished: 1, pending: 0 },
+            ],
+          },
+        ],
+      },
+      "/api/public/tournaments/1/matches?stageId=9&round=1": {
+        matches: [
+          match({ id: 71, stageId: 9, round: 1, slot: 1, homeEntryId: 1, awayEntryId: 2, homeTeamName: "北京", awayTeamName: "上海", scoreHome: 1, scoreAway: 0, status: "finished", winnerEntryId: 1 }),
+        ],
+      },
+      "/api/public/tournaments/1/matches?stageId=9&round=2": {
+        matches: [
+          match({ id: 72, stageId: 9, round: 2, slot: 1, homeEntryId: 1, awayEntryId: 3, homeTeamName: "北京", awayTeamName: "广州", scoreHome: 2, scoreAway: 1, status: "finished", winnerEntryId: 1 }),
+        ],
+      },
+    });
+    mountPage();
+    await flush();
+    // 只拉选中轮：渲染的是第 2 轮（决赛）的内容，第 1 轮内容不出现
+    expect(host!.querySelector(".rt-chip.rt-active")?.textContent).toContain("· 决赛");
+    expect(host!.textContent).toContain("广州");
+    expect(host!.textContent).not.toContain("上海");
+  });
+
   function setRole(role: "coach" | "admin" | "superadmin" | null) {
     authMock.mockReturnValue({
       ...ANON_AUTH,

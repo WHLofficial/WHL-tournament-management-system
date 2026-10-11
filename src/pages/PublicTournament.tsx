@@ -7,6 +7,7 @@ import { FORMAT_LABEL, STATUS_LABEL } from "../labels";
 import { StandingsTables } from "./StandingsTab";
 import { stageTitle } from "./MatchesTab";
 import { elimRoundName } from "../../shared/rounds";
+import { defaultRoundIndex } from "../../shared/defaultRound";
 import { MatchScore, computeAgg } from "../components/MatchScore";
 import { EventTimeline } from "../components/EventTimeline";
 import { TeamLogo } from "../components/TeamLogo";
@@ -150,13 +151,12 @@ export default function PublicTournament() {
     void refresh();
   }, [refresh]);
 
-  // meta 到位后定默认轮：live 轮 > 最早含未完赛的轮 > 全完赛时最大轮（只定一次，之后尊重用户选择）
+  // meta 到位后定默认轮：live 轮 > 最早有未开打场次的轮 > 最后一轮（只定一次，之后尊重用户选择）。
+  // 规则实现在 shared/defaultRound.ts，与管理页「比赛」tab 同口径。
   useEffect(() => {
     if (!meta || sel) return;
     const chips = flatRounds(meta);
-    const liveChip = chips.find((c) => c.live > 0);
-    const pendingChip = chips.find((c) => c.pending > 0);
-    const target = liveChip ?? pendingChip ?? chips[chips.length - 1];
+    const target = chips[defaultRoundIndex(chips)];
     if (target) setSel({ stageId: target.stageId, round: target.round });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta]);

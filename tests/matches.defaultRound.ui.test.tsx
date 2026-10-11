@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// 管理端比赛 tab 默认轮：进行中轮 > 最早未开打轮（轮空场 status=pending 但不会再打，须排除）> 第一轮。
-// 注：公开页 pending 计数含轮空、全完赛时兜底取最后一轮，与本处口径未统一（公开页同款遗留问题未修）。
+// 管理端比赛 tab 默认轮：进行中轮 > 最早未开打轮（轮空场 status=pending 但不会再打，须排除）> 最后一轮。
+// 口径与公开赛事页共用 shared/defaultRound.ts 单一实现。
 // 仓库未装 @testing-library，沿用 tests/schedule.manual.ui.test.tsx 的 react-dom/client + act 手搓根节点范式。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactNode } from "react";
@@ -138,7 +138,7 @@ describe("比赛 tab 默认轮", () => {
     expect(roundHead()).toBe("1/4 决赛");
   });
 
-  it("全部完赛时回落到第一轮", async () => {
+  it("全部完赛时落到最后一轮（与公开页同口径）", async () => {
     prime([
       match({ id: 1, round: 1, status: "finished", scoreHome: 2, scoreAway: 1 }),
       match({ id: 2, round: 2, status: "finished", scoreHome: 0, scoreAway: 3 }),
@@ -146,7 +146,7 @@ describe("比赛 tab 默认轮", () => {
     ]);
     mountTab();
     await flush();
-    expect(roundHead()).toBe("1/4 决赛");
+    expect(roundHead()).toBe("决赛");
   });
 });
 
@@ -155,7 +155,7 @@ describe("defaultRoundKey", () => {
     expect(defaultRoundKey([])).toBeNull();
   });
 
-  it("优先级：进行中 > 最早未开打 > 第一轮", () => {
+  it("优先级：进行中 > 最早未开打 > 最后一轮", () => {
     const base = [
       { key: "9:1", live: 0, pending: 0 },
       { key: "9:2", live: 0, pending: 0 },
@@ -165,7 +165,7 @@ describe("defaultRoundKey", () => {
     expect(defaultRoundKey(base)).toBe("9:3");
     // 有进行中：进行中优先，哪怕它出现在更早的轮
     expect(defaultRoundKey([{ key: "9:1", live: 1, pending: 0 }, ...base.slice(1)])).toBe("9:1");
-    // 全部完赛：回落第一轮
-    expect(defaultRoundKey(base.map((c) => ({ ...c, pending: 0 })))).toBe("9:1");
+    // 全部完赛：落到最后一轮（9:3）
+    expect(defaultRoundKey(base.map((c) => ({ ...c, pending: 0 })))).toBe("9:3");
   });
 });

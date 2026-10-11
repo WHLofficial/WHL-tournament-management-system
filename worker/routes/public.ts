@@ -506,13 +506,15 @@ app.get("/tournaments/:id/matches/rounds", pubCache(60), async (c) => {
     .first<{ n: number }>();
   if (!pub?.n) return c.json({ message: "赛事不存在或未发布" }, 404);
 
+  // pending 只数「还要打的场次」：轮空场 status 也是 pending 但不会再打（见 shared/matchNotes.ts），
+  // 把它算进来会让公开页默认轮永远卡在含轮空的首轮（管理页同口径已排除）。
   const rows = await c.env.DB.prepare(
     `SELECT s.id AS stage_id, s.name AS stage_name, s.kind AS stage_kind, s.sort_order AS stage_order,
        m.round AS round,
        COUNT(*) AS count,
        SUM(m.status = 'live') AS live,
        SUM(m.status = 'finished') AS finished,
-       SUM(m.status = 'pending') AS pending
+       SUM(m.status = 'pending' AND COALESCE(m.note, '') != '${BYE_NOTE}') AS pending
      FROM match m
      JOIN stage s ON s.id = m.stage_id
      WHERE s.tournament_id = ?
