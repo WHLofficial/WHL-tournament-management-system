@@ -465,6 +465,51 @@ describe("公开赛程页整页", () => {
     expect(host!.textContent).not.toContain("上海");
   });
 
+  it("首轮含轮空、真打已完赛时默认停在最早未开打的下一轮", async () => {
+    mockApi({
+      "/api/public/tournaments/1/matches/rounds": {
+        stages: [
+          {
+            stageId: 9,
+            name: "复赛",
+            kind: "elim",
+            sortOrder: 2,
+            rounds: [
+              // 6 队单淘汰首轮：2 场真打已完赛 + 2 场轮空。轮空 status 也是 pending，
+              // 但服务端口径已剔除（worker/routes/public.ts 轮次端点），故首轮 pending 为 0
+              { round: 1, count: 4, live: 0, finished: 2, pending: 0 },
+              { round: 2, count: 2, live: 0, finished: 0, pending: 2 },
+              { round: 3, count: 1, live: 0, finished: 0, pending: 1 },
+            ],
+          },
+        ],
+      },
+      "/api/public/tournaments/1/matches?stageId=9&round=1": {
+        matches: [
+          match({ id: 70, stageId: 9, round: 1, slot: 1, homeEntryId: 1, awayEntryId: 2, homeTeamName: "北京", awayTeamName: "上海", scoreHome: 2, scoreAway: 0, status: "finished", winnerEntryId: 1 }),
+          match({ id: 71, stageId: 9, round: 1, slot: 2, homeEntryId: 3, awayEntryId: 4, homeTeamName: "广州", awayTeamName: "深圳", scoreHome: 3, scoreAway: 1, status: "finished", winnerEntryId: 3 }),
+        ],
+      },
+      "/api/public/tournaments/1/matches?stageId=9&round=2": {
+        matches: [
+          match({ id: 72, stageId: 9, round: 2, slot: 1, homeEntryId: 5, awayEntryId: 1, homeTeamName: "天津", awayTeamName: "北京" }),
+          match({ id: 73, stageId: 9, round: 2, slot: 2, homeEntryId: 6, awayEntryId: 3, homeTeamName: "沈阳", awayTeamName: "广州" }),
+        ],
+      },
+    });
+    mountPage();
+    await flush();
+    // 默认轮 = 最早未开打的第 2 轮（半决赛），而不是仍挂着轮空场次的第 1 轮
+    expect(host!.querySelector(".rt-chip.rt-active")?.textContent).toContain("· 半决赛");
+    expect(host!.textContent).toContain("天津");
+    expect(host!.textContent).not.toContain("上海");
+    // 页面只拉选中轮；逐轮拉取失败会被页面静默吞掉，故直接钉实拉路径
+    const fetched = apiMock.mock.calls.map((c) => String(c[0]));
+    expect(fetched.some((p) => p.includes("stageId=9&round=2"))).toBe(true);
+    expect(fetched.some((p) => p.includes("stageId=9&round=1"))).toBe(false);
+    expect(fetched.some((p) => p.includes("stageId=9&round=3"))).toBe(false);
+  });
+
   function setRole(role: "coach" | "admin" | "superadmin" | null) {
     authMock.mockReturnValue({
       ...ANON_AUTH,
