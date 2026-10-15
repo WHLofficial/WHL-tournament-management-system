@@ -14,9 +14,16 @@ import {
   getTiebreakers,
   normalizeTiebreakers,
   readStageStandings,
+  buildStandingsChainStmts,
   buildStandingsForStagesStmts,
   tiebreakersFromConfigJson,
 } from "../../lib/standings";
+import {
+  findStandingsMismatches,
+  listPendingRebuilds,
+  runStageRebuildGuard,
+} from "../../lib/rebuild-guard";
+import { auditStmt } from "../../lib/audit";
 import { buildStats } from "../../lib/topstats";
 import {
   getSuspensionConfig,
@@ -270,6 +277,80 @@ app.get("/:id/standings", async (c) => {
     rankZones: parseRankZoneSettings(t.config_json),
     tiebreakers: tiebreakersFromConfigJson(t.config_json),
   });
+});
+
+// GET /:id/standings-health（v5.7.5）：积分榜体检。
+//  - pending：硬信号——某阶段的后续处理（重算/晋级/下一阶段生成）没跑完的欠账；
+//  - mismatches：软信号——榜上的 played 与「本阶段完赛场次 + 带入基数」对不上。
+//    软信号只用于发现「旧版代码留下的历史不一致」（欠账表是本次才有的），不作为判断依据。
+app.get("/:id/standings-health", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+    .bind(id)
+    .first<{ id: number }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+  const [pending, mismatches] = await Promise.all([
+    listPendingRebuilds(c.env.DB, id),
+    findStandingsMismatches(c.env.DB, id),
+  ]);
+  return c.json({
+    ok: true,
+    healthy: pending.length === 0 && mismatches.length === 0,
+    pending,
+    mismatches,
+  });
+});
+
+// POST /:id/rebuild-standings（v5.7.5）：一键重算。
+// 缺省全赛事（等价于「从头算一遍」），带 stageId 则重算该阶段及其下游。
+// 重算成功后把该赛事的欠账标记清掉——债已经还了，别让黄条常亮。
+app.post("/:id/rebuild-standings", async (c) => {
+  const id = Number(c.req.param("id"));
+  const t = await c.env.DB.prepare("SELECT id FROM tournament WHERE id = ?")
+    .bind(id)
+    .first<{ id: number }>();
+  if (!t) return c.json({ message: "赛事不存在" }, 404);
+  const body = (await c.req.json<{ stageId?: unknown }>().catch(() => ({}))) as {
+    stageId?: unknown;
+  };
+  const stageId = body.stageId == null ? null : Number(body.stageId);
+  if (stageId !== null && !Number.isInteger(stageId)) {
+    return c.json({ message: "stageId 应为阶段 ID" }, 400);
+  }
+
+  let stmts: D1PreparedStatement[];
+  let clearWhere: { sql: string; params: unknown[] };
+  if (stageId === null) {
+    stmts = await buildStandingsForStagesStmts(c.env.DB, id, [null]);
+    clearWhere = { sql: "DELETE FROM rebuild_pending WHERE tournament_id = ?", params: [id] };
+  } else {
+    const stage = await c.env.DB.prepare(
+      "SELECT id, kind, sort_order FROM stage WHERE id = ? AND tournament_id = ?"
+    )
+      .bind(stageId, id)
+      .first<{ id: number; kind: string; sort_order: number }>();
+    if (!stage) return c.json({ message: "阶段不存在" }, 404);
+    if (stage.kind === "elim") {
+      return c.json({ message: "淘汰赛阶段没有积分榜" }, 400);
+    }
+    stmts = await buildStandingsChainStmts(c.env.DB, stageId);
+    // 只清「这次重算覆盖到的阶段」的标记：排在它前面的阶段不在覆盖范围内
+    clearWhere = {
+      sql: `DELETE FROM rebuild_pending WHERE tournament_id = ?
+              AND stage_id IN (SELECT id FROM stage WHERE tournament_id = ? AND sort_order >= ?)`,
+      params: [id, id, stage.sort_order],
+    };
+  }
+  // 先重算、后销账：反过来一旦批次失败，账已经清了、榜还没修——又回到静默半截状态。
+  // 榜语句非空才提交（没算过榜的阶段由 helper 跳过）
+  if (stmts.length > 0) await c.env.DB.batch(stmts);
+  const cleared = (await c.env.DB.prepare(clearWhere.sql).bind(...clearWhere.params).run()).meta
+    .changes ?? 0;
+  const detail = { stageId, statements: stmts.length, cleared };
+  await c.env.DB.batch([
+    auditStmt(c.env.DB, c.get("user")!.id, "standings_rebuild", id, detail, "tournament"),
+  ]);
+  return c.json({ ok: true, statements: stmts.length, cleared });
 });
 
 app.patch("/:id", async (c) => {
@@ -767,6 +848,35 @@ app.delete("/:id/entries/:entryId", async (c) => {
 // 同一赛事可以有多支队各自扣分，互不影响；改完只重算「命中阶段及其下游」。
 const MAX_DEDUCTIONS = 20;
 
+// 扣分的重算范围 = affected 的并集；而 rebuild_pending 一行只记一个阶段，所以取
+// affected 里最靠前的积分阶段——链重算的覆盖面（该阶段及其下游）正好等于这个并集。
+// affected 带 null（全赛事语义）时落到本赛事最早的积分阶段，链重算即全量。
+async function resolveRebuildMarkStage(
+  db: D1Database,
+  tournamentId: number,
+  affected: (number | null)[]
+): Promise<number | null> {
+  if (affected.some((x) => x == null)) {
+    const first = await db
+      .prepare(
+        "SELECT id FROM stage WHERE tournament_id = ? AND kind != 'elim' ORDER BY sort_order, id LIMIT 1"
+      )
+      .bind(tournamentId)
+      .first<{ id: number }>();
+    return first?.id ?? null;
+  }
+  const ids = affected.filter((x): x is number => x != null);
+  if (ids.length === 0) return null; // 没有任何阶段受影响：不重算、不标记
+  const row = await db
+    .prepare(
+      `SELECT id FROM stage WHERE id IN (${ids.map(() => "?").join(",")})
+       ORDER BY sort_order, id LIMIT 1`
+    )
+    .bind(...ids)
+    .first<{ id: number }>();
+  return row?.id ?? null;
+}
+
 app.patch(
   "/:id/entries/:entryId/deduction",
   requireSuperadmin,
@@ -836,9 +946,20 @@ app.patch(
         ).bind(entryId, it.stageId, it.points)
       ),
     ];
-    await c.env.DB.batch(stmts);
-    const rebuilt = await buildStandingsForStagesStmts(c.env.DB, id, affected);
-    if (rebuilt.length > 0) await c.env.DB.batch(rebuilt);
+    // v5.7.5：写入与「该阶段欠一次重算」的标记同批提交，重算失败由自愈守卫兜底。
+    // 标记阶段取 affected 里最靠前的积分阶段：链重算的覆盖面与 affected 一致；
+    // affected 带 null（全赛事语义）时落到本赛事最早积分阶段，链重算即全量。
+    const markStage = await resolveRebuildMarkStage(c.env.DB, id, affected);
+    if (markStage === null) {
+      // 没有可重算的积分阶段（affected 空，或本赛事没有积分阶段）：照旧只落扣分写入
+      await c.env.DB.batch(stmts);
+      return c.json({ ok: true });
+    }
+    await runStageRebuildGuard(
+      c.env.DB,
+      { stageId: markStage, tournamentId: id, source: "deduction" },
+      stmts
+    );
     return c.json({ ok: true });
   }
 );

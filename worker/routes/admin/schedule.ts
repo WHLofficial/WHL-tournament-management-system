@@ -12,10 +12,10 @@ import {
 import {
   AdvancerError,
   buildAdvanceStmts,
-  buildStandingsChainStmts,
   getTiebreakers,
   readStandings,
 } from "../../lib/standings";
+import { runStageRebuildGuard, type RebuildSource } from "../../lib/rebuild-guard";
 import {
   loadQualifierContext,
   sortSourceStandings,
@@ -297,10 +297,12 @@ app.put("/:id/stages/:stageId/carry", async (c) => {
   const cfg = JSON.parse(stage.config_json || "{}") as Record<string, unknown>;
   if (raw === null) {
     delete cfg.carry;
-    await c.env.DB.prepare("UPDATE stage SET config_json = ? WHERE id = ?")
-      .bind(JSON.stringify(cfg), stageId)
-      .run();
-    await rebuildStandingsAfter(c.env.DB, stageId);
+    await writeAndRebuild(c.env.DB, tid, stageId, "carry", [
+      c.env.DB.prepare("UPDATE stage SET config_json = ? WHERE id = ?").bind(
+        JSON.stringify(cfg),
+        stageId
+      ),
+    ]);
     return c.json({ ok: true, carry: null });
   }
 
@@ -353,10 +355,12 @@ app.put("/:id/stages/:stageId/carry", async (c) => {
     ...(fromStageId !== undefined ? { fromStage: fromStageId } : {}),
   };
   cfg.carry = carry;
-  await c.env.DB.prepare("UPDATE stage SET config_json = ? WHERE id = ?")
-    .bind(JSON.stringify(cfg), stageId)
-    .run();
-  await rebuildStandingsAfter(c.env.DB, stageId);
+  await writeAndRebuild(c.env.DB, tid, stageId, "carry", [
+    c.env.DB.prepare("UPDATE stage SET config_json = ? WHERE id = ?").bind(
+      JSON.stringify(cfg),
+      stageId
+    ),
+  ]);
   return c.json({ ok: true, carry });
 });
 
@@ -486,21 +490,29 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
     if (created === 0) {
       return fail(c, 400, "先抽签分组（且每组至少 2 队）才能生成小组赛程");
     }
-    await env.DB.batch(stmts);
-    await rebuildStandingsAfter(env.DB, stageId);
+    await writeAndRebuild(env.DB, tid, stageId, "generate", stmts);
     return c.json({ created, rounds, skippedGroups: skipped });
   }
 
-  await env.DB.batch(stmts);
-  await rebuildStandingsAfter(env.DB, stageId);
+  await writeAndRebuild(env.DB, tid, stageId, "generate", stmts);
   return c.json({ created, rounds, balanced });
 });
 
-// 重生成/删场次之后重算积分榜：必须等场次写入提交后再算（榜是从 match 现算的），
+// 重生成/删场次/改带入之后重算积分榜：必须等场次写入提交后再算（榜是从 match 现算的），
 // 参与集（配了 source 的循环赛阶段按场次取人）也跟着换。没算过榜的阶段由 helper 跳过。
-async function rebuildStandingsAfter(db: D1Database, stageId: number): Promise<void> {
-  const stmts = await buildStandingsChainStmts(db, stageId);
-  if (stmts.length > 0) await db.batch(stmts);
+//
+// v5.7.5 起走自愈守卫：写入与「该阶段欠一次后续处理」的标记同批提交，后续处理失败先就近重试、
+// 仍失败降级（标记留库交 cron 补跑）——不再出现「写入生效了、榜没跟上」的静默半截状态。
+// 返回值 = 后续处理是否跑完；非报分链的响应体不变，可见性由管理端体检黄条 + cron 兜底负责。
+async function writeAndRebuild(
+  db: D1Database,
+  tournamentId: number,
+  stageId: number,
+  source: RebuildSource,
+  writeStmts: D1PreparedStatement[]
+): Promise<boolean> {
+  const res = await runStageRebuildGuard(db, { stageId, tournamentId, source }, writeStmts);
+  return res.followUpOk;
 }
 
 // ---------- 淘汰赛手动落位（首轮点选配对；后续轮由晋级器填充） ----------
@@ -1350,8 +1362,9 @@ app.delete("/:id/matches/:matchId", async (c) => {
   if (m.status !== "pending") {
     return fail(c, 409, "只有未开打的比赛可以删除");
   }
-  await c.env.DB.prepare("DELETE FROM match WHERE id = ?").bind(matchId).run();
-  await rebuildStandingsAfter(c.env.DB, m.stage_id);
+  await writeAndRebuild(c.env.DB, tid, m.stage_id, "delete_match", [
+    c.env.DB.prepare("DELETE FROM match WHERE id = ?").bind(matchId),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -1550,8 +1563,9 @@ app.delete("/:id/stages/:stageId/matches", async (c) => {
       .bind(stage.id)
       .first<{ n: number }>();
     if ((n?.n ?? 0) === 0) return c.json({ ok: true, deleted: 0 });
-    await c.env.DB.prepare("DELETE FROM match WHERE stage_id = ?").bind(stage.id).run();
-    await rebuildStandingsAfter(c.env.DB, stage.id);
+    await writeAndRebuild(c.env.DB, tid, stage.id, "delete_stage", [
+      c.env.DB.prepare("DELETE FROM match WHERE stage_id = ?").bind(stage.id),
+    ]);
     return c.json({ ok: true });
   } catch (e) {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
