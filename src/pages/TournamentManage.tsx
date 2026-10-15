@@ -34,6 +34,42 @@ const TB_OPTIONS: Array<{ value: string; label: string }> = [
 
 type Tab = "entries" | "schedule" | "matches" | "standings" | "toplists" | "stats" | "settings";
 
+// 积分榜体检（GET /:id/standings-health，v5.7.5）：
+//  - pending 是硬信号：某阶段的后续处理（榜重算/晋级填位/下一阶段生成）没跑完的欠账；
+//  - mismatches 是软信号：榜上的 played 与「本阶段完赛场次 + 带入基数」对不上，
+//    用于发现旧版代码留下的历史不一致（欠账表是本次才有的，覆盖不到过去）。
+type StandingsHealth = {
+  ok: boolean;
+  healthy: boolean;
+  pending: Array<{
+    stageId: number;
+    stageName: string | null;
+    source: string;
+    createdAt: string;
+    attempts: number;
+    lastError: string | null;
+  }>;
+  mismatches: Array<{
+    stageId: number;
+    stageName: string | null;
+    entryId: number;
+    teamName: string | null;
+    played: number;
+    expected: number;
+    carriedPlayed: number;
+  }>;
+};
+
+// 欠账的来源（后端 rebuild_pending.source）：显示出来才知道是哪一步没跑完
+const REBUILD_SOURCE_LABEL: Record<string, string> = {
+  scoring: "报分后续",
+  carry: "改带入",
+  generate: "生成赛程",
+  delete_match: "删单场",
+  delete_stage: "清空场次",
+  deduction: "扣分",
+};
+
 export function TournamentManage() {
   const { id } = useParams();
   const tournamentId = Number(id);
@@ -43,12 +79,23 @@ export function TournamentManage() {
   const [tab, setTab] = useState<Tab>("entries");
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [health, setHealth] = useState<StandingsHealth | null>(null);
+  const [rebuildBusy, setRebuildBusy] = useState(false);
+  const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
 
   async function reload() {
     try {
       setDetail(await api<TournamentDetailDTO>(`/api/admin/tournaments/${tournamentId}`));
     } catch {
       setMissing(true);
+    }
+    // 体检单独兜错：查不到不该把整页拖成「赛事不存在」
+    try {
+      setHealth(
+        await api<StandingsHealth>(`/api/admin/tournaments/${tournamentId}/standings-health`),
+      );
+    } catch {
+      setHealth(null);
     }
   }
   useEffect(() => {
@@ -70,6 +117,25 @@ export function TournamentManage() {
       setActionError(e instanceof Error ? e.message : "操作失败");
     } finally {
       setActionBusy(false);
+    }
+  }
+
+  // 一键全量重算：欠账多半是「某个阶段的下游没跟上」，从头算一遍最省事（重算幂等）
+  async function rebuildStandings() {
+    if (!window.confirm("重算本赛事积分榜？按现在的完赛结果与带入配置从头算一遍。")) return;
+    setRebuildBusy(true);
+    setRebuildMsg(null);
+    try {
+      const r = await api<{ ok: boolean; statements: number; cleared: number }>(
+        `/api/admin/tournaments/${tournamentId}/rebuild-standings`,
+        { method: "POST", body: {} },
+      );
+      setRebuildMsg(`已重算：写回 ${r.statements} 条榜记录，清掉 ${r.cleared} 条欠账。`);
+      await reload();
+    } catch (e) {
+      setRebuildMsg(e instanceof Error ? e.message : "重算失败");
+    } finally {
+      setRebuildBusy(false);
     }
   }
 
@@ -114,6 +180,52 @@ export function TournamentManage() {
         </div>
       </div>
       {actionError && <p className="error-msg">{actionError}</p>}
+
+      {health && !health.healthy && (
+        <div className="warn-msg">
+          <p>
+            <strong>积分榜有欠账</strong>
+            {health.pending.length > 0 && (
+              <>
+                ：{health.pending.length} 个阶段的后续处理没跑完（
+                {health.pending
+                  .map(
+                    (p) =>
+                      `${p.stageName ?? `阶段 ${p.stageId}`}·${
+                        REBUILD_SOURCE_LABEL[p.source] ?? p.source
+                      }${p.attempts > 0 ? `·已失败 ${p.attempts} 次` : ""}`,
+                  )
+                  .join("；")}
+                ）
+              </>
+            )}
+            {health.mismatches.length > 0 && (
+              <>
+                {health.pending.length > 0 ? "；另外" : "："}
+                {health.mismatches.length} 行榜与完赛场次对不上（
+                {health.mismatches
+                  .slice(0, 3)
+                  .map(
+                    (m) =>
+                      `${m.stageName ?? `阶段 ${m.stageId}`}·${
+                        m.teamName ?? `队 ${m.entryId}`
+                      } ${m.played}/${m.expected} 场`,
+                  )
+                  .join("；")}
+                {health.mismatches.length > 3 ? " …" : ""}）
+              </>
+            )}
+            。系统每小时会自动补算一次，也可以现在就重算。
+          </p>
+          <div className="btn-col">
+            <button className="btn" disabled={rebuildBusy} onClick={() => void rebuildStandings()}>
+              {rebuildBusy ? "重算中…" : "立即重算积分榜"}
+            </button>
+          </div>
+          {rebuildMsg && <p className="muted">{rebuildMsg}</p>}
+        </div>
+      )}
+      {health?.healthy && rebuildMsg && <p className="muted">{rebuildMsg}</p>}
 
       <nav className="tabs">
         {(

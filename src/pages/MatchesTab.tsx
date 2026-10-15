@@ -716,7 +716,7 @@ function ScoreForm({
       // 淘汰赛双弃权必须指定晋级方（两回合对局晋级由总比分/点球决定，后端不收）
       const needWinner = m.stageKind === "elim" && m.leg == null && woSide === "both";
       if (needWinner && !woWinner) throw new Error("请先选择晋级方");
-      const b = await api<{ ok: boolean; regenerated?: boolean }>(
+      const b = await api<{ ok: boolean; regenerated?: boolean; standingsPending?: boolean }>(
         `/api/admin/matches/${m.id}/finish`,
         {
           method: "POST",
@@ -730,6 +730,8 @@ function ScoreForm({
         },
       );
       onDone();
+      // 比分已落库但后续处理（榜重算/晋级/下一阶段生成）没跑完：如实说，别谎报成功
+      if (b.standingsPending) return "比分已记录，积分榜正在补算";
       return b.regenerated ? "淘汰赛对阵已自动生成" : null;
     }).then((msg) => setErr(msg));
   };
@@ -751,11 +753,13 @@ function ScoreForm({
       if (sa !== "") body.scoreAway = Number(sa);
       if (ph !== "") body.penHome = Number(ph);
       if (pa !== "") body.penAway = Number(pa);
-      const b = await api<{ ok: boolean; regenerated?: boolean }>(
+      const b = await api<{ ok: boolean; regenerated?: boolean; standingsPending?: boolean }>(
         `/api/admin/matches/${m.id}/finish`,
         { method: "POST", body },
       );
       onDone();
+      // 比分已落库但后续处理（榜重算/晋级/下一阶段生成）没跑完：如实说，别谎报成功
+      if (b.standingsPending) return "比分已记录，积分榜正在补算";
       return b.regenerated ? "淘汰赛对阵已自动生成" : null;
     }).then((msg) => setErr(msg));
   };
