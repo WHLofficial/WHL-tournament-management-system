@@ -58,7 +58,7 @@ app.onError((err, c) => {
 // 挂到同一个 app 上，默认导出仍是这个 Hono 实例——测试里的 `app.request(...)` 因此一行不用改。
 // 三个任务都自己吞异常并记日志：一次网络抖动不该把这次 cron 记成失败（cron 也没有重试）。
 // runAccountMirror 是登录回调投影账号行的兜底：存量会话、以及建了账号还没登录过的人靠它补。
-// healPendingRebuilds 是积分榜重算的兜底（v5.7.5）：报分/改带入/删场次/生成赛程时后续处理
+// healPendingRebuilds 是积分榜重算的兜底（v5.8.0）：报分/改带入/删场次/生成赛程时后续处理
 // 没跑完的欠账（rebuild_pending）在这里补跑，争取一小时之内自己收敛，不靠人工发现。
 export default Object.assign(app, {
   scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext) {

@@ -384,7 +384,7 @@ async function computeStageStandings(
           r.pen_lost,
           carriedPts,
           deduct,
-          // carried_played（v5.7.5 对账用）：played 里来自带入的基数 = 本行叠加的源阶段场次。
+          // carried_played（v5.8.0 对账用）：played 里来自带入的基数 = 本行叠加的源阶段场次。
           // 记「当时带进来的那个数」而不是「源阶段现在的 played」——源阶段继续开打后会漂移，
           // 拿它当期望值会给每一张带入榜误报不一致（对账等式要精确）。
           rec.played

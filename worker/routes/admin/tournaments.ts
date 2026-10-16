@@ -279,7 +279,7 @@ app.get("/:id/standings", async (c) => {
   });
 });
 
-// GET /:id/standings-health（v5.7.5）：积分榜体检。
+// GET /:id/standings-health（v5.8.0）：积分榜体检。
 //  - pending：硬信号——某阶段的后续处理（重算/晋级/下一阶段生成）没跑完的欠账；
 //  - mismatches：软信号——榜上的 played 与「本阶段完赛场次 + 带入基数」对不上。
 //    软信号只用于发现「旧版代码留下的历史不一致」（欠账表是本次才有的），不作为判断依据。
@@ -301,7 +301,7 @@ app.get("/:id/standings-health", async (c) => {
   });
 });
 
-// POST /:id/rebuild-standings（v5.7.5）：一键重算。
+// POST /:id/rebuild-standings（v5.8.0）：一键重算。
 // 缺省全赛事（等价于「从头算一遍」），带 stageId 则重算该阶段及其下游。
 // 重算成功后把该赛事的欠账标记清掉——债已经还了，别让黄条常亮。
 app.post("/:id/rebuild-standings", async (c) => {
@@ -946,7 +946,7 @@ app.patch(
         ).bind(entryId, it.stageId, it.points)
       ),
     ];
-    // v5.7.5：写入与「该阶段欠一次重算」的标记同批提交，重算失败由自愈守卫兜底。
+    // v5.8.0：写入与「该阶段欠一次重算」的标记同批提交，重算失败由自愈守卫兜底。
     // 标记阶段取 affected 里最靠前的积分阶段：链重算的覆盖面与 affected 一致；
     // affected 带 null（全赛事语义）时落到本赛事最早积分阶段，链重算即全量。
     const markStage = await resolveRebuildMarkStage(c.env.DB, id, affected);

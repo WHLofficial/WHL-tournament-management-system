@@ -34,7 +34,7 @@ const TB_OPTIONS: Array<{ value: string; label: string }> = [
 
 type Tab = "entries" | "schedule" | "matches" | "standings" | "toplists" | "stats" | "settings";
 
-// 积分榜体检（GET /:id/standings-health，v5.7.5）：
+// 积分榜体检（GET /:id/standings-health，v5.8.0）：
 //  - pending 是硬信号：某阶段的后续处理（榜重算/晋级填位/下一阶段生成）没跑完的欠账；
 //  - mismatches 是软信号：榜上的 played 与「本阶段完赛场次 + 带入基数」对不上，
 //    用于发现旧版代码留下的历史不一致（欠账表是本次才有的，覆盖不到过去）。

@@ -1,4 +1,4 @@
-// 积分榜重算自愈（v5.7.5）：worker/lib/rebuild-guard.ts 的写入协议与自愈闭环。
+// 积分榜重算自愈（v5.8.0）：worker/lib/rebuild-guard.ts 的写入协议与自愈闭环。
 // 病根见 migrations/0029_rebuild_pending.sql：终场提交是两段式且无跨语句事务（D1 没有交互式事务），
 // 第二段（榜重算 / 晋级填位 / 下一阶段首轮生成）失败时留下「比赛已 finished、榜没重算、审计缺行」
 // 的半截状态——2026-10-15 的 match 193 就是这样丢的，事后只能靠人工比对 fin/played 才发现。
