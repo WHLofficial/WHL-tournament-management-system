@@ -105,3 +105,12 @@ v5.8.1 只改了页面 CSS；`src/lib/share.ts` 的 canvas 卡片把系统字体
 - `ensureShareFonts()`：canvas 不会触发 `@font-face` 下载，5 个 `drawXxxCard` 开头先 `await document.fonts.load` 三族，否则首张卡用回退字体量宽。
 - 单场卡队名/徽标原固定在中轴 ±104px，等宽数字下「1 : 0」约 190px 会压到队名；改为按比分实测宽度取 `sideGap = max(104, min(scoreW,520)/2+16)`，`nameMax` 同步让位；轮次胶囊、单场中轴、头条大比分各加超宽缩号兜底。
 - 实测（本地 dist @ 8790）：4 种卡片均 890×N，`document.fonts` 三族 loaded，卡片生成前 3 个字体文件各 200；typecheck 0 error、52 文件 / 629 通过、build 成功。截图 `C:/tmp/fontwork/share-{match,tour,table,news}.png`。
+
+## 9. v5.8.3 补丁：比分回正文栈（2026-10-23）
+
+用户反馈「赛事卡的比分字体能不能不变，现在这个间距太大」——JetBrains 是等宽字，`2 : 4` 里每个空格都占满一个数字宽，胶囊与 72/110px 大比分都发空。
+
+- 比分（轮次卡胶囊与点球注、单场卡 72px 与点球注、头条卡 110px）全部回到 `FONT`（Inter + 系统 CJK），恢复改动前观感。
+- `FONT_NUM` 只保留积分榜数字列（`strong` 800/28、其余 400/24），列对齐仍靠等宽。
+- 单场卡 `sideGap` 实测公式与三处超宽缩号兜底保留；比例字下 `sideGap` 回到 104 下限。
+- 实测：赛事总览卡 890×760，比分恢复比例字、卡名仍宋体、榜单卡数字列仍 JetBrains；typecheck 0 错误、52 文件 / 629 通过（7 跳过）、build 成功。

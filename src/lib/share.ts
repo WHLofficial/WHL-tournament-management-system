@@ -21,11 +21,11 @@ const BG = "#faf8f2";
 const ink = (a: number): string => `rgba(34,33,29,${a})`;
 
 const PALETTE = ["#0e7a46", "#e8590c", "#1971c2", "#9c36b5", "#e64980", "#f08c00"];
-// 与站点同一套字体角色：正文 Inter、标题宋体、数字 JetBrains（v5.8.2）
+// 与站点同一套字体角色：正文 Inter、标题宋体、榜单数字 JetBrains（v5.8.2；比分仍走正文栈，v5.8.3）
 // canvas 只能用「已加载」的字体，画之前必须 ensureShareFonts()，否则首张卡会静默退回系统字体
 const FONT = '"Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif';
 const FONT_DISPLAY = '"Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif';
-// 中文混在数字串里（「点球 4 : 3」）时落到雅黑，不要交给等宽栈去猜
+// 只用于积分榜数字列：列对齐靠等宽；比分行用比例字，胶囊里不会左右发空
 const FONT_NUM = '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, "Microsoft YaHei", monospace';
 
 // 近 5 场圆点配色（与网页端 .fdot-W/D/L 同色）
@@ -570,11 +570,11 @@ async function drawMatchLine(
   ctx.fill();
   ctx.textAlign = "center";
   if (m.status === "finished" || m.status === "live") {
-    // 胶囊宽度是常量：等宽数字比比例字宽，两位数比分先缩号再画，避免顶到胶囊边
+    // 比分走正文栈（v5.8.3：等宽数字在胶囊里左右留白过大）；胶囊宽度是常量，两位数比分先缩号再画，避免顶到胶囊边
     const scoreText = `${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`;
-    font(ctx, 700, 22, FONT_NUM);
+    font(ctx, 700, 22);
     const sw = ctx.measureText(scoreText).width;
-    if (sw > pill - 14) font(ctx, 700, Math.max(14, Math.floor((22 * (pill - 14)) / sw)), FONT_NUM);
+    if (sw > pill - 14) font(ctx, 700, Math.max(14, Math.floor((22 * (pill - 14)) / sw)));
     ctx.fillStyle = m.status === "live" ? ACCENT : INK;
     ctx.fillText(scoreText, cx, y + 1);
   } else {
@@ -584,7 +584,7 @@ async function drawMatchLine(
   }
   const subY = y + pillH / 2 + 20; // 胶囊下方副注/摘要首行
   if (m.status === "finished" && (m.penHome != null || m.penAway != null)) {
-    font(ctx, 400, 23, FONT_NUM);
+    font(ctx, 400, 23);
     ctx.fillStyle = ink(0.6);
     ctx.textBaseline = "middle";
     ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, subY);
@@ -679,9 +679,9 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
   const m = data.match;
   const badge = 72;
   const cx = CARD_W / 2;
-  // 比分与队名共用中轴两侧：等宽数字比原来的比例字宽，固定 104 会让「1 : 0」压到队名上
+  // 比分与队名共用中轴两侧：按比分实测宽度让出中轴（两位数比分时比固定 104 更宽松）
   const scoreText = `${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`;
-  font(ctx, 700, 72, FONT_NUM);
+  font(ctx, 700, 72);
   const scoreW = ctx.measureText(scoreText).width;
   const sideGap = Math.max(104, Math.min(scoreW, 520) / 2 + 16);
 
@@ -714,13 +714,13 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
     ctx.fillStyle = ink(0.5);
     ctx.fillText("未开打", cx, cy + 58);
   } else {
-    font(ctx, 700, 72, FONT_NUM);
+    font(ctx, 700, 72);
     const sw = ctx.measureText(scoreText).width;
-    if (sw > 520) font(ctx, 700, Math.max(44, Math.floor((72 * 520) / sw)), FONT_NUM);
+    if (sw > 520) font(ctx, 700, Math.max(44, Math.floor((72 * 520) / sw)));
     ctx.fillStyle = m.status === "live" ? ACCENT : INK;
     ctx.fillText(scoreText, cx, cy);
     if (m.penHome != null || m.penAway != null) {
-      font(ctx, 400, 23, FONT_NUM);
+      font(ctx, 400, 23);
       ctx.fillStyle = ink(0.6);
       ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, cy + 58);
     }
@@ -1368,11 +1368,11 @@ export async function drawNewsCard(
 
   if (data.score) {
     ctx.textAlign = "center";
-    // 大比分走等宽：位数越多越宽，先量后缩，别顶出 96px 边距
-    font(ctx, 800, 110, FONT_NUM);
+    // 大比分走正文栈（v5.8.3）；位数越多越宽，先量后缩，别顶出 96px 边距
+    font(ctx, 800, 110);
     const scoreW = ctx.measureText(data.score).width;
     if (scoreW > CARD_W - 96) {
-      font(ctx, 800, Math.max(64, Math.floor((110 * (CARD_W - 96)) / scoreW)), FONT_NUM);
+      font(ctx, 800, Math.max(64, Math.floor((110 * (CARD_W - 96)) / scoreW)));
     }
     ctx.fillStyle = INK;
     ctx.fillText(data.score, CARD_W / 2, y + 140);
