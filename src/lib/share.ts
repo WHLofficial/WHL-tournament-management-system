@@ -21,7 +21,12 @@ const BG = "#faf8f2";
 const ink = (a: number): string => `rgba(34,33,29,${a})`;
 
 const PALETTE = ["#0e7a46", "#e8590c", "#1971c2", "#9c36b5", "#e64980", "#f08c00"];
-const FONT = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif';
+// 与站点同一套字体角色：正文 Inter、标题宋体、数字 JetBrains（v5.8.2）
+// canvas 只能用「已加载」的字体，画之前必须 ensureShareFonts()，否则首张卡会静默退回系统字体
+const FONT = '"Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif';
+const FONT_DISPLAY = '"Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif';
+// 中文混在数字串里（「点球 4 : 3」）时落到雅黑，不要交给等宽栈去猜
+const FONT_NUM = '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, "Microsoft YaHei", monospace';
 
 // 近 5 场圆点配色（与网页端 .fdot-W/D/L 同色）
 const FORM_DOT_COLORS: Record<FormLetter, string> = { W: "#0e7a46", D: "#b7c2ba", L: "#b05a3a" };
@@ -307,8 +312,19 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number):
   return `${t}…`;
 }
 
-function font(ctx: CanvasRenderingContext2D, weight: number | string, size: number): void {
-  ctx.font = `${weight} ${size}px ${FONT}`;
+function font(ctx: CanvasRenderingContext2D, weight: number | string, size: number, family = FONT): void {
+  ctx.font = `${weight} ${size}px ${family}`;
+}
+
+// 生成分享卡前先把三族字体拉进 FontFaceSet：canvas 不会替你触发 @font-face 下载，
+// 没加载好时会用回退字体量宽、画出来与站点不一致（宋体标题尤其明显）
+async function ensureShareFonts(): Promise<void> {
+  if (typeof document === "undefined" || !document.fonts) return;
+  await Promise.all([
+    document.fonts.load('600 44px "Noto Serif SC"', "赛事总览战报"),
+    document.fonts.load('700 24px "JetBrains Mono"', "0123456789 :"),
+    document.fonts.load('400 24px "Inter"', "WHL abc 0123"),
+  ]);
 }
 
 // 字距：Chrome/canvas 支持 letterSpacing；不支持时静默退化（仅少字距，不影响布局）
@@ -369,7 +385,7 @@ const HEAD_MAX_W = CARD_W - 96;
 
 // 头部布局测量：仅由 title/subtitle 文本决定，供高度预算与绘制共用
 function headerMetrics(ctx: CanvasRenderingContext2D, title: string, subtitle: string): number {
-  font(ctx, 700, 44);
+  font(ctx, 600, 44, FONT_DISPLAY);
   const t = fitText(ctx, title, HEAD_MAX_W);
   const tw = ctx.measureText(t).width;
   font(ctx, 400, 28);
@@ -404,7 +420,7 @@ async function drawHeader(ctx: CanvasRenderingContext2D, title: string, subtitle
   const titleBaseline = y + HEAD_BRAND_H + 16 + 36;
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = INK;
-  font(ctx, 700, 44);
+  font(ctx, 600, 44, FONT_DISPLAY);
   const shown = fitText(ctx, title, HEAD_MAX_W);
   const titleW = ctx.measureText(shown).width;
   ctx.fillText(shown, HEAD_X, titleBaseline);
@@ -553,14 +569,14 @@ async function drawMatchLine(
   roundRectPath(ctx, cx - pill / 2, y - pillH / 2, pill, pillH, pillH / 2);
   ctx.fill();
   ctx.textAlign = "center";
-  if (m.status === "finished") {
-    font(ctx, 700, 22);
-    ctx.fillStyle = INK;
-    ctx.fillText(`${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`, cx, y + 1);
-  } else if (m.status === "live") {
-    font(ctx, 700, 22);
-    ctx.fillStyle = ACCENT;
-    ctx.fillText(`${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`, cx, y + 1);
+  if (m.status === "finished" || m.status === "live") {
+    // 胶囊宽度是常量：等宽数字比比例字宽，两位数比分先缩号再画，避免顶到胶囊边
+    const scoreText = `${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`;
+    font(ctx, 700, 22, FONT_NUM);
+    const sw = ctx.measureText(scoreText).width;
+    if (sw > pill - 14) font(ctx, 700, Math.max(14, Math.floor((22 * (pill - 14)) / sw)), FONT_NUM);
+    ctx.fillStyle = m.status === "live" ? ACCENT : INK;
+    ctx.fillText(scoreText, cx, y + 1);
   } else {
     font(ctx, 600, 18);
     ctx.fillStyle = ink(0.45);
@@ -568,7 +584,7 @@ async function drawMatchLine(
   }
   const subY = y + pillH / 2 + 20; // 胶囊下方副注/摘要首行
   if (m.status === "finished" && (m.penHome != null || m.penAway != null)) {
-    font(ctx, 400, 23);
+    font(ctx, 400, 23, FONT_NUM);
     ctx.fillStyle = ink(0.6);
     ctx.textBaseline = "middle";
     ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, subY);
@@ -601,6 +617,7 @@ export async function drawTournamentCard(canvas: HTMLCanvasElement, data: Tourna
   canvas.width = CARD_W;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  await ensureShareFonts();
 
   // 高度自适应：先算内容总高，再定画布，QR/脚注锚底
   const rowsStart = headerMetrics(ctx, data.name, data.subtitle) + 46;
@@ -636,6 +653,7 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
   canvas.width = CARD_W;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  await ensureShareFonts();
 
   // 同分钟同侧的相邻事件合并为一个节点（分钟只标一次，节点内各事件保序）；取前 10 个节点
   const groups: ShareEventRow[][] = [];
@@ -650,8 +668,7 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
   );
   const totalH = nodeHeights.reduce((a, b) => a + b, 0) + Math.max(0, nodes.length - 1) * NODE_GAP;
 
-  const cs0 = headerMetrics(ctx, data.tournamentName, data.subtitle);
-  const cy = cs0 + 120; // 大比分行中轴
+  const cs0 = headerMetrics(ctx, data.tournamentName, data.subtitle);  const cy = cs0 + 120; // 大比分行中轴
   const rowsStart = cy + 140; // 事件链条起始
   const contentEnd = nodes.length > 0 ? rowsStart + totalH : cy + 110;
   const H = Math.max(MIN_H, contentEnd + FOOT_H);
@@ -662,10 +679,15 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
   const m = data.match;
   const badge = 72;
   const cx = CARD_W / 2;
+  // 比分与队名共用中轴两侧：等宽数字比原来的比例字宽，固定 104 会让「1 : 0」压到队名上
+  const scoreText = `${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`;
+  font(ctx, 700, 72, FONT_NUM);
+  const scoreW = ctx.measureText(scoreText).width;
+  const sideGap = Math.max(104, Math.min(scoreW, 520) / 2 + 16);
 
   ctx.textBaseline = "middle";
   // 长队名先缩号（最低 17px），缩到下限仍放不下才截断
-  const nameMax = cx - 104 - badge - 8 - 32;
+  const nameMax = cx - sideGap - badge - 8 - 32;
   const drawCardName = (name: string, x: number, align: CanvasTextAlign): number => {
     font(ctx, 700, 32);
     const w = ctx.measureText(name).width;
@@ -677,11 +699,11 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
     return ctx.measureText(shown).width;
   };
 
-  const hw = drawCardName(m.home.name, cx - 104, "right");
-  await drawTeamBadge(ctx, m.home, cx - 104 - hw - 8 - badge, cy - badge / 2, badge);
+  const hw = drawCardName(m.home.name, cx - sideGap, "right");
+  await drawTeamBadge(ctx, m.home, cx - sideGap - hw - 8 - badge, cy - badge / 2, badge);
 
-  const aw = drawCardName(m.away.name, cx + 104, "left");
-  await drawTeamBadge(ctx, m.away, cx + 104 + aw + 8, cy - badge / 2, badge);
+  const aw = drawCardName(m.away.name, cx + sideGap, "left");
+  await drawTeamBadge(ctx, m.away, cx + sideGap + aw + 8, cy - badge / 2, badge);
 
   ctx.textAlign = "center";
   if (m.status === "pending") {
@@ -692,11 +714,13 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
     ctx.fillStyle = ink(0.5);
     ctx.fillText("未开打", cx, cy + 58);
   } else {
-    font(ctx, 700, 72);
+    font(ctx, 700, 72, FONT_NUM);
+    const sw = ctx.measureText(scoreText).width;
+    if (sw > 520) font(ctx, 700, Math.max(44, Math.floor((72 * 520) / sw)), FONT_NUM);
     ctx.fillStyle = m.status === "live" ? ACCENT : INK;
-    ctx.fillText(`${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`, cx, cy);
+    ctx.fillText(scoreText, cx, cy);
     if (m.penHome != null || m.penAway != null) {
-      font(ctx, 400, 23);
+      font(ctx, 400, 23, FONT_NUM);
       ctx.fillStyle = ink(0.6);
       ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, cy + 58);
     }
@@ -782,6 +806,7 @@ export async function drawRoundCard(canvas: HTMLCanvasElement, data: RoundCardDa
   canvas.width = CARD_W;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  await ensureShareFonts();
 
   const rowsStart = headerMetrics(ctx, data.tournamentName, data.title) + 16;
   const list = data.matches.slice(0, 12);
@@ -823,6 +848,7 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
   canvas.width = CARD_W;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  await ensureShareFonts();
 
   const rowH = 64;
   const GROUP_LABEL_H = 52; // 组标行（18 间距 + 34 标高）
@@ -948,11 +974,16 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
     // 逐行量宽后协商预算：数字列居中、可向两侧邻列的留白扩界（修两位数名次被截成「1…」），
     // 名称列右界收到右邻列文本左缘（修长队名压到「赛」列数字上）。
     const strong = data.strongCol ?? row.length - 1;
-    const fonts = row.map((_, ci) =>
-      ci === strong ? [800, 28] : nameCols.has(ci) ? [700, 26] : [400, 24],
+    // 数字列走等宽（与站点表格一致），名称列仍是正文栈；400/24 列里夹的中文会落到雅黑
+    const fonts = row.map((_, ci): [number, number, string] =>
+      ci === strong
+        ? [800, 28, FONT_NUM]
+        : nameCols.has(ci)
+          ? [700, 26, FONT]
+          : [400, 24, FONT_NUM],
     );
     const tw = row.map((cell, ci) => {
-      font(ctx, fonts[ci][0], fonts[ci][1]);
+      font(ctx, fonts[ci][0], fonts[ci][1], fonts[ci][2]);
       return ctx.measureText(cell).width;
     });
     // 相邻数字文本的最小间距（列里文字都居中，这个值直接决定两块数字之间的留白）：
@@ -1004,7 +1035,7 @@ export async function drawTableCard(canvas: HTMLCanvasElement, data: TableCardDa
     }
     row.forEach((cell, ci) => {
       ctx.textAlign = nameCols.has(ci) ? "left" : "center";
-      font(ctx, fonts[ci][0], fonts[ci][1]);
+      font(ctx, fonts[ci][0], fonts[ci][1], fonts[ci][2]);
       ctx.fillStyle =
         zc && (ci === 0 || nameCols.has(ci)) ? zc : ci === strong ? INK : ink(0.85);
       if (nameCols.has(ci)) {
@@ -1309,8 +1340,9 @@ export async function drawNewsCard(
   canvas.width = CARD_W;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  await ensureShareFonts();
 
-  font(ctx, 800, 44);
+  font(ctx, 600, 44, FONT_DISPLAY);
   const lines = wrapNewsTitle(ctx, data.title, CARD_W - 96, 3);
   const yAfterTitle = 188 + lines.length * 58;
   const contentEnd = data.score ? yAfterTitle + 226 : yAfterTitle - 30;
@@ -1326,7 +1358,7 @@ export async function drawNewsCard(
   ctx.fillText(data.kicker, HEAD_X, 118);
   setLetterSpacing(ctx, "0px");
 
-  font(ctx, 800, 44);
+  font(ctx, 600, 44, FONT_DISPLAY);
   ctx.fillStyle = INK;
   let y = 188;
   for (const ln of lines) {
@@ -1336,7 +1368,12 @@ export async function drawNewsCard(
 
   if (data.score) {
     ctx.textAlign = "center";
-    font(ctx, 800, 110);
+    // 大比分走等宽：位数越多越宽，先量后缩，别顶出 96px 边距
+    font(ctx, 800, 110, FONT_NUM);
+    const scoreW = ctx.measureText(data.score).width;
+    if (scoreW > CARD_W - 96) {
+      font(ctx, 800, Math.max(64, Math.floor((110 * (CARD_W - 96)) / scoreW)), FONT_NUM);
+    }
     ctx.fillStyle = INK;
     ctx.fillText(data.score, CARD_W / 2, y + 140);
     font(ctx, 600, 32);
