@@ -417,6 +417,7 @@
 18. **TC-GEN-018 字体加载与作用域（v5.8.1）** `P2` — DevTools Network 过滤 `woff2`，打开 `/`、`/weekly`、`/t/:id`、`/report/:mid`；预期：只请求 `noto-serif-sc-600-subset` + `inter-latin` + `jbmono-latin`（365,632 B），无 404；页面标题 computed `font-family` 首项为 `Noto Serif SC`，卡片 h3 与 `.whl-headline-title` 仍为 `Inter`；`document.fonts.check('600 32px "Noto Serif SC"', '赛事')` 为 true。
 19. **TC-GEN-019 字体子集缺字** `P3` — 在标题里临时写一个子集外汉字（如「龘」）；预期：该字回退系统宋体、其余字仍衬线，不出现豆腐块；确认后恢复文案。
 20. **TC-GEN-020 375 报头单行（v5.8.1 修 F7）** `P2` — 375px 打开首页，量 `.whl-masthead` 高度；预期：≤40px（改前两行 65px），日期显示 `MM-DD 周X` 且「WHL 头版」不折行；480–1440px 仍显示长日期。
+21. **TC-GEN-021 分享卡字体（v5.8.2）** `P2` — 分别打开单场卡、赛事总览卡、积分榜卡、头条卡分享弹窗；预期：生成前 `document.fonts` 已加载 Noto Serif SC 600 / Inter / JetBrains Mono 三族（`ensureShareFonts`），卡名与大标题是宋体、比分与榜单数字是等宽，两位数比分不压到队名（单场卡 `sideGap` 动态），卡片宽度恒 890。
 
 ---
 

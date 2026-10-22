@@ -96,3 +96,12 @@
 - 大比分：`/` 375 下 `2:0` 与两侧队名未挤压（`tour-impl-home-375.png`）。
 - 未覆盖：`/news`、`/tactics`、`/admin/teams` 截图（本地种子数据无内容/需额外登录态）；admin 两页用 KV `sess:<token>`（user 904）种会话验证，衬线与表格宽度均正常。
 - 截图：`C:/tmp/fontwork/tour-impl-{home,weekly,tour,report,standings,admin,codes}-{1440,375}.png`。
+
+## 8. v5.8.2 补丁：分享卡字体（2026-10-23）
+
+v5.8.1 只改了页面 CSS；`src/lib/share.ts` 的 canvas 卡片把系统字体栈写死在 `FONT` 里、又不继承页面样式，所以卡片仍是旧字形。补丁口径：
+
+- `FONT` 改为 `'Inter', <系统 CJK 栈>`；新增 `FONT_DISPLAY`（宋体 600）用于 `drawHeader` 44px 卡名与头条卡 44px 大标题；新增 `FONT_NUM`（JetBrains 前置、尾部带雅黑接中文）用于单场 72px 比分、轮次卡 22px 胶囊比分、点球注、榜单卡数字列、头条卡 110px 大比分。
+- `ensureShareFonts()`：canvas 不会触发 `@font-face` 下载，5 个 `drawXxxCard` 开头先 `await document.fonts.load` 三族，否则首张卡用回退字体量宽。
+- 单场卡队名/徽标原固定在中轴 ±104px，等宽数字下「1 : 0」约 190px 会压到队名；改为按比分实测宽度取 `sideGap = max(104, min(scoreW,520)/2+16)`，`nameMax` 同步让位；轮次胶囊、单场中轴、头条大比分各加超宽缩号兜底。
+- 实测（本地 dist @ 8790）：4 种卡片均 890×N，`document.fonts` 三族 loaded，卡片生成前 3 个字体文件各 200；typecheck 0 error、52 文件 / 629 通过、build 成功。截图 `C:/tmp/fontwork/share-{match,tour,table,news}.png`。
