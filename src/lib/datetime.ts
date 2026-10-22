@@ -92,6 +92,11 @@ export function fmtDateLong(iso: string | null | undefined): string {
   return fmtIn(iso, { ...D, weekday: 'long' as const }, (p) => `${p.y} 年 ${Number(p.mo)} 月 ${Number(p.d)} 日 ${p.wd}`);
 }
 
+/** MM-DD 周X（窄屏报头：375 下长日期把「WHL 头版」挤成两行，plan §F7） */
+export function fmtDateShortWd(iso: string | null | undefined): string {
+  return fmtIn(iso, { month: '2-digit', day: '2-digit', weekday: 'short' as const }, (p) => `${p.mo}-${p.d} ${p.wd}`);
+}
+
 /** 某时刻的上海日历日（YYYY-MM-DD，UTC+8）。与展示偏好无关：周报周界等业务口径永远上海 */
 export function shanghaiDateStr(ms: number): string {
   return new Date(ms + 8 * 3600_000).toISOString().slice(0, 10);
@@ -117,6 +122,7 @@ export interface TimeFmt {
   dateTime: (iso: string | null | undefined) => string;
   date: (iso: string | null | undefined) => string;
   dateShort: (iso: string | null | undefined) => string;
+  dateShortWd: (iso: string | null | undefined) => string;
   dateLong: (iso: string | null | undefined) => string;
 }
 
@@ -130,6 +136,7 @@ export function useTimeFmt(): TimeFmt {
       dateTime: fmtDateTime,
       date: fmtDate,
       dateShort: fmtDateShort,
+      dateShortWd: fmtDateShortWd,
       dateLong: fmtDateLong,
     }),
     [pref],

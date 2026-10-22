@@ -63,8 +63,10 @@
   border-bottom: 3px double var(--pitch);
   padding-bottom: 8px;
 }
-.whl-masthead h2 { margin: 0; font-size: 24px; letter-spacing: 6px; color: var(--pitch-deep); }
-.whl-masthead-date { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.whl-masthead h2 { margin: 0; font-size: 24px; letter-spacing: 6px; color: var(--pitch-deep); white-space: nowrap; }
+.whl-masthead-date { font-size: 12px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+/* 窄屏用短日期（MM-DD 周X）：长日期在 375 下把「WHL 头版」挤成两行（plan §F7） */
+.whl-masthead-date--short { display: none; }
 .whl-masthead-all { margin-left: auto; font-size: 13px; color: var(--pitch); text-decoration: none; flex: none; }
 .whl-masthead-all:hover { text-decoration: underline; }
 
@@ -264,6 +266,11 @@
 .react-btn:disabled { opacity: .55; cursor: default; }
 
 /* ---------- 窄屏 ---------- */
+@media (max-width: 480px) {
+  /* 报头：长日期（YYYY 年 M 月 D 日 星期X，约 155px）换短日期，否则「WHL 头版」折行 */
+  .whl-masthead-date--long { display: none; }
+  .whl-masthead-date--short { display: inline; }
+}
 @media (max-width: 640px) {
   .whl-masthead h2 { font-size: 19px; letter-spacing: 4px; }
   .whl-headline { padding: 16px 14px 12px; --hl-ring: 86px; }

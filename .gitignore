@@ -12,3 +12,6 @@ dist/
 # 用户手册构建产物与截图（约 19MB 本地交付物），不入库
 docs/
 .superpowers/
+
+# 字体子集脚本的下载缓存（14.8MB 原 TTF 与 chars.txt），不入库
+scripts/.font-cache/

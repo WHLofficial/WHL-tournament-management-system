@@ -100,7 +100,7 @@ export function ReactionBar({
 
 // 头版门户（公开）：工具入口 + 赛事卡 + 官方公告 + 快讯 ticker + 「WHL 头版」（头条对撞卡 + 快讯流橱窗）
 export function Home() {
-  const { time, dateLong } = useTimeFmt();
+  const { time, dateLong, dateShortWd } = useTimeFmt();
   const [list, setList] = useState<TournamentDTO[] | null>(null);
   const [upcoming, setUpcoming] = useState<UpcomingDTO[] | null>(null);
   const [liveList, setLiveList] = useState<LiveDTO[] | null>(null);
@@ -296,7 +296,9 @@ export function Home() {
           <section className="whl-press">
             <div className="whl-masthead">
               <h2>WHL 头版</h2>
-              <span className="whl-masthead-date">{dateLong(new Date().toISOString())}</span>
+              {/* 375 下长日期会把报头挤成两行：窄屏换成 MM-DD 周X（plan §F7） */}
+              <span className="whl-masthead-date whl-masthead-date--long">{dateLong(new Date().toISOString())}</span>
+              <span className="whl-masthead-date whl-masthead-date--short">{dateShortWd(new Date().toISOString())}</span>
               <Link className="whl-masthead-all" to="/news">
                 查看全部 →
               </Link>

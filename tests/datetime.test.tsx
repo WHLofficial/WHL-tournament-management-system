@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { fmtDate, fmtDateLong, fmtDateShort, fmtDateTime, fmtTime, getTzPref, setTzPref, shanghaiDateStr, tzLabel, useTzPref } from "../src/lib/datetime";
+import { fmtDate, fmtDateLong, fmtDateShort, fmtDateShortWd, fmtDateTime, fmtTime, getTzPref, setTzPref, shanghaiDateStr, tzLabel, useTzPref } from "../src/lib/datetime";
 
 // React 19 的 act 需要这个全局标记，否则只出警告不出错；显式打开
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -80,6 +80,13 @@ describe("扩展格式（头版长日期 / 周报短日期 / 上海日历日）"
     expect(fmtDateShort("2026-10-03T13:05:00Z")).toBe("10-03");
     expect(fmtDateShort(null)).toBe("—");
     expect(fmtDateShort("not-a-date")).toBe("—");
+  });
+
+  it("fmtDateShortWd：MM-DD 周X（窄屏报头），随北京档跨日", () => {
+    expect(fmtDateShortWd("2026-10-03T16:30:00Z")).toBe("10-04 周日");
+    setTzPref("utc");
+    expect(fmtDateShortWd("2026-10-03T16:30:00Z")).toBe("10-03 周六");
+    expect(fmtDateShortWd(null)).toBe("—");
   });
 
   it("shanghaiDateStr：+8h 取日期，16:00:00Z 跨到次日；与展示偏好无关", () => {

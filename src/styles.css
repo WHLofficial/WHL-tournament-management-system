@@ -1,3 +1,56 @@
+/* ---- 字体（v5.8.1，plan-v5.8.1-font-scheme.md）----
+   标题=思源宋体子集（Noto Serif SC 600）；正文西文=Inter，中文走系统黑体；数字=JetBrains Mono。
+   三族全 OFL 自托管，文件清单与再生成见 public/fonts/README.md。
+   子集只有 600 一档：标题规则必须配 font-synthesis-weight:none，否则写 700 会被合成假粗（CJK 会糊）。 */
+@font-face {
+  font-family: 'Noto Serif SC';
+  src: url('/fonts/noto-serif-sc-600-subset.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Latin-Ext 单独一片：只有 Š/Đ/Ł 这类重音字符出现时才下载（约 74KB），不进首屏 */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jbmono-latin.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jbmono-latin-ext.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
   /* 球场记分牌色板：草皮绿 / 记分板墨 / 场线白 / 哨声灰 / 比赛日橙 */
   --pitch: #0e7a46;
@@ -13,7 +66,13 @@
      上一行是给不支持 color-mix 的浏览器的退路（10% 的 --pitch 旧写法） */
   --pitch-soft: rgba(14, 122, 70, 0.1);
   --pitch-soft: color-mix(in srgb, var(--pitch) 10%, transparent);
-  --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+  /* 字体角色（v5.8.1）：标题 / 正文 / 数字。--mono 保留为旧名，新代码用 --font-mono。
+     正文栈里 Inter 只覆盖拉丁；CJK 落到系统黑体（PingFang / 雅黑 / Noto Sans）。 */
+  --font-display: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', 'Source Han Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  --mono: var(--font-mono); /* 旧名（v5.8.0 及以前 41 处 var(--mono)）：等同 --font-mono */
 }
 
 * {
@@ -24,13 +83,18 @@ body {
   margin: 0;
   background: var(--chalk);
   color: var(--ink);
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    "PingFang SC",
-    "Microsoft YaHei",
-    sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* 版面级标题走宋体子集（v5.8.1，plan §F2）：只给 4 个 ≥19px 的选择器，
+   13–16px 的卡片小标题与反白头条标题保持黑体——实测小字号衬线发虚、反白显细。 */
+h1,
+.art-title,
+.page-head h2,
+.whl-masthead h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-synthesis-weight: none;
 }
 
 .container {
