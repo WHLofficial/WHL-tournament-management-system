@@ -63,7 +63,9 @@
 | 62 | v5.8.3 | 分享卡比分回退正文栈（v5.8.2 观感回调）：等宽 JetBrains 在比分行左右留白过大（胶囊 `2 : 4`、单场 72px、头条 110px 都有发空感），按用户反馈把所有比分改回 `FONT`（Inter + 系统 CJK）——轮次卡胶囊比分与点球注、单场卡 72px 大比分与点球注、头条卡 110px 大比分；`FONT_NUM` 只保留积分榜数字列（`strong` 800/28、其余数字列 400/24），列对齐仍靠等宽；单场卡 `sideGap` 实测公式与三处超宽缩号兜底保留（比例字下 sideGap 回到 104 下限）。实测：本地 dist 赛事总览卡 890×760，比分恢复比例字观感、卡名仍宋体、榜单卡数字列仍 JetBrains；typecheck 0 错误、**52 文件 / 629 通过（7 跳过）**、build 成功 | patch：纯展示微调（分享卡比分行字距），无新能力，无接口与数据变更 |
 
 
-**当前版本：v5.8.3**
+| 65 | v5.9.2 | 字体源切换到平台共享源 fonts.whleague.win/v1（待上线）：`src/styles.css` 顶部 5 条 `@font-face` 的 `src` 由 `/fonts/…` 相对路径改为 `https://fonts.whleague.win/v1/…` 绝对 URL（衬线换用四仓并集 union 单文件 `noto-serif-sc-600-union.woff2`，Inter/JBMono 四件同名；`unicode-range`/`font-weight` 区间/`font-display: swap` 声明原样保留），CSS 顶部加版本注释「字体版本：v1（升级时全局替换 fonts.whleague.win/v1/）」；`index.html` preload 的 `href` 同步改绝对 URL（`crossorigin` 保留，字体天然 CORS 模式）；TEST_PLAN TC-GEN-018 断言同步改写：woff2 请求全部命中 `https://fonts.whleague.win/v1/` 且版本段一致、删 365,632 B 体积锁（union 体积不由本仓决定），并注明待上线窗口页面回退系统栈属预期、验收不得访问该域名；`public/fonts/` 本地 5 件 woff2 + 3 OFL 保留作回滚垫（阶段 4 清理另轮授权）。**待上线**：fonts.whleague.win（R2 桶 whl-fonts）尚未建立，本提交不 push 不部署，上线前字体回退系统栈为预期；全量测试由工作流脚本统一执行 | patch：纯资源指向切换，无新能力，无接口与数据变更 |
+
+**当前版本：v5.9.2**
 
 
 ## 落地位置

@@ -414,7 +414,7 @@
 15. **TC-GEN-015 大列表执行计划** `P1` — 跑 `npx vite-node scripts/d1-read-audit/smoke.mts`（或在生产副本上）；预期：读消耗不超 `cost-model.json` 上限，无新增全表扫。
 16. **TC-GEN-016 中文与日期格式** `P3` — 全站巡检；预期：无英文残留，日期为 `zh-CN` 格式。
 17. **TC-GEN-017 窄屏可用性** `P2` — 375px 宽度下走一遍公开端与教练端主流程；预期：无横向溢出、关键按钮可点。
-18. **TC-GEN-018 字体加载与作用域（v5.8.1）** `P2` — DevTools Network 过滤 `woff2`，打开 `/`、`/weekly`、`/t/:id`、`/report/:mid`；预期：只请求 `noto-serif-sc-600-subset` + `inter-latin` + `jbmono-latin`（365,632 B），无 404；页面标题 computed `font-family` 首项为 `Noto Serif SC`，卡片 h3 与 `.whl-headline-title` 仍为 `Inter`；`document.fonts.check('600 32px "Noto Serif SC"', '赛事')` 为 true。
+18. **TC-GEN-018 字体加载与作用域（v5.8.1；v5.9.2 起 src 指向平台共享源）** `P2` — DevTools Network 过滤 `woff2`，打开 `/`、`/weekly`、`/t/:id`、`/report/:mid`；预期：woff2 请求 URL 全部命中 `https://fonts.whleague.win/v1/`（版本段 v1 一致），文件为 `noto-serif-sc-600-union` + `inter-latin` + `jbmono-latin`，无 `*-ext` 请求、无 404；**fonts.whleague.win 尚未上线时（待上线窗口）页面标题回退系统宋体、正文回退系统黑体属预期，验收用例不得直接访问该域名**；共享源可用后：页面标题 computed `font-family` 首项为 `Noto Serif SC`，卡片 h3 与 `.whl-headline-title` 仍为 `Inter`，`document.fonts.check('600 32px "Noto Serif SC"', '赛事')` 为 true。
 19. **TC-GEN-019 字体子集缺字** `P3` — 在标题里临时写一个子集外汉字（如「龘」）；预期：该字回退系统宋体、其余字仍衬线，不出现豆腐块；确认后恢复文案。
 20. **TC-GEN-020 375 报头单行（v5.8.1 修 F7）** `P2` — 375px 打开首页，量 `.whl-masthead` 高度；预期：≤40px（改前两行 65px），日期显示 `MM-DD 周X` 且「WHL 头版」不折行；480–1440px 仍显示长日期。
 21. **TC-GEN-021 分享卡字体（v5.8.2）** `P2` — 分别打开单场卡、赛事总览卡、积分榜卡、头条卡分享弹窗；预期：生成前 `document.fonts` 已加载 Noto Serif SC 600 / Inter / JetBrains Mono 三族（`ensureShareFonts`），卡名与大标题是宋体、榜单数字列是等宽，卡片宽度恒 890。

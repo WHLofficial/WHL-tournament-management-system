@@ -1,10 +1,12 @@
-/* ---- 字体（v5.8.1，plan-v5.8.1-font-scheme.md）----
-   标题=思源宋体子集（Noto Serif SC 600）；正文西文=Inter，中文走系统黑体；数字=JetBrains Mono。
-   三族全 OFL 自托管，文件清单与再生成见 public/fonts/README.md。
+/* 字体版本：v1（升级时全局替换 fonts.whleague.win/v1/） */
+/* ---- 字体（v5.8.1，plan-v5.8.1-font-scheme.md；v5.9.2 起 src 指向平台共享源）----
+   标题=思源宋体 union 子集（Noto Serif SC 600）；正文西文=Inter，中文走系统黑体；数字=JetBrains Mono。
+   五件 woff2 托管在平台共享源 fonts.whleague.win/v1/（衬线为四仓并集单文件，跨站共享缓存）；
+   本地 public/fonts/ 副本暂留作回滚垫（阶段 4 清理另行授权），清单与再生成见 public/fonts/README.md。
    子集只有 600 一档：标题规则必须配 font-synthesis-weight:none，否则写 700 会被合成假粗（CJK 会糊）。 */
 @font-face {
   font-family: 'Noto Serif SC';
-  src: url('/fonts/noto-serif-sc-600-subset.woff2') format('woff2');
+  src: url('https://fonts.whleague.win/v1/noto-serif-sc-600-union.woff2') format('woff2');
   font-weight: 600;
   font-style: normal;
   font-display: swap;
@@ -12,7 +14,7 @@
 
 @font-face {
   font-family: 'Inter';
-  src: url('/fonts/inter-latin.woff2') format('woff2');
+  src: url('https://fonts.whleague.win/v1/inter-latin.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -23,7 +25,7 @@
 /* Latin-Ext 单独一片：只有 Š/Đ/Ł 这类重音字符出现时才下载（约 74KB），不进首屏 */
 @font-face {
   font-family: 'Inter';
-  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  src: url('https://fonts.whleague.win/v1/inter-latin-ext.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -33,7 +35,7 @@
 
 @font-face {
   font-family: 'JetBrains Mono';
-  src: url('/fonts/jbmono-latin.woff2') format('woff2');
+  src: url('https://fonts.whleague.win/v1/jbmono-latin.woff2') format('woff2');
   font-weight: 100 800;
   font-style: normal;
   font-display: swap;
@@ -43,7 +45,7 @@
 
 @font-face {
   font-family: 'JetBrains Mono';
-  src: url('/fonts/jbmono-latin-ext.woff2') format('woff2');
+  src: url('https://fonts.whleague.win/v1/jbmono-latin-ext.woff2') format('woff2');
   font-weight: 100 800;
   font-style: normal;
   font-display: swap;
