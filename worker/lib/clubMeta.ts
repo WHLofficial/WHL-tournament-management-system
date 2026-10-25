@@ -52,6 +52,20 @@ function cleanPlaystyles(raw: unknown): number[] {
 }
 
 /**
+ * 徽章真身在 attrs.PSID1-15（值 > 0 即一个徽章 id，金 = 基础 + 100），而 club 下发的
+ * playstyles 数组几乎恒空。下发为空时从这里补齐，与 cleanPlaystyles 同一出口
+ * （正整数、去重、排序）；PSID 键本身留在 attrs 里不剥离，读侧 trim 自己决定带不带。
+ */
+function playstylesFromAttrs(attrs: Record<string, number>): number[] {
+  const raw: number[] = [];
+  for (let i = 1; i <= 15; i++) {
+    const v = attrs[`PSID${i}`];
+    if (typeof v === "number") raw.push(v);
+  }
+  return cleanPlaystyles(raw);
+}
+
+/**
  * 按 fcId 批量拉元数据。**形状不对就抛**（调用方逐批 try/catch 降级）：
  * - 非 2xx → 抛；
  * - 响应里没有 players 数组 → 抛（半截数据当全量用会把整批球员的元数据一起写坏）；
@@ -90,14 +104,17 @@ export async function fetchPlayerMetaBatch(
     if (typeof p.fcId !== "number" || !Number.isInteger(p.fcId) || p.fcId <= 0) {
       continue;
     }
+    const attrs = cleanAttrs(p.attrs);
+    const delivered = cleanPlaystyles(p.playstyles);
     out.push({
       fcId: p.fcId,
       height:
         typeof p.height === "number" && Number.isFinite(p.height)
           ? Math.round(p.height)
           : null,
-      attrs: cleanAttrs(p.attrs),
-      playstyles: cleanPlaystyles(p.playstyles),
+      attrs,
+      // 下发非空时以下发为准不覆盖；下发为空才从 PSID 补齐（落库前修口径，不动 club 仓）
+      playstyles: delivered.length > 0 ? delivered : playstylesFromAttrs(attrs),
     });
   }
   return out;

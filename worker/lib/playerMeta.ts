@@ -4,6 +4,7 @@
 // 查不到就整条不进 Map —— DTO 里 meta 字段缺省，UI 按「有 meta 才渲染」降级。
 import type { PlayerMeta } from "../../shared/types";
 import { ATTR_KEYS } from "../../shared/tactics";
+import { FIT_ATTR_KEYS } from "../../shared/roleFit";
 
 // 单条 IN 查询的 id 上限。一次战术板点到的人远少于此，分批只为防 SQLite 的变量数上限。
 const ID_CHUNK = 50;
@@ -101,10 +102,30 @@ export async function loadPlayerMeta(
   return out;
 }
 
+// 名册级下发的 attrs 白名单（trimPlayerMetaForPool 用，模块级算一次）：
+// ① ATTR_KEYS（shared/tactics.ts，11 键）——定位球指派的相关性表继续用；
+// ② FIT_ATTR_KEYS（shared/roleFit.ts）——FIT 权重表的键并集，从 ROLE_FIT 派生、与权重表
+//    永不漂移（tests/roleFit.test.ts 钉住），fitScore 引擎算 base 的输入；
+// ③ RoleID1-5 / PosID1-4 —— FC26 熟悉度与位置 id，fitScore 加分项（+3/+5 与 +2）的输入；
+// ④ CA/PA —— 仅展示参考（候选行 CA 列、明细 CA/PA 标注），随 trim 下发但引擎不读、
+//    不进 FIT_ATTR_KEYS、不参与任何计算与排序（用户 2026-10-25 修订，原「不下发」作废）。
+// 刻意不带：PSID1-15（徽章统一走 playstyles，clubMeta 侧已从 PSID 补齐）、TeamID 等其余元数据。
+const POOL_ATTR_KEYS: readonly string[] = [
+  ...new Set<string>([
+    ...Object.values(ATTR_KEYS),
+    ...FIT_ATTR_KEYS,
+    ...[1, 2, 3, 4, 5].map((i) => `RoleID${i}`),
+    ...[1, 2, 3, 4].map((i) => `PosID${i}`),
+    "CA",
+    "PA",
+  ]),
+];
+
 /**
  * 名册级下发（/me/team 与 /bootstrap 的 team.players、代打板的 players）用的裁剪版 meta：
- * 一队几十个人头一次带走，attrs 里 club 下发的是 71 键，而战术页只读得到 ATTR_KEYS 那 11 个
- * （shared/tactics.ts）—— 其余键前端永远碰不到，留着只是白占首屏体积与 KV 缓存。
+ * 一队几十个人头一次带走，attrs 里 club 下发的是 71 键，而战术页只消费上面 POOL_ATTR_KEYS
+ * 那一份白名单（指派相关性 11 键 + FIT 引擎的权重键与 RoleID/PosID）——其余键前端永远
+ * 碰不到，留着只是白占首屏体积与 KV 缓存。
  * 全空返回 undefined：调用方据此不加空壳字段，维持「没 meta 就按无数据渲染」的口径。
  * 徽章只认 playstyles 里的金/银 id，条数本来就少，原样带走。
  */
@@ -112,9 +133,11 @@ export function trimPlayerMetaForPool(m: PlayerMeta): PlayerMeta | undefined {
   const out: PlayerMeta = {};
   if (typeof m.height === "number" && Number.isFinite(m.height)) out.height = m.height;
   const attrs: Record<string, number> = {};
-  for (const k of Object.values(ATTR_KEYS)) {
-    const v = m.attrs?.[k];
-    if (typeof v === "number" && Number.isFinite(v)) attrs[k] = v;
+  if (m.attrs) {
+    for (const k of POOL_ATTR_KEYS) {
+      const v = m.attrs[k];
+      if (typeof v === "number" && Number.isFinite(v)) attrs[k] = v;
+    }
   }
   if (Object.keys(attrs).length > 0) out.attrs = attrs;
   if (m.playstyles && m.playstyles.length > 0) out.playstyles = [...m.playstyles];

@@ -521,7 +521,10 @@ export interface LineupSubmitBody {
 // player_meta 表 —— 随名册同步从俱乐部平台镜像（见 worker/lib/clubMeta.ts），
 // 读侧是 worker/lib/playerMeta.ts，查不到就整条不返回，前端「有才渲染」。
 export interface PlayerMeta {
-  /** game_attrs 原样镜像：英文键 → 0-99 数值（用到的键名见 shared/tactics 的 ATTR_KEYS） */
+  /** game_attrs 原样镜像：英文键 → 0-99 数值。属性键见 shared/tactics 的 ATTR_KEYS 与
+   *  shared/roleFit 的 FIT_ATTR_KEYS；另含 RoleID1-5 / PosID1-4（熟悉度与位置 id，
+   *  fitScore 加分项输入）与展示参考用的 CA/PA（fitScore 引擎不读、不参与计算与排序）。
+   *  名册级下发走 trimPlayerMetaForPool 白名单 */
   attrs?: Record<string, number>;
   /** FC26 PlayStyle id（金徽 = 基础 id + 100，口径见 shared/fc26Playstyles；可能是银也可能是金） */
   playstyles?: number[];

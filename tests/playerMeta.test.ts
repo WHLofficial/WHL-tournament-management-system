@@ -1,13 +1,18 @@
 // player_meta 的读侧（worker/lib/playerMeta.ts）与镜像写侧（worker/lib/clubMeta.ts）。
-// 钉住四条线：
+// 钉住五条线：
 // ① 读侧真查 D1：脏 JSON、非数值属性、非法徽章 id 一律挡掉；三个字段都空的行走「没有这条 meta」
 //    （DTO 里 meta 缺省的旧语义不能变，前端按「有才渲染」）；
 // ② 读侧出错不上抛：表没迁移、字段脏都不该让阵容读出 500（meta 只是附加展示信息）；
 // ③ 写侧分批 90、单批失败不中断、响应形状不对只降级（name 册同步的桩对所有 fetch 都回 squads 数组，
 //    那条路径必须安静地变成「这一批没拉到」，绝不能抛进名册同步）；
-// ④ 只拉本仓 player 表里有的 fcId；upsert 一人一行、synced_at 跟着刷新。
+// ④ 只拉本仓 player 表里有的 fcId；upsert 一人一行、synced_at 跟着刷新；
+// ⑤ 名册级下发的 trim 键集 = ATTR_KEYS ∪ FIT_ATTR_KEYS ∪ RoleID1-5 ∪ PosID1-4 ∪ CA/PA
+//    （CA/PA 仅展示参考、引擎不读；PSID1-15 不下发，徽章统一走 playstyles）。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
+import { fitProfileAll } from "../shared/fitScore";
+import { FIT_ATTR_KEYS } from "../shared/roleFit";
+import { ATTR_KEYS } from "../shared/tactics";
 import type { Bindings } from "../worker/env";
 import {
   META_BATCH,
@@ -15,7 +20,7 @@ import {
   syncPlayerMeta,
   upsertPlayerMeta,
 } from "../worker/lib/clubMeta";
-import { loadPlayerMeta } from "../worker/lib/playerMeta";
+import { loadPlayerMeta, trimPlayerMetaForPool } from "../worker/lib/playerMeta";
 import { createTestDb, createTestKV, sqlAll } from "./d1";
 
 afterEach(() => {
@@ -190,6 +195,70 @@ describe("loadPlayerMeta：按 id 查 player_meta", () => {
   });
 });
 
+describe("trimPlayerMetaForPool：名册级裁剪键集（B1 S4 放宽）", () => {
+  // 期望键集从 shared 两侧 import 现算（RoleID/PosID 是固定 9 个 id 键，CA/PA 仅展示参考），
+  // shared 口径漂移时这里先红，而不是 payload 里悄悄多键少键
+  const POOL_KEYS = new Set<string>([
+    ...Object.values(ATTR_KEYS),
+    ...FIT_ATTR_KEYS,
+    ...[1, 2, 3, 4, 5].map((i) => `RoleID${i}`),
+    ...[1, 2, 3, 4].map((i) => `PosID${i}`),
+    "CA",
+    "PA",
+  ]);
+
+  it("白名单内的键全保留、不多不少：ATTR_KEYS ∪ FIT_ATTR_KEYS ∪ RoleID1-5 ∪ PosID1-4 ∪ CA/PA", () => {
+    const attrs: Record<string, number> = {};
+    for (const k of POOL_KEYS) attrs[k] = 77;
+    const out = trimPlayerMetaForPool({ attrs, height: 180, playstyles: [4] })!;
+    expect(Object.keys(out.attrs!).sort()).toEqual([...POOL_KEYS].sort());
+  });
+
+  it("CA/PA 随 trim 下发（展示参考）但不被引擎引用；PSID1-15 / NumofPS / TeamID 不带", () => {
+    const out = trimPlayerMetaForPool({
+      attrs: {
+        CA: 88,
+        PA: 3,
+        TeamID: 5,
+        PSID1: 104,
+        PSID2: 204,
+        NumofPS: 2,
+        curve: 80,
+        RoleID1: 142,
+        PosID1: 25,
+      },
+    })!;
+    expect(out.attrs).toEqual({
+      CA: 88,
+      PA: 3,
+      curve: 80,
+      RoleID1: 142,
+      PosID1: 25,
+    });
+    expect(out.playstyles).toBeUndefined();
+    // 「不被引擎引用」钉住：只带 CA/PA 的 meta 在 fitScore 眼里就是无数据（引擎全部 null）；
+    // FIT_ATTR_KEYS 也不含 CA/PA（tests/roleFit.test.ts 另有同款钉）
+    expect(fitProfileAll({ attrs: { CA: 88, PA: 3 } })).toBeNull();
+    expect(FIT_ATTR_KEYS).not.toContain("CA");
+    expect(FIT_ATTR_KEYS).not.toContain("PA");
+  });
+
+  it("height / playstyles 原样带走；坏值（非数值 / NaN）丢弃；三块全空 → undefined", () => {
+    const out = trimPlayerMetaForPool({
+      height: 189,
+      attrs: { curve: 80, finishing: "x" as unknown as number, jumping: NaN },
+      playstyles: [104, 5],
+    })!;
+    expect(out.height).toBe(189);
+    expect(out.attrs).toEqual({ curve: 80 });
+    expect(out.playstyles).toEqual([104, 5]);
+
+    // 只剩白名单外的键 = 什么都没带，维持「没 meta 就按无数据渲染」
+    expect(trimPlayerMetaForPool({ attrs: { TeamID: 1 } })).toBeUndefined();
+    expect(trimPlayerMetaForPool({})).toBeUndefined();
+  });
+});
+
 describe("fetchPlayerMetaBatch：单批拉取", () => {
   it("URL 形状与解析：base 末尾斜杠归一、height 取整、脏字段就地丢掉", async () => {
     let url = "";
@@ -217,6 +286,48 @@ describe("fetchPlayerMetaBatch：单批拉取", () => {
       { fcId: 2500801, height: 189, attrs: { curve: 88 }, playstyles: [4, 105] },
       { fcId: 2500802, height: null, attrs: {}, playstyles: [1] },
     ]);
+  });
+
+  it("playstyles 下发为空且 attrs 带 PSID1-15 → 用 PSID 集合补齐（去重排序走 cleanPlaystyles 同一出口）", async () => {
+    vi.stubGlobal("fetch", async () =>
+      json({
+        players: [
+          {
+            fcId: 100,
+            height: 180,
+            // 4 重复、0/负数/小数是脏 PSID 值，补齐路径要跟下发路径一样挡掉
+            attrs: {
+              curve: 80,
+              PSID1: 104,
+              PSID2: 204,
+              PSID3: 4,
+              PSID4: 4,
+              PSID5: 0,
+              PSID6: -3,
+              PSID7: 1.5,
+            },
+            playstyles: [],
+          },
+          { fcId: 101, height: 180, attrs: { PSID2: 142 } }, // 连 playstyles 键都没下发
+        ],
+      }),
+    );
+    const rows = await fetchPlayerMetaBatch("https://x", [100, 101]);
+    expect(rows[0].playstyles).toEqual([4, 104, 204]);
+    expect(rows[0].attrs.PSID1).toBe(104); // PSID 键留在 attrs 里，不剥离
+    expect(rows[1].playstyles).toEqual([142]);
+  });
+
+  it("playstyles 下发非空 → 以下发为准，不用 PSID 覆盖", async () => {
+    vi.stubGlobal("fetch", async () =>
+      json({
+        players: [
+          { fcId: 100, height: 180, attrs: { PSID1: 104, PSID2: 204 }, playstyles: [7] },
+        ],
+      }),
+    );
+    const rows = await fetchPlayerMetaBatch("https://x", [100]);
+    expect(rows[0].playstyles).toEqual([7]);
   });
 
   it("非 2xx 抛错，且报错里不带整串 fcId（90 个 id 能把日志撑爆）", async () => {

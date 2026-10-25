@@ -32,6 +32,14 @@ import {
   type TacticState,
 } from "../../shared/tactics";
 import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
+import {
+  fitPosGroup,
+  fitProfileAll,
+  fitTile,
+  fitTileTip,
+  type FitGroup,
+  type FitProfile,
+} from "../../shared/fitScore";
 import { TILE_NAME_MAX, heatSide, nameFontSize, surname, tilePositions } from "../lib/pitch";
 import {
   DRAFT_KEYS,
@@ -47,6 +55,7 @@ import {
 import { statusSuffix } from "../lib/assignCandidates";
 import { useNarrow } from "../lib/useNarrow";
 import { AssignSheet } from "../components/AssignSheet";
+import { FitCandidateList, fitTileClass } from "../components/FitCandidateList";
 import type { AssignCandidateItem } from "../components/AssignCandidate";
 import type {
   CoachPendingMatchDTO,
@@ -446,6 +455,23 @@ export default function Tactics() {
     () => assignCandidatesOf(assignPool, teamPlayers, metaOfPid),
     [assignPool, teamPlayers, metaOfPid],
   );
+  // FIT 引擎输入（B1 S5/S6）：pid → 全槽位得分表，磁贴底衬与球员卡候选面板共用一次计算，
+  // 前端实时算、不加任何接口（保密边界 spec §7：只渲染在教练端）。meta 优先级与
+  // assignCandidatesOf 同口径：已提交阵容 DTO > 名册条目自带。
+  const fitOfPid = useMemo(() => {
+    const m = new Map<number, FitProfile | null>();
+    for (const [pid, meta] of metaOfPid) m.set(pid, fitProfileAll(meta));
+    for (const p of teamPlayers ?? []) if (!m.has(p.id)) m.set(p.id, fitProfileAll(p.meta));
+    return m;
+  }, [teamPlayers, metaOfPid]);
+  // 位置群（fitTile 兜底定稿）：pid → 门将群/场上群，磁贴出档判定用。meta 来源与 fitOfPid
+  // 同循环同优先级，保证两表对同一 pid 指向同一份 meta。
+  const fitGroupPid = useMemo(() => {
+    const m = new Map<number, FitGroup>();
+    for (const [pid, meta] of metaOfPid) m.set(pid, fitPosGroup(meta));
+    for (const p of teamPlayers ?? []) if (!m.has(p.id)) m.set(p.id, fitPosGroup(p.meta));
+    return m;
+  }, [teamPlayers, metaOfPid]);
   // 已填项按 ASSIGN_KEYS 顺序（队长在最前）；互斥冲突按声明表算，前端预检与后端同源
   const assignFilled = ASSIGN_KEYS.filter((k) => assign[k] != null);
   const assignConflictList = useMemo(() => assignConflicts(assign), [assign]);
@@ -487,6 +513,19 @@ export default function Tactics() {
     return dup;
   }, [form, names]);
   const capPid = assign.captain ?? null;
+
+  // pid → 占据的首发槽（lid + 位置码）：候选面板「已首发」标记用，查看槽本身不算「别处」
+  const starterSlotsByPid = useMemo(() => {
+    const m = new Map<number, { lid: number; position: string }[]>();
+    for (const p of form.pos) {
+      const v = Number(names[String(p.lid)]);
+      if (!Number.isInteger(v) || v <= 0) continue;
+      const arr = m.get(v) ?? [];
+      arr.push({ lid: p.lid, position: p.position });
+      m.set(v, arr);
+    }
+    return m;
+  }, [form, names]);
 
   // 11 个首发：LS 里存的 pair 合法就用，否则回默认角色（换阵型后残留自动兜底）
   const players = useMemo(
@@ -1071,12 +1110,21 @@ export default function Tactics() {
                 const isCap = capPid != null && Number.isInteger(pid) && pid === capPid;
                 const mark = st && st.susp > 0 ? (st.inj ? " both" : " susp") : st && st.inj ? " inj" : "";
                 const tip = statTip(st);
+                // FIT 底衬（B1 S5）：个人内契合分（和自己比，本位置群内分池）→ fit-g/y/o/na 四态；
+                // 跨位置群槽位（如门将摆上场）无档走灰虚线，悬停显「非其位置群」不显两个数。
+                // 磁贴本体严禁出现数字（spec §3/§5.1），两个数只进悬停提示；无数据不追加。
+                const slotKey = `${p.position}|${pl.role}`;
+                const prof = Number.isInteger(pid) && pid > 0 ? fitOfPid.get(pid) ?? null : null;
+                const group: FitGroup =
+                  Number.isInteger(pid) && pid > 0 ? fitGroupPid.get(pid) ?? "OUT" : "OUT";
+                const fitVal = fitTile(prof, slotKey, group);
+                const fitTip = fitTileTip(prof, slotKey, group);
                 return (
                   <button
                     key={p.lid}
                     className={`tac-tile${selected === p.lid ? " sel" : ""}${mark}${dup ? " dup" : ""}`}
                     style={{ left: `${xy[0]}%`, top: `${100 - xy[1]}%` }}
-                    title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}${dup ? " · 这名球员在本场占了多个位置" : ""}`}
+                    title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}${fitTip}${dup ? " · 这名球员在本场占了多个位置" : ""}`}
                     aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}${tip ? `，${tip}` : ""}${dup ? "，位置重复" : ""}`}
                     onClick={() => setSelected(selected === p.lid ? null : p.lid)}
                   >
@@ -1098,7 +1146,7 @@ export default function Tactics() {
                     ) : null}
                     <span className="tac-tile-top">
                       <b>{p.position}</b>
-                      <span className="tac-tile-role">
+                      <span className={`tac-tile-role ${fitTileClass(fitVal)}`}>
                         {pl.role} - {focusAbbr(pl.focus)}
                       </span>
                     </span>
@@ -1724,6 +1772,30 @@ export default function Tactics() {
                     />
                   )}
                 </label>
+                {/* FIT 候选面板（B1 S6）：select 保留不动，其下按适配度排序列出全队。
+                    点行与 select 走同一入口（setNames 写该槽）；key 带槽位——换槽/换角色重挂、展开态归零。 */}
+                {teamPlayers && (
+                  <FitCandidateList
+                    key={`${sel.lid}|${sel.role}|${sel.focus}`}
+                    players={teamPlayers}
+                    slotKey={`${sel.position}|${sel.role}`}
+                    role={sel.role}
+                    focus={sel.focus}
+                    heat={heat}
+                    fitOfPid={fitOfPid}
+                    groupOfPid={fitGroupPid}
+                    currentPid={Number.isInteger(selPid) && selPid > 0 ? selPid : null}
+                    elsewhereOf={(pid) =>
+                      (starterSlotsByPid.get(pid) ?? [])
+                        .filter((s) => s.lid !== sel.lid)
+                        .map((s) => s.position)
+                    }
+                    suffixOf={optionSuffix}
+                    onPick={(picked) => {
+                      setNames((n) => ({ ...n, [String(sel.lid)]: String(picked) }));
+                    }}
+                  />
+                )}
                 <label className="tac-field">
                   <span>角色</span>
                   <select
@@ -1782,6 +1854,7 @@ export default function Tactics() {
 
       <footer className="tac-foot">
         战术码只带阵型和打法，不带球员名，也不带队长与定位球。名字只存在你的浏览器里；阵容和队长与定位球提交后才到服务器。
+        FIT 适配度与自动推荐为本站估算,不构成对比赛表现或成绩的任何保证。
       </footer>
 
       {selected != null && <button className="tac-scrim" aria-label="关闭球员卡" onClick={() => setSelected(null)} />}

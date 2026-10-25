@@ -148,7 +148,8 @@ describe("教练首屏聚合 /api/coach/bootstrap", () => {
 
   it("名册带裁剪版 FC26 数据：有数据的带 meta（只留战术页读得到的键），没数据的不加空壳字段", async () => {
     const { env, sqlite } = freshEnv(10);
-    // attrs 里混一个战术页读不到的俱乐部键（shotpower），height 两处给不同值以证明取的是列
+    // attrs 里混一个战术页读不到的俱乐部键（volleys，不在 ATTR_KEYS/FIT_ATTR_KEYS 白名单；
+    // shotpower 已随 B1 S4 放宽进 FIT 引擎键集，不能再用它当杂键），height 两处给不同值以证明取的是列
     sqlite
       .prepare(
         "INSERT INTO player_meta (fc_id, height, attrs, playstyles, synced_at) VALUES (?, ?, ?, ?, ?)",
@@ -156,7 +157,7 @@ describe("教练首屏聚合 /api/coach/bootstrap", () => {
       .run(
         100,
         189,
-        '{"curve":88,"finishing":91,"shotpower":99,"height":186}',
+        '{"curve":88,"finishing":91,"volleys":99,"height":186}',
         "[105,5]",
         "2026-01-01T00:00:00.000Z",
       );
@@ -178,7 +179,7 @@ describe("教练首屏聚合 /api/coach/bootstrap", () => {
       attrs: { curve: 88, finishing: 91, height: 186 },
       playstyles: [5, 105],
     });
-    expect(Object.keys(zhang.meta?.attrs ?? {})).not.toContain("shotpower");
+    expect(Object.keys(zhang.meta?.attrs ?? {})).not.toContain("volleys");
     // 李四没有 player_meta 行：DTO 里连字段都不出现（前端据此按「无数据」渲染）
     expect(li.id).toBe(101);
     expect("meta" in li).toBe(false);
