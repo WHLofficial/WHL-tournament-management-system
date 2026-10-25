@@ -15,10 +15,12 @@ import {
 import { accountAuditStmt } from "../../lib/audit";
 // 账号管理 ≡ 旧 requireSuperadmin（superadmin 专属权限点，行为等价）
 import { requirePermission } from "../../middleware/auth";
+import { requireAdminActor } from "../../lib/adminActor";
 
 const app = new Hono<AppEnv>();
 
 app.use("*", requirePermission("tour.accounts.manage", "superadmin"));
+app.use("*", requireAdminActor);
 
 // v2.0.0：账号真源在 auth（account / credential / user_role）。本仓不再读写自己的 user 表——
 // 收口后那些写是死写（改角色不影响鉴权、重置出的临时密码登不进去）。这里只做两件事：
@@ -42,9 +44,6 @@ function fail(c: import("hono").Context<AppEnv>, e: unknown) {
   throw e;
 }
 
-/** 操作者身份：权威身份来自会话（c.get("user")），不接受前端传的 id。 */
-const actorOf = (c: import("hono").Context<AppEnv>) => c.get("user")!.id;
-
 const intOf = (c: import("hono").Context<AppEnv>): number | null => {
   const id = Number(c.req.param("id"));
   return Number.isInteger(id) && id > 0 ? id : null;
@@ -53,7 +52,7 @@ const intOf = (c: import("hono").Context<AppEnv>): number | null => {
 // 角色 / 权限点目录：界面渲染勾选项用。auth 侧有 isolate 级 60s 缓存。
 app.get("/catalog", async (c) => {
   try {
-    return c.json(await authAdminCatalog(c.env));
+    return c.json(await authAdminCatalog(c.env, c.get("adminActor")!));
   } catch (e) {
     return fail(c, e);
   }
@@ -63,7 +62,7 @@ app.get("/catalog", async (c) => {
 app.get("/", async (c) => {
   const q = c.req.query("q")?.trim() || undefined;
   try {
-    return c.json({ accounts: await authAdminListAccounts(c.env, { q }) });
+    return c.json({ accounts: await authAdminListAccounts(c.env, c.get("adminActor")!, { q }) });
   } catch (e) {
     return fail(c, e);
   }
@@ -74,7 +73,7 @@ app.get("/:id", async (c) => {
   const id = intOf(c);
   if (id === null) return c.json({ message: "账号不存在" }, 404);
   try {
-    return c.json(await authAdminAccountDetail(c.env, { accountId: id, actorId: actorOf(c) }));
+    return c.json(await authAdminAccountDetail(c.env, c.get("adminActor")!, { accountId: id }));
   } catch (e) {
     return fail(c, e);
   }
@@ -87,14 +86,14 @@ app.patch("/:id/roles", async (c) => {
   const body = await c.req.json<{ roles?: unknown }>().catch(() => null);
   if (!Array.isArray(body?.roles)) return c.json({ message: "roles 必须是数组" }, 400);
   const next = body.roles.map(String);
-  const me = actorOf(c);
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminSetRoles(c.env, { accountId: id, actorId: me, roles: next });
+    const out = await authAdminSetRoles(c.env, actor, { accountId: id, roles: next });
     // 差集由 auth 回在响应里，本地审计不必再回查详情（省一次机器调用）
     if (out.changed) {
       await c.env.DB.batch([
-        ...out.granted.map((k) => accountAuditStmt(c.env.DB, me, "role.grant", id, { role: k })),
-        ...out.revoked.map((k) => accountAuditStmt(c.env.DB, me, "role.revoke", id, { role: k })),
+        ...out.granted.map((k) => accountAuditStmt(c.env.DB, actor.id, "role.grant", id, { role: k })),
+        ...out.revoked.map((k) => accountAuditStmt(c.env.DB, actor.id, "role.revoke", id, { role: k })),
       ]);
     }
     return c.json({ ok: true, changed: out.changed, roles: next });
@@ -110,13 +109,13 @@ app.put("/:id/grants", async (c) => {
   const body = await c.req.json<{ permissions?: unknown }>().catch(() => null);
   if (!Array.isArray(body?.permissions)) return c.json({ message: "permissions 必须是数组" }, 400);
   const next = body.permissions.map(String);
-  const me = actorOf(c);
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminSetGrants(c.env, { accountId: id, actorId: me, permissions: next });
+    const out = await authAdminSetGrants(c.env, actor, { accountId: id, permissions: next });
     if (out.changed) {
       await c.env.DB.batch([
-        ...out.granted.map((k) => accountAuditStmt(c.env.DB, me, "perm.grant", id, { permission: k })),
-        ...out.revoked.map((k) => accountAuditStmt(c.env.DB, me, "perm.revoke", id, { permission: k })),
+        ...out.granted.map((k) => accountAuditStmt(c.env.DB, actor.id, "perm.grant", id, { permission: k })),
+        ...out.revoked.map((k) => accountAuditStmt(c.env.DB, actor.id, "perm.revoke", id, { permission: k })),
       ]);
     }
     return c.json({ ok: true, changed: out.changed, permissions: next });
@@ -129,10 +128,10 @@ app.put("/:id/grants", async (c) => {
 app.post("/:id/reset-password", async (c) => {
   const id = intOf(c);
   if (id === null) return c.json({ message: "账号不存在" }, 404);
-  const me = actorOf(c);
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminResetPassword(c.env, { accountId: id, actorId: me });
-    await accountAuditStmt(c.env.DB, me, "pw.reset", id, { sessionsRevoked: out.sessionsRevoked }).run();
+    const out = await authAdminResetPassword(c.env, actor, { accountId: id });
+    await accountAuditStmt(c.env.DB, actor.id, "pw.reset", id, { sessionsRevoked: out.sessionsRevoked }).run();
     return c.json({ tempPassword: out.tempPassword, sessionsRevoked: out.sessionsRevoked });
   } catch (e) {
     return fail(c, e);
@@ -143,10 +142,10 @@ app.post("/:id/reset-password", async (c) => {
 app.post("/:id/unlock", async (c) => {
   const id = intOf(c);
   if (id === null) return c.json({ message: "账号不存在" }, 404);
-  const me = actorOf(c);
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminUnlock(c.env, { accountId: id, actorId: me });
-    if (out.changed) await accountAuditStmt(c.env.DB, me, "account.unlock", id, null).run();
+    const out = await authAdminUnlock(c.env, actor, { accountId: id });
+    if (out.changed) await accountAuditStmt(c.env.DB, actor.id, "account.unlock", id, null).run();
     return c.json({ ok: true, changed: out.changed });
   } catch (e) {
     return fail(c, e);
@@ -159,13 +158,13 @@ app.post("/:id/disable", async (c) => {
   if (id === null) return c.json({ message: "账号不存在" }, 404);
   const body = await c.req.json<{ disabled?: unknown }>().catch(() => null);
   if (typeof body?.disabled !== "boolean") return c.json({ message: "缺少 disabled（布尔）" }, 400);
-  const me = actorOf(c);
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminDisable(c.env, { accountId: id, actorId: me, disabled: body.disabled });
+    const out = await authAdminDisable(c.env, actor, { accountId: id, disabled: body.disabled });
     if (out.changed) {
       await accountAuditStmt(
         c.env.DB,
-        me,
+        actor.id,
         body.disabled ? "account.disable" : "account.enable",
         id,
         body.disabled ? { sessionsRevoked: out.sessionsRevoked } : null
@@ -183,11 +182,11 @@ app.post("/:id/sessions/revoke", async (c) => {
   if (id === null) return c.json({ message: "账号不存在" }, 404);
   const body = await c.req.json<{ sessionHash?: unknown }>().catch(() => null);
   const sessionHash = typeof body?.sessionHash === "string" && body.sessionHash ? body.sessionHash : undefined;
-  const me = actorOf(c);
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminRevokeSessions(c.env, { accountId: id, actorId: me, sessionHash });
+    const out = await authAdminRevokeSessions(c.env, actor, { accountId: id, sessionHash });
     if (out.revoked > 0) {
-      await accountAuditStmt(c.env.DB, me, "session.revoke", id, {
+      await accountAuditStmt(c.env.DB, actor.id, "session.revoke", id, {
         scope: sessionHash ? "one" : "account",
         sid: sessionHash ? sessionHash.slice(0, 12) : null,
         revoked: out.revoked,

@@ -15,6 +15,7 @@ import {
   authAdminOrgSettings,
 } from "../lib/authAdmin";
 import { accountAuditStmt } from "../lib/audit";
+import { requireAdminActor } from "../lib/adminActor";
 import { requirePermission, requirePwChanged } from "../middleware/auth";
 import teamsRoutes from "./admin/teams";
 import tournamentsRoutes from "./admin/tournaments";
@@ -33,6 +34,8 @@ const app = new Hono<AppEnv>();
 // 兼容模式回落旧角色判定（见 middleware requirePermission）。
 app.use("*", requirePermission("tour.match.manage"));
 app.use("*", requirePwChanged);
+// v5.9.0：只有转发 auth /api/admin/* 的端点需要管理员 access token；
+// 本地赛事/赛程端点不依赖它，避免把 auth 会话变成整个管理台的单点条件。
 
 app.route("/teams", teamsRoutes);
 app.route("/tournaments", tournamentsRoutes);
@@ -67,24 +70,24 @@ function authFail(c: Context<AppEnv>, e: unknown) {
 // 组织级设置：允许无码注册（建锁定观众号）。改开关仅超管。
 // v2.0.0：真源在认证中心 organization 表（收口前这里读写本仓 organization，
 // 改开关对 auth 注册路径零影响 = 死写）。读写都转发 auth，本地留审计。
-app.get("/org-settings", async (c) => {
+app.get("/org-settings", requireAdminActor, async (c) => {
   try {
-    const out = await authAdminOrgSettings(c.env);
+    const out = await authAdminOrgSettings(c.env, c.get("adminActor")!);
     return c.json({ allowOpenReg: out.allowOpenReg });
   } catch (e) {
     return authFail(c, e);
   }
 });
 
-app.put("/org-settings", requirePermission("tour.org.settings", "superadmin"), async (c) => {
+app.put("/org-settings", requireAdminActor, requirePermission("tour.org.settings", "superadmin"), async (c) => {
   const body = await c.req.json<{ allowOpenReg?: boolean }>().catch(() => null);
   if (typeof body?.allowOpenReg !== "boolean") {
     return c.json({ message: "请求格式不对" }, 400);
   }
-  const me = c.get("user")!.id;
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminOrgSettings(c.env, { allowOpenReg: body.allowOpenReg, actorId: me });
-    await accountAuditStmt(c.env.DB, me, "org.open_reg", null, { allowOpenReg: out.allowOpenReg }).run();
+    const out = await authAdminOrgSettings(c.env, actor, { allowOpenReg: body.allowOpenReg });
+    await accountAuditStmt(c.env.DB, actor.id, "org.open_reg", null, { allowOpenReg: out.allowOpenReg }).run();
     return c.json({ ok: true, allowOpenReg: out.allowOpenReg });
   } catch (e) {
     return authFail(c, e);
@@ -92,6 +95,7 @@ app.put("/org-settings", requirePermission("tour.org.settings", "superadmin"), a
 });
 
 // 生成注册码；明码只在这一次响应里出现，认证中心只存 sha256
+app.use("/signup-codes", requireAdminActor);
 app.post("/signup-codes", async (c) => {
   const body = await c.req
     .json<{ maxUses?: number | null; expiresInHours?: number | null }>()
@@ -99,10 +103,10 @@ app.post("/signup-codes", async (c) => {
   const maxUses = typeof body.maxUses === "number" && body.maxUses > 0 ? Math.floor(body.maxUses) : null;
   const expiresInHours =
     typeof body.expiresInHours === "number" && body.expiresInHours > 0 ? body.expiresInHours : null;
-  const me = c.get("user")!.id;
+  const actor = c.get("adminActor")!;
   try {
-    const out = await authAdminCreateSignupCode(c.env, { actorId: me, maxUses, expiresInHours });
-    await accountAuditStmt(c.env.DB, me, "signup_code.create", null, {
+    const out = await authAdminCreateSignupCode(c.env, actor, { maxUses, expiresInHours });
+    await accountAuditStmt(c.env.DB, actor.id, "signup_code.create", null, {
       maxUses: out.maxUses,
       expiresAt: out.expiresAt,
     }).run();
@@ -115,7 +119,7 @@ app.post("/signup-codes", async (c) => {
 // 注册码使用记录（明码不可回查，只给指纹/次数/过期）
 app.get("/signup-codes", async (c) => {
   try {
-    return c.json({ codes: await authAdminListSignupCodes(c.env) });
+    return c.json({ codes: await authAdminListSignupCodes(c.env, c.get("adminActor")!) });
   } catch (e) {
     return authFail(c, e);
   }

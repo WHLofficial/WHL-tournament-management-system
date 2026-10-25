@@ -66,7 +66,7 @@ oidcRoutes.get("/login", async (c) => {
     response_type: "code",
     client_id: c.env.OIDC_CLIENT_ID,
     redirect_uri: callbackUri(c),
-    scope: "openid profile", // profile 供 userinfo 下发姓名（角色/权限/状态不按 scope 收费）
+    scope: "openid profile offline_access", // profile 供 userinfo 下发姓名；offline_access 换 refresh token 供管理端续期
     state,
     nonce,
     code_challenge: await pkceChallenge(verifier),
@@ -105,7 +105,7 @@ oidcRoutes.get("/sync", async (c) => {
     response_type: "code",
     client_id: c.env.OIDC_CLIENT_ID,
     redirect_uri: callbackUri(c),
-    scope: "openid profile", // profile 供 userinfo 下发姓名（角色/权限/状态不按 scope 收费）
+    scope: "openid profile offline_access", // profile 供 userinfo 下发姓名；offline_access 换 refresh token 供管理端续期
     state,
     nonce,
     code_challenge: await pkceChallenge(verifier),
@@ -174,7 +174,12 @@ oidcRoutes.get("/callback", async (c) => {
     }),
   });
   const tokens = tokenRes.ok
-    ? ((await tokenRes.json().catch(() => null)) as { id_token?: unknown; access_token?: unknown } | null)
+    ? ((await tokenRes.json().catch(() => null)) as {
+        id_token?: unknown;
+        access_token?: unknown;
+        refresh_token?: unknown;
+        expires_in?: unknown;
+      } | null)
     : null;
   if (!tokens || typeof tokens.id_token !== "string" || typeof tokens.access_token !== "string") {
     return c.json({ error: "oidc_token_error", message: "认证中心换票失败，请稍后重试" }, 502);
@@ -230,6 +235,10 @@ oidcRoutes.get("/callback", async (c) => {
   const now = new Date().toISOString();
   await c.env.DB.prepare("DELETE FROM oidc_session WHERE expires_at < ?").bind(now).run();
   const token = randomB64url(32);
+  const accessExpiresAt = new Date(
+    Date.now() + (Number(tokens.expires_in) > 0 ? Number(tokens.expires_in) : 1800) * 1000,
+  ).toISOString();
+  const refreshToken = typeof tokens.refresh_token === "string" ? tokens.refresh_token : null;
   // 账号投影与建会话同批提交（v4.1.0）：要么登录成功且本库 user 行存在，要么这次登录如实失败。
   // 收口后本库 user 表没有写入方，而 14 列外键仍指向它（tactic.created_by / match_event.created_by /
   // audit_log.actor_user_id …，见 lib/accountMirror.ts 顶部）。不同批的下场就是「登录一切正常、
@@ -243,7 +252,9 @@ oidcRoutes.get("/callback", async (c) => {
         createdAt: now, // 登录时刻凑的，定时对账会改回 auth 的真实注册时间
       }),
       c.env.DB.prepare(
-        "INSERT INTO oidc_session (token_hash, sub, auth_sid, claims, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+        `INSERT INTO oidc_session
+           (token_hash, sub, auth_sid, claims, created_at, expires_at, access_token, access_expires_at, refresh_token)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         await sha256Hex(token),
         String(accountId),
@@ -251,6 +262,9 @@ oidcRoutes.get("/callback", async (c) => {
         claims,
         now,
         new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
+        tokens.access_token,
+        accessExpiresAt,
+        refreshToken,
       ),
     ]);
   } catch (e) {

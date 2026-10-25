@@ -6,8 +6,8 @@
 //
 // 命名映射：auth 侧 snake_case ↔ 本仓 camelCase，全部写动作带 actorId（转 auth 的 actor_id，auth 会记进
 // 自己的审计），本仓另行留一份本地审计。HMAC 契约复用 authClient.ts 的 machineCall。
-import type { AppEnv } from "../env";
-import { AuthApiError, machineCall } from "./authClient";
+import type { AdminActor, AppEnv } from "../env";
+import { AuthApiError, adminCall } from "./authClient";
 
 const num = (v: unknown): number => Number(v);
 const bool = (v: unknown): boolean => v === true;
@@ -73,13 +73,15 @@ export interface AdminCatalog {
 /** 账号列表（含绑定球队与角色）。会话不进列表——那是详情的事。 */
 export async function authAdminListAccounts(
   env: AppEnv["Bindings"],
+  actor: AdminActor,
   { q, after, limit }: { q?: string; after?: number | null; limit?: number } = {},
 ): Promise<AdminAccountRow[]> {
-  const out = await machineCall(env, "/api/admin/accounts/list", {
-    q: q ?? null,
-    after: after ?? null,
-    limit: limit ?? 200,
-  });
+  const out = await adminCall(
+    env,
+    "/api/admin/accounts/list",
+    { q: q ?? null, after: after ?? null, limit: limit ?? 200 },
+    actor.token,
+  );
   return asArr(out.accounts).map((r) => ({
     id: num(r.id),
     name: String(r.name),
@@ -97,9 +99,15 @@ export async function authAdminListAccounts(
 
 export async function authAdminAccountDetail(
   env: AppEnv["Bindings"],
-  { accountId, actorId }: { accountId: number; actorId: number },
+  actor: AdminActor,
+  { accountId }: { accountId: number },
 ): Promise<AdminAccountDetail> {
-  const out = await machineCall(env, "/api/admin/accounts/detail", { account_id: accountId, actor_id: actorId });
+  const out = await adminCall(
+    env,
+    "/api/admin/accounts/detail",
+    { account_id: accountId, actor_id: actor.id },
+    actor.token,
+  );
   const a = (out.account ?? {}) as Record<string, unknown>;
   return {
     account: {
@@ -130,8 +138,8 @@ export async function authAdminAccountDetail(
 }
 
 /** 角色 / 权限点目录（auth 侧已有 isolate 60s 缓存，这里不再二次缓存） */
-export async function authAdminCatalog(env: AppEnv["Bindings"]): Promise<AdminCatalog> {
-  const out = await machineCall(env, "/api/admin/catalog", {});
+export async function authAdminCatalog(env: AppEnv["Bindings"], actor: AdminActor): Promise<AdminCatalog> {
+  const out = await adminCall(env, "/api/admin/catalog", {}, actor.token);
   return {
     apps: asArr(out.apps).map((a) => ({ clientId: String(a.client_id), name: String(a.name) })),
     roles: asArr(out.roles).map((r) => ({
@@ -158,9 +166,15 @@ export async function authAdminCatalog(env: AppEnv["Bindings"]): Promise<AdminCa
  *  涉及全局超管的增删 auth 一律拒（superadmin_locked），因为它经 CROSS JOIN 已持全部权限点。 */
 export async function authAdminSetRoles(
   env: AppEnv["Bindings"],
-  { accountId, actorId, roles }: { accountId: number; actorId: number; roles: string[] },
+  actor: AdminActor,
+  { accountId, roles }: { accountId: number; roles: string[] },
 ): Promise<{ changed: boolean; granted: string[]; revoked: string[] }> {
-  const out = await machineCall(env, "/api/admin/accounts/roles", { account_id: accountId, actor_id: actorId, roles });
+  const out = await adminCall(
+    env,
+    "/api/admin/accounts/roles",
+    { account_id: accountId, actor_id: actor.id, roles },
+    actor.token,
+  );
   return {
     changed: bool(out.changed),
     granted: asArr(out.granted).map(String),
@@ -171,13 +185,19 @@ export async function authAdminSetRoles(
 /** 账号级权限点「额外授予」：只加不减——取消勾选只删本表行，角色带来的权限点不受影响。 */
 export async function authAdminSetGrants(
   env: AppEnv["Bindings"],
-  { accountId, actorId, permissions }: { accountId: number; actorId: number; permissions: string[] },
+  actor: AdminActor,
+  { accountId, permissions }: { accountId: number; permissions: string[] },
 ): Promise<{ changed: boolean; granted: string[]; revoked: string[] }> {
-  const out = await machineCall(env, "/api/admin/accounts/grants", {
-    account_id: accountId,
-    actor_id: actorId,
-    permissions,
-  });
+  const out = await adminCall(
+    env,
+    "/api/admin/accounts/grants",
+    {
+      account_id: accountId,
+      actor_id: actor.id,
+      permissions,
+    },
+    actor.token,
+  );
   return {
     changed: bool(out.changed),
     granted: asArr(out.granted).map(String),
@@ -188,9 +208,15 @@ export async function authAdminSetGrants(
 /** 重置密码：auth 生成临时密码 + 置 must_change_pw + 吊销该账号全部会话。明码只在本次响应出现。 */
 export async function authAdminResetPassword(
   env: AppEnv["Bindings"],
-  { accountId, actorId }: { accountId: number; actorId: number },
+  actor: AdminActor,
+  { accountId }: { accountId: number },
 ): Promise<{ tempPassword: string; sessionsRevoked: number }> {
-  const out = await machineCall(env, "/api/admin/accounts/password", { account_id: accountId, actor_id: actorId });
+  const out = await adminCall(
+    env,
+    "/api/admin/accounts/password",
+    { account_id: accountId, actor_id: actor.id },
+    actor.token,
+  );
   if (typeof out.temp_password !== "string") {
     throw new AuthApiError("auth_bad_response", "重置密码响应缺少 temp_password");
   }
@@ -200,58 +226,83 @@ export async function authAdminResetPassword(
 /** 解锁观众号（locked 1→0）。locked 不是封禁而是「观众号」标记：解锁前不能绑队。 */
 export async function authAdminUnlock(
   env: AppEnv["Bindings"],
-  { accountId, actorId }: { accountId: number; actorId: number },
+  actor: AdminActor,
+  { accountId }: { accountId: number },
 ): Promise<{ changed: boolean }> {
-  const out = await machineCall(env, "/api/admin/accounts/unlock", { account_id: accountId, actor_id: actorId });
+  const out = await adminCall(
+    env,
+    "/api/admin/accounts/unlock",
+    { account_id: accountId, actor_id: actor.id },
+    actor.token,
+  );
   return { changed: bool(out.changed) };
 }
 
 /** 停用 / 启用账号：停用会吊销该账号全部会话（含 OIDC refresh 与 back-channel 通知）。 */
 export async function authAdminDisable(
   env: AppEnv["Bindings"],
-  { accountId, actorId, disabled }: { accountId: number; actorId: number; disabled: boolean },
+  actor: AdminActor,
+  { accountId, disabled }: { accountId: number; disabled: boolean },
 ): Promise<{ changed: boolean; sessionsRevoked: number }> {
-  const out = await machineCall(env, "/api/admin/accounts/disable", {
-    account_id: accountId,
-    actor_id: actorId,
-    disabled,
-  });
+  const out = await adminCall(
+    env,
+    "/api/admin/accounts/disable",
+    {
+      account_id: accountId,
+      actor_id: actor.id,
+      disabled,
+    },
+    actor.token,
+  );
   return { changed: bool(out.changed), sessionsRevoked: num(out.sessions_revoked) };
 }
 
 /** 强制下线：给 sessionHash 踢单个会话；不给则吊销该账号全部会话。 */
 export async function authAdminRevokeSessions(
   env: AppEnv["Bindings"],
-  { accountId, actorId, sessionHash }: { accountId: number; actorId: number; sessionHash?: string },
+  actor: AdminActor,
+  { accountId, sessionHash }: { accountId: number; sessionHash?: string },
 ): Promise<{ revoked: number }> {
-  const out = await machineCall(env, "/api/admin/sessions/revoke", {
-    account_id: accountId,
-    actor_id: actorId,
-    session_hash: sessionHash ?? null,
-  });
+  const out = await adminCall(
+    env,
+    "/api/admin/sessions/revoke",
+    {
+      account_id: accountId,
+      actor_id: actor.id,
+      session_hash: sessionHash ?? null,
+    },
+    actor.token,
+  );
   return { revoked: num(out.revoked) };
 }
 
 /** 开放注册开关：不带 patch = 读，带 = 写。真源是 auth 的 organization 表。 */
 export async function authAdminOrgSettings(
   env: AppEnv["Bindings"],
-  patch?: { allowOpenReg: boolean; actorId: number },
+  actor: AdminActor,
+  patch?: { allowOpenReg: boolean },
 ): Promise<{ allowOpenReg: boolean }> {
-  const body = patch ? { allow_open_reg: patch.allowOpenReg, actor_id: patch.actorId } : {};
-  const out = await machineCall(env, "/api/admin/org-settings", body);
+  const body = patch ? { allow_open_reg: patch.allowOpenReg, actor_id: actor.id } : {};
+  const out = await adminCall(env, "/api/admin/org-settings", body, actor.token);
   return { allowOpenReg: bool(out.allow_open_reg) };
 }
 
 /** 生成注册码：明码只在本次响应出现（auth 库里只有 sha256）。 */
 export async function authAdminCreateSignupCode(
   env: AppEnv["Bindings"],
-  { actorId, maxUses, expiresInHours }: { actorId: number; maxUses: number | null; expiresInHours: number | null },
+  actor: AdminActor,
+  { maxUses, expiresInHours }: { maxUses: number | null; expiresInHours: number | null },
 ): Promise<{ code: string; maxUses: number | null; expiresAt: string | null }> {
-  const out = await machineCall(env, "/api/admin/signup-codes/create", {
-    actor_id: actorId,
-    max_uses: maxUses,
-    expires_in_hours: expiresInHours,
-  });
+  const out = await adminCall(
+    env,
+    "/api/admin/signup-codes/create",
+    {
+      actor_id: actor.id,
+      max_uses: maxUses,
+      expires_in_hours: expiresInHours,
+    },
+    actor.token,
+  );
   if (typeof out.code !== "string") throw new AuthApiError("auth_bad_response", "注册码响应缺少 code");
   return { code: out.code, maxUses: asNum(out.max_uses), expiresAt: asStr(out.expires_at) };
 }
@@ -265,8 +316,8 @@ export interface SignupCodeRow {
   createdAt: string;
 }
 
-export async function authAdminListSignupCodes(env: AppEnv["Bindings"]): Promise<SignupCodeRow[]> {
-  const out = await machineCall(env, "/api/admin/signup-codes/list", {});
+export async function authAdminListSignupCodes(env: AppEnv["Bindings"], actor: AdminActor): Promise<SignupCodeRow[]> {
+  const out = await adminCall(env, "/api/admin/signup-codes/list", {}, actor.token);
   return asArr(out.codes).map((r) => ({
     id: String(r.id),
     maxUses: asNum(r.max_uses),
@@ -300,16 +351,22 @@ export interface AdminAuditQuery {
  *  auth 端按 id 倒序返回并带 next_cursor（翻页），单次一条 SELECT 不做 COUNT。 */
 export async function authAdminAuditQuery(
   env: AppEnv["Bindings"],
+  actor: AdminActor,
   q: AdminAuditQuery,
 ): Promise<{ events: AdminAuditEvent[]; nextCursor: number | null }> {
-  const out = await machineCall(env, "/api/admin/audit/query", {
-    account_id: q.accountId ?? null,
-    event: q.event ?? null,
-    since: q.since ?? null,
-    until: q.until ?? null,
-    limit: q.limit ?? 50,
-    cursor: q.cursor ?? null,
-  });
+  const out = await adminCall(
+    env,
+    "/api/admin/audit/query",
+    {
+      account_id: q.accountId ?? null,
+      event: q.event ?? null,
+      since: q.since ?? null,
+      until: q.until ?? null,
+      limit: q.limit ?? 50,
+      cursor: q.cursor ?? null,
+    },
+    actor.token,
+  );
   return {
     events: asArr(out.events).map((r) => ({
       id: num(r.id),

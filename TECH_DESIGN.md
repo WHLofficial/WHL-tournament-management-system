@@ -192,6 +192,9 @@ user         账号
   -- （account/credential/user_role），管理台的角色改动、解锁、重置密码、注册码、
   -- 开放注册开关全部改调 auth 管理端点（worker/lib/authAdmin.ts，X-Sign HMAC，
   -- 12 条 /api/admin/*）；本表的 role/locked/password_hash 不再被应用写入
+  -- v5.9.0 起 auth 管理端点升级双因子：AUTH_ADMIN_SECRET 的 HMAC + X-Nonce，
+  -- 另带当前管理员 access token（登录回调存进 oidc_session，worker/lib/adminActor.ts
+  -- 负责过期刷新）；auth 侧按 token.sub 重查权限并复核超管 MFA。管理台需重新登录一次。
   -- v4.1.0 起：上面「不再被写入」不再成立——本表改由账号投影补齐行。
   -- 登录回调把 auth account 的 id/name/locked/created_at 带进来（worker/lib/accountMirror.ts，
   -- 与建会话同批提交），cron 每小时对账再补没登录过的账号、同步改名。要投影的理由是外键：

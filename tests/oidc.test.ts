@@ -225,7 +225,15 @@ function freshEnv(oidc: boolean): Fixture {
     MEDIA: {} as never,
     ASSETS: {} as never,
     // 管理台转认证中心用（v2.0.0）：OIDC 模式下生产必配，未配则管理台的 org-settings/注册码一律 500
-    ...(oidc ? { AUTH_MODE: "oidc", OIDC_ISSUER: ISSUER, OIDC_CLIENT_ID: CLIENT_ID, AUTH_BIND_SECRET: "test-bind-secret" } : {}),
+    ...(oidc
+      ? {
+          AUTH_MODE: "oidc",
+          OIDC_ISSUER: ISSUER,
+          OIDC_CLIENT_ID: CLIENT_ID,
+          AUTH_BIND_SECRET: "test-bind-secret",
+          AUTH_ADMIN_SECRET: "test-admin-secret",
+        }
+      : {}),
   };
   return { env, sqlite };
 }
@@ -337,7 +345,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     expect(u.searchParams.get("response_type")).toBe("code");
     expect(u.searchParams.get("client_id")).toBe(CLIENT_ID);
     expect(u.searchParams.get("redirect_uri")).toBe("http://localhost/api/auth/callback");
-    expect(u.searchParams.get("scope")).toBe("openid profile");
+    expect(u.searchParams.get("scope")).toBe("openid profile offline_access");
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     // S256 challenge 恒 43 位 base64url（auth 侧逐字校验这个形态）
     expect(u.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -365,7 +373,7 @@ describe("统一认证接入（步骤② OIDC RP，tour 降级）", () => {
     const sc = cb.headers.getSetCookie().find((l) => l.startsWith("__Host-tour_session="));
     expect(sc).toContain("HttpOnly");
     expect(sc).toContain("SameSite=Lax");
-    expect(sc).toContain("Max-Age=604800");
+    expect(sc).toContain("Max-Age=518400");
     expect(sc).toContain("Secure");
 
     // 会话行：token_hash 是会话 cookie 的 sha256（独立实现核对），sub/sid 来自 id_token，

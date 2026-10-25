@@ -17,27 +17,29 @@ export class AuthApiError extends Error {
 
 export type MachineBody = Record<string, unknown>;
 
-/** 裸调用：签名 + POST + 解析。非 2xx 一律抛 AuthApiError（含 auth 端业务错误码），供调用点分流处置。 */
+/** 裸调用：签名 + POST + 解析。非 2xx 一律抛 AuthApiError（含 auth 端业务错误码），供调用点分流处置。
+ *  默认走绑定通道（AUTH_BIND_SECRET，无 nonce，兼容竞猜插件）；管理通道传 secret + actorToken + nonce。 */
 export async function machineCall(
   env: AppEnv["Bindings"],
   path: string,
   body: MachineBody,
+  opts?: { secret?: string; actorToken?: string; nonce?: string },
 ): Promise<Record<string, unknown>> {
-  const secret = env.AUTH_BIND_SECRET ?? "";
+  const secret = opts?.secret ?? env.AUTH_BIND_SECRET ?? "";
   const base = env.OIDC_ISSUER ?? "";
   if (!secret || !base) throw new AuthApiError("unconfigured", "认证中心通道未配置（OIDC_ISSUER / AUTH_BIND_SECRET）");
   const raw = JSON.stringify(body);
   const ts = Math.floor(Date.now() / 1000);
+  const canonical = opts?.nonce ? `POST|${path}|${ts}|${opts.nonce}|${raw}` : `POST|${path}|${ts}|${raw}`;
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`POST|${path}|${ts}|${raw}`));
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(canonical));
   const sign = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const headers: Record<string, string> = { "content-type": "application/json", "x-timestamp": String(ts), "x-sign": sign };
+  if (opts?.nonce) headers["x-nonce"] = opts.nonce;
+  if (opts?.actorToken) headers["x-actor-token"] = opts.actorToken;
   let res: Response;
   try {
-    res = await fetch(`${base}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-timestamp": String(ts), "x-sign": sign },
-      body: raw,
-    });
+    res = await fetch(`${base}${path}`, { method: "POST", headers, body: raw });
   } catch {
     throw new AuthApiError("auth_unreachable", "认证中心不可达");
   }
@@ -54,6 +56,19 @@ export async function machineCall(
     );
   }
   return parsed;
+}
+
+/** 管理通道：独立密钥 + 每次请求的 nonce + 当前管理员 access token。
+ *  auth 侧三重校验（服务签名、nonce 防重放、token 识别操作者/权限/MFA），任一缺失都 401/403。 */
+export async function adminCall(
+  env: AppEnv["Bindings"],
+  path: string,
+  body: MachineBody,
+  actorToken: string,
+): Promise<Record<string, unknown>> {
+  const secret = env.AUTH_ADMIN_SECRET ?? "";
+  if (!secret) throw new AuthApiError("unconfigured", "管理通道未配置（AUTH_ADMIN_SECRET）");
+  return machineCall(env, path, body, { secret, actorToken, nonce: crypto.randomUUID() });
 }
 
 // 管理端发码（admin.ts auth-codes）：明码只在本次响应出现

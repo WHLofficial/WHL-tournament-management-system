@@ -2,12 +2,14 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { AuthApiError } from "../../lib/authClient";
 import { authAdminAuditQuery } from "../../lib/authAdmin";
+import { requireAdminActor } from "../../lib/adminActor";
 // 与账号管理同权限档：审计日志含全生态安全事件（登录失败、权限变更、强制下线），超管专属
 import { requirePermission } from "../../middleware/auth";
 
 const app = new Hono<AppEnv>();
 
 app.use("*", requirePermission("tour.accounts.manage", "superadmin"));
+app.use("*", requireAdminActor);
 
 // 审计日志（v3.1.0，PRD P1-3）：界面在本仓，数据真源在 auth audit_log，这里只做
 // 查询参数 → auth /api/admin/audit/query 的转发。GET + query string，纯读不记审计。
@@ -19,7 +21,7 @@ app.get("/", async (c) => {
     return Number.isInteger(n) && n > 0 ? n : null;
   };
   try {
-    const out = await authAdminAuditQuery(c.env, {
+    const out = await authAdminAuditQuery(c.env, c.get("adminActor")!, {
       accountId: numOrNull(c.req.query("account")),
       event: c.req.query("event")?.trim() || null,
       since: c.req.query("since")?.trim() || null,

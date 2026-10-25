@@ -19,7 +19,9 @@ export function safeReturn(v: unknown): string {
   return v.slice(0, 512);
 }
 
-export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
+// 本地会话必须短于 auth 的 7 天不活跃窗口：到期后由静默同步（prompt=none）去 auth 续期，
+// 续期请求本身会刷新 auth 的 last_seen；若本地也设 7 天，到期瞬间可能与 auth 的闲置判定撞车。
+export const SESSION_TTL_SECONDS = 6 * 24 * 3600;
 
 /** OIDC 模式 = AUTH_MODE 显式配 "oidc"（v3.0.0 显式化，TECH_DESIGN §9.1）+ 两项连接变量齐备；
  *  未配 AUTH_MODE = 兼容模式（共享 KV 会话）。不再靠 OIDC_ISSUER 的有无隐式判定——

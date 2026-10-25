@@ -9,6 +9,9 @@ export type Bindings = {
   AUTH_DB?: D1Database;
   /** v1.0.0：机器通道 HMAC 密钥（与 auth 服务端 BIND_SECRET 同值），发码/烧码/解绑验签用 */
   AUTH_BIND_SECRET?: string;
+  /** v5.9.0：管理通道 HMAC 密钥（与 auth 服务端 ADMIN_SECRET 同值）。
+   *  与 AUTH_BIND_SECRET 分开：绑定通道泄漏不波及管理台，管理台密钥也不下发给插件。 */
+  AUTH_ADMIN_SECRET?: string;
   /** 可选：会话 cookie 的 Domain 属性（如 ".example.com"），供同主域子系统共享登录态；不配则 host-only */
   COOKIE_DOMAIN?: string;
   /** 统一认证中心（迁移步骤②，auth 项目 PRD P0-7）：配置即 OIDC 模式；不配 = 兼容模式（共享 KV 会话） */
@@ -36,7 +39,13 @@ export type SessionUser = {
   permissions: string[];
 };
 
+export type AdminActor = {
+  id: number;
+  /** auth 签发的 access token（aud=tour）：auth 用它识别操作者、复核 MFA 与权限点 */
+  token: string;
+};
+
 export type AppEnv = {
   Bindings: Bindings;
-  Variables: { user: SessionUser | null };
+  Variables: { user: SessionUser | null; adminActor?: AdminActor };
 };
