@@ -57,9 +57,9 @@ export const ROLE_FIT: Record<string, RoleFitProfile> = {
     badges: [54, 55, 52],
   },
   // 出球型门将：漏算起草——短传/长传/kicking（用脚下出球与门将五维区分）
-  // 徽章存疑记录（2026-10-25）：52=步法偏扑救脚步类，BPK 核心是脚下出球，14=Tiki Taka
-  // （地面短传出球）语义可能更贴；ps-relevance 无 BPK 人群数据、club 官方推荐表不在仓内，
-  // 无从判定，维持现状待有官方口径再改
+  // 2026-10-26 数据裁决（原 2026-10-25 存疑销案）：保留 52=步法——它是 BPK 人群强区分徽章
+  // （BPK 80% vs 其他门将 48%），而语义上更贴的 14=Tiki Taka 全联盟 0 人持有（换成死键）；
+  // 出球属性画像获数据确认（短传 44.9 vs 38.2、长传 46.4 vs 40.5、开球 78.2 vs 73.0）
   "GK|BPK": {
     zh: "出球型门将",
     attrs: [
@@ -517,9 +517,9 @@ export const ROLE_FIT: Record<string, RoleFitProfile> = {
     badges: [33, 16, 11],
   },
   // 影子前锋：漏算起草——后插上终结（26 人主力角色，初稿未覆盖）
-  // 存疑评审记录（2026-10-25）：SS 标志性打法含后插上远射，但 longshots/shotpower 未入表、
-  // 徽章无 3=大力射门（更靠后的 CDM|BC 反而有）；官方 FC26 SS 关键属性表不在仓内，
-  // 无法逐字核对，维持现状待有官方口径再改
+  // 2026-10-26 数据裁决（原 2026-10-25 存疑销案）：SS 人群 vs CAM 基线 longshots lift +3.8、
+  // volleys +4.0、finishing +4.3——后插上远射语义成立，ballcontrol（lift +2.3，6 键最低）
+  // 让位给 longshots；徽章 3=大力射门不加（12% vs 8%，低于 25% 门槛的弱信号）
   "CAM|SS": {
     zh: "影子前锋",
     attrs: [
@@ -528,7 +528,7 @@ export const ROLE_FIT: Record<string, RoleFitProfile> = {
       ["dribbling", 2],
       ["agility", 2],
       ["acceleration", 1],
-      ["ballcontrol", 1],
+      ["longshots", 1],
     ],
     badges: [1, 8, 16],
   },
