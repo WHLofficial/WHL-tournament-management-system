@@ -2256,7 +2256,9 @@ button.add-stage {
 .tac-bench h2,
 .tac-archives h2,
 .tac-submit h2,
-.tac-submit-bar h2 {
+.tac-submit-bar h2,
+.tac-rec h2,
+.tac-compare h2 {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 1.2px;
@@ -2267,7 +2269,9 @@ button.add-stage {
 .tac-bench h2 small,
 .tac-archives h2 small,
 .tac-submit h2 small,
-.tac-submit-bar h2 small {
+.tac-submit-bar h2 small,
+.tac-rec h2 small,
+.tac-compare h2 small {
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
@@ -2637,11 +2641,27 @@ button.add-stage {
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
+/* S4 替补角色化：槽内两行——上行 [号码+下拉]，下行「擅长 …」小字（无 meta 不渲染） */
 .tac-bench-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  min-width: 0;
+}
+.tac-bench-row {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+.tac-bench-fit {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* 超长省略，全量在 title；窄屏替补本就一列一项不挤占 */
+  font: 500 11px/1.4 var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .tac-bench-no {
   flex: none;
@@ -2940,6 +2960,157 @@ button.add-stage {
 .tac-submit-status {
   border-left: 1px solid var(--border);
   padding-left: 16px;
+}
+
+/* ---------- 一键推荐（B2 S2 / spec §5.3）：diff 预览确认制 ---------- */
+.tac-rec-body {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+/* 免责第三层（spec §6 原文）：与 FIT 图例同款小字，不弹窗不加框 */
+.tac-rec-legal {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.tac-rec-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.tac-rec-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap; /* 窄屏 FIT 段换行，不挤爆行 */
+  gap: 2px 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.tac-rec-pos {
+  flex: none;
+  min-width: 26px;
+  font: 700 12px/1.6 var(--mono);
+  color: var(--muted);
+}
+.tac-rec-who {
+  flex: 1;
+  min-width: 0;
+}
+.tac-rec-fit {
+  flex: none;
+  font: 600 12px/1.6 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 保持行是「没变化」：整行退灰，别跟出入行抢视线 */
+.tac-rec-row.keep {
+  color: var(--muted);
+}
+.tac-rec-row.keep .tac-rec-fit {
+  font-weight: 500;
+  color: var(--muted);
+}
+.tac-rec-act {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- 阵型对比（B2 S3 / spec §5.4）：29 阵型按全队总 FIT 排序 ---------- */
+.tac-cmp-body {
+  margin-top: 10px;
+}
+.tac-cmp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.tac-cmp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tac-cmp-row:hover {
+  border-color: var(--pitch);
+}
+/* 当前阵型整行绿框：它的高亮语义是「你在用的」，与行首「当前」徽标双重标识 */
+.tac-cmp-list li.cur .tac-cmp-row {
+  border-color: var(--pitch);
+  background: var(--pitch-soft);
+}
+.tac-cmp-list li.cur > .tac-cmp-row b {
+  color: #0c663c;
+}
+.tac-cmp-cur {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--pitch);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.tac-cmp-total {
+  flex: none;
+  margin-left: auto;
+  font: 700 13px/1.6 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.tac-cmp-details {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 6px 0 0 12px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tac-cmp-drow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.tac-cmp-drow b {
+  flex: none;
+  min-width: 26px;
+  font: 700 11px/1.6 var(--mono);
+  color: var(--muted);
+}
+.tac-cmp-dfit {
+  flex: none;
+  margin-left: auto;
+  font: 600 11px/1.6 var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* 代打：身份切换器（本队 ↔ 被授权的目标队）与代打模式下的目标比赛静态行 */

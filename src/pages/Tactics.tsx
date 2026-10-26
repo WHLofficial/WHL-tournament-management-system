@@ -32,6 +32,7 @@ import {
   type TacticState,
 } from "../../shared/tactics";
 import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
+import { optimalXI } from "../../shared/optimalXI";
 import {
   fitPosGroup,
   fitProfileAll,
@@ -53,6 +54,7 @@ import {
   type RosterPlayer,
 } from "../lib/assignDraft";
 import { statusSuffix } from "../lib/assignCandidates";
+import { fitBenchTopTags, fitCompareRows, fitDiffRows, fitRecPool } from "../lib/fitRecommend";
 import { useNarrow } from "../lib/useNarrow";
 import { AssignSheet } from "../components/AssignSheet";
 import { FitCandidateList, fitTileClass } from "../components/FitCandidateList";
@@ -140,6 +142,11 @@ export default function Tactics() {
   const [selfPlayers, setSelfPlayers] = useState<TeamPlayer[] | null>(null);
   const [selfTeamName, setSelfTeamName] = useState<string | null>(null);
   const [subOpen, setSubOpen] = useState(true);
+  // 一键推荐 diff 面板（B2 S2）：开合纯前端态，不进 URL 不进草稿
+  const [recOpen, setRecOpen] = useState(false);
+  // 阵型对比卡（B2 S3）：默认收起；展开态记阵型值，一次一行
+  const [cmpOpen, setCmpOpen] = useState(false);
+  const [cmpOpenForm, setCmpOpenForm] = useState<string | null>(null);
   const [subMatches, setSubMatches] = useState<CoachPendingMatchDTO[] | null>(null);
   const [subMatchId, setSubMatchId] = useState<number | null>(null);
   const [selfMine, setSelfMine] = useState<TeamLineupDTO | null>(null);
@@ -635,6 +642,97 @@ export default function Tactics() {
       if (why) out.push(`${displayName(names[k]) || "未命名"}（${why}）`);
     }
     return out;
+  }
+
+  // —— 一键推荐（B2 S2 / spec §5.3）：先出 diff 预览，教练点「应用推荐」才写回 ——
+  // 候选池：排除停赛与伤停。口径沿用 statOfPid（提交前风险提示 / 候选行后缀同一来源；
+  // 后端对停赛伤停「全部只提示不拦截」，这里同样只影响推荐池、不改提交行为）。
+  // 无 meta 不进池（推荐不猜无数据的人）；可上场不足 11 人放开为全员，面板附一句提示。
+  const recPool = useMemo(
+    () =>
+      fitRecPool(
+        teamPlayers ?? [],
+        (pid) => {
+          const st = statOfPid(pid);
+          return !(st && (st.susp > 0 || st.inj));
+        },
+        (pid) => fitOfPid.get(pid) != null,
+      ),
+    [teamPlayers, suspMap, injMap, suspThreshold, fitOfPid],
+  );
+  // 推荐槽位：当前阵型 11 槽各按现任角色建边（只动人不动角色）。key 用 lid——两个槽可以
+  // 同角色同 slotKey，而 optimalXI 的 assignment 按 key 收敛成 Map，撞键会互相覆盖。
+  const recSlots = useMemo(
+    () =>
+      form.pos.map((p, i) => ({
+        lid: p.lid,
+        position: p.position,
+        slotKey: `${p.position}|${players[i].role}`,
+      })),
+    [form, players],
+  );
+  // 优化目标 Σ rankRaw（未截断，spec §5.3）；GK 槽不设硬约束。开面板才算（毫秒级，但没必要白跑）。
+  const recResult = useMemo(() => {
+    if (!recOpen || recPool.pids.length === 0) return null;
+    return optimalXI(
+      recSlots.map((s) => ({
+        key: String(s.lid),
+        weightOf: (pid: number) => fitOfPid.get(pid)?.get(s.slotKey)?.rankRaw ?? null,
+      })),
+      recPool.pids,
+    );
+  }, [recOpen, recPool, recSlots, fitOfPid]);
+  // diff 行：推荐 vs 现任首发草稿。构造是纯函数（lib/fitRecommend，有单测），这里只注入取数；
+  // FIT 变化用 rankShown（显示层口径，同候选面板行首）。
+  const recRows = useMemo(() => {
+    if (recResult == null) return null;
+    return fitDiffRows(
+      recSlots,
+      (lid) => {
+        const v = Number(names[String(lid)]);
+        return Number.isInteger(v) && v > 0 ? v : null;
+      },
+      (lid) => recResult.assignment.get(String(lid)) ?? null,
+      (pid, slotKey) => fitOfPid.get(pid)?.get(slotKey)?.rankShown ?? null,
+    );
+  }, [recResult, recSlots, names, fitOfPid]);
+
+  function recNameOf(pid: number): string {
+    const p = teamPlayers?.find((x) => x.id === pid);
+    return p ? p.name : `球员 ${pid}`;
+  }
+  // 阵型对比（B2 S3 / spec §5.4）：29 个阵型各跑一次 optimalXI（毫秒级），useMemo 收窄依赖
+  // 一次算完（池 / 分数表 / 当前阵型与角色）。当前阵型用教练已调的角色/重心（players 已带
+  // pairEa 兜底），其余 28 个用默认角色——重心不影响权重，pairOf 只需给 role。
+  const cmpRows = useMemo(
+    () =>
+      fitCompareRows(
+        FORMS,
+        (formValue, lid, position) => {
+          if (formValue === state.form) {
+            const p = players.find((x) => x.lid === lid);
+            if (p) return { role: p.role, focus: p.focus };
+          }
+          return defaultPair(position);
+        },
+        recPool.pids,
+        fitOfPid,
+      ),
+    [recPool, fitOfPid, state.form, players],
+  );
+  // 应用推荐：一次性把有推荐的槽写回（只动人，不动角色/重心/替补/指派），面板收起
+  function applyRecommendation() {
+    if (recResult == null) return;
+    setNames((n) => {
+      const next = { ...n };
+      for (const s of recSlots) {
+        const pid = recResult.assignment.get(String(s.lid));
+        if (pid != null) next[String(s.lid)] = String(pid);
+      }
+      return next;
+    });
+    setRecOpen(false);
+    showToast("已按推荐写回首发");
   }
 
   function setPair(lid: number, pos: string, role: string, focus: string) {
@@ -1230,6 +1328,81 @@ export default function Tactics() {
           </div>
         )}
 
+        {/* 一键推荐（B2 S2 / spec §5.3）：按钮在「选择目标比赛」卡上方、不放球场内；点击只展开
+            diff 面板不改阵容，应用 = 一次性写回有推荐的槽（只动人），diff 即知情确认环节。
+            顶部免责为 spec §6 第三层原文（逐字）。 */}
+        {teamPlayers && (
+          <section className="card tac-rec" hidden={zone !== "lineup"}>
+            <div className="tac-submit-head">
+              <h2>
+                一键推荐 <small>按 FIT 适配度排首发 · 先预览再应用</small>
+              </h2>
+              <button
+                className="btn"
+                aria-expanded={recOpen}
+                onClick={() => setRecOpen((v) => !v)}
+              >
+                推荐首发（FIT）
+              </button>
+            </div>
+            {recOpen && (
+              <div className="tac-rec-body">
+                <p className="tac-rec-legal">
+                  推荐由系统按当前同步数据自动计算,不保证实际比赛表现;排兵决定权在教练
+                </p>
+                {recPool.widened && (
+                  <p className="tac-warn">
+                    可上场（非停赛/伤停）人数不足 11 人，已放开全员参与推荐。
+                  </p>
+                )}
+                {recResult == null || recRows == null ? (
+                  <p className="tac-hint">无法生成推荐：可用人选不足，或队里还没有 FC26 数据。</p>
+                ) : (
+                  <>
+                    <ul className="tac-rec-list">
+                      {recRows.map((row) => (
+                        <li
+                          key={row.lid}
+                          className={`tac-rec-row${row.kind === "keep" ? " keep" : ""}`}
+                        >
+                          <b className="tac-rec-pos">{row.position}</b>
+                          {row.kind === "out" ? (
+                            <span className="tac-rec-who">
+                              {recNameOf(row.curPid!)} 出 → {recNameOf(row.newPid!)} 入
+                            </span>
+                          ) : (
+                            <span className="tac-rec-who">
+                              {recNameOf((row.newPid ?? row.curPid)!)}{" "}
+                              {row.kind === "in" ? "入" : "保持"}
+                            </span>
+                          )}
+                          <span className="tac-rec-fit">
+                            {row.kind === "out"
+                              ? `FIT ${row.curShown ?? "–"} → ${row.newShown ?? "–"}${
+                                  row.delta != null
+                                    ? `（${row.delta > 0 ? "+" : ""}${row.delta}）`
+                                    : ""
+                                }`
+                              : `FIT ${row.newShown ?? "–"}`}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="tac-rec-act">
+                      <button className="btn tac-btn-primary" onClick={applyRecommendation}>
+                        应用推荐
+                      </button>
+                      <button className="btn tac-reset" onClick={() => setRecOpen(false)}>
+                        取消
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* 选择目标比赛：默认选中未开赛的第一场，伤停/停赛跟着它走。
             手里有代打授权时上面多一个身份切换器，切过去后整页（名单/口径/提交）都换成目标队。 */}
         {(selfPlayers != null || (proxySessions?.length ?? 0) > 0) && (
@@ -1388,44 +1561,59 @@ export default function Tactics() {
               {BENCH.map((i) => {
                 const key = `b${i}`;
                 const v = names[key] ?? "";
+                // S4 替补角色化：选中且有 fitProfile 才出「擅长」行（个人内 top3 + 该槽绝对分）；
+                // 无 meta / 未选人 / 自由文本名字整行不渲染。群归属与磁贴同源（fitGroupPid）。
+                const bpid = Number(v);
+                const benchTags =
+                  Number.isInteger(bpid) && bpid > 0
+                    ? fitBenchTopTags(fitOfPid.get(bpid), fitGroupPid.get(bpid) ?? "OUT")
+                    : [];
+                const benchFit = benchTags.map((t) => `${t.slot} ${t.shown}`).join(" · ");
                 return (
                   <label className="tac-bench-slot" key={key}>
-                    <span className="tac-bench-no">{i + 1}</span>
-                    {teamPlayers ? (
-                      <select
-                        value={teamPlayers.some((x) => String(x.id) === v) ? v : ""}
-                        onChange={(e) => {
-                          const nv = e.target.value;
-                          setNames((n) => {
-                            const next = { ...n };
-                            if (nv) next[key] = nv;
-                            else delete next[key];
-                            return next;
-                          });
-                        }}
-                        aria-label={`替补 ${i + 1}`}
-                      >
-                        <option value="">（未选）</option>
-                        {teamPlayers.map((p) => (
-                          <option key={p.id} value={String(p.id)}>
-                            {`${p.number ? `#${p.number} ${p.name}` : p.name}${optionSuffix(p.id)}`}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        maxLength={16}
-                        placeholder="替补名字"
-                        value={v}
-                        aria-label={`替补 ${i + 1}`}
-                        onChange={(e) =>
-                          setNames((n) => ({
-                            ...n,
-                            [key]: e.target.value.trim(),
-                          }))
-                        }
-                      />
+                    <span className="tac-bench-row">
+                      <span className="tac-bench-no">{i + 1}</span>
+                      {teamPlayers ? (
+                        <select
+                          value={teamPlayers.some((x) => String(x.id) === v) ? v : ""}
+                          onChange={(e) => {
+                            const nv = e.target.value;
+                            setNames((n) => {
+                              const next = { ...n };
+                              if (nv) next[key] = nv;
+                              else delete next[key];
+                              return next;
+                            });
+                          }}
+                          aria-label={`替补 ${i + 1}`}
+                        >
+                          <option value="">（未选）</option>
+                          {teamPlayers.map((p) => (
+                            <option key={p.id} value={String(p.id)}>
+                              {`${p.number ? `#${p.number} ${p.name}` : p.name}${optionSuffix(p.id)}`}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          maxLength={16}
+                          placeholder="替补名字"
+                          value={v}
+                          aria-label={`替补 ${i + 1}`}
+                          onChange={(e) =>
+                            setNames((n) => ({
+                              ...n,
+                              [key]: e.target.value.trim(),
+                            }))
+                          }
+                        />
+                      )}
+                    </span>
+                    {benchFit && (
+                      <small className="tac-bench-fit" title={benchFit}>
+                        擅长 {benchFit}
+                      </small>
                     )}
                   </label>
                 );
@@ -1847,6 +2035,64 @@ export default function Tactics() {
               </section>
             )}
           </div>
+
+          {/* 阵型对比（B2 S3 / spec §5.4）：29 个阵型按最优分配后的全队总 FIT 排序——选阵型从
+              凭记忆变成看排序。当前阵型用教练已调的角色/重心，其余按默认角色（小字注明）；
+              行展开看 11 槽分配明细（短板在前）。候选池与一键推荐同源，总分才可比。 */}
+          <section className="card tac-compare" hidden={zone !== "design"}>
+            <div className="tac-submit-head">
+              <h2>
+                阵型对比 · 全队总 FIT <small>其他阵型按默认角色计算</small>
+              </h2>
+              <button
+                className="btn"
+                aria-expanded={cmpOpen}
+                onClick={() => setCmpOpen((v) => !v)}
+              >
+                {cmpOpen ? "收起" : "展开"}
+              </button>
+            </div>
+            {cmpOpen && (
+              <div className="tac-cmp-body">
+                {recPool.pids.length === 0 ? (
+                  <p className="tac-hint">无法生成对比：队里还没有 FC26 数据。</p>
+                ) : (
+                  <ul className="tac-cmp-list">
+                    {cmpRows.map((row) => {
+                      const open = cmpOpenForm === row.form;
+                      return (
+                        <li key={row.form} className={row.form === state.form ? "cur" : undefined}>
+                          <button
+                            type="button"
+                            className="tac-cmp-row"
+                            aria-expanded={open}
+                            onClick={() => setCmpOpenForm(open ? null : row.form)}
+                          >
+                            <b>{formTitle(row.form)}</b>
+                            {row.form === state.form && <span className="tac-cmp-cur">当前</span>}
+                            <span className="tac-cmp-total">
+                              {row.total != null ? row.total : "–"}
+                            </span>
+                          </button>
+                          {open && row.details && (
+                            <ul className="tac-cmp-details">
+                              {row.details.map((d) => (
+                                <li className="tac-cmp-drow" key={d.lid}>
+                                  <b>{d.position}</b>
+                                  <span>{d.pid != null ? recNameOf(d.pid) : "无推荐"}</span>
+                                  <span className="tac-cmp-dfit">FIT {d.shown ?? "–"}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
+          </section>
         </div>
         </div>
 

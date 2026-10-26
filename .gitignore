@@ -15,3 +15,7 @@ docs/
 
 # 字体子集脚本的下载缓存（14.8MB 原 TTF 与 chars.txt），不入库
 scripts/.font-cache/
+
+# 生产库备份/快照（含用户密码哈希、oidc_session 等敏感数据），仅本地留存，不入库
+backup-*.sql
+prod-snapshot-*.sql
