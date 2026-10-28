@@ -276,11 +276,28 @@ function hexToRgba(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
+// 移动网络下字体/图片请求可能长时间挂起：超时按降级资源继续出图，宁可字体退化也不能让分享图卡死
+const FONT_LOAD_TIMEOUT = 3500;
+const IMG_LOAD_TIMEOUT = 4000;
+
 function loadImg(src: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
+    let done = false;
+    const finish = (v: HTMLImageElement | null) => {
+      if (done) return;
+      done = true;
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish(null), IMG_LOAD_TIMEOUT);
+    img.onload = () => {
+      clearTimeout(timer);
+      finish(img);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      finish(null);
+    };
     img.src = src;
   });
 }
@@ -320,10 +337,26 @@ function font(ctx: CanvasRenderingContext2D, weight: number | string, size: numb
 // 没加载好时会用回退字体量宽、画出来与站点不一致（宋体标题尤其明显）
 async function ensureShareFonts(): Promise<void> {
   if (typeof document === "undefined" || !document.fonts) return;
+  // 字体只是观感增强：任何一族失败/超时都继续画，生成流程不能被网络卡住
+  // （微信里字体请求挂起时，原来的 Promise.all 会让分享面板永远空白）
+  const loadOne = (spec: string, text: string): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        console.warn(`[share] 字体加载超时，回退系统字体：${spec}`);
+        resolve();
+      }, FONT_LOAD_TIMEOUT);
+    });
+    const load = document.fonts
+      .load(spec, text)
+      .then(() => undefined)
+      .catch((err) => console.warn(`[share] 字体加载失败，回退系统字体：${spec}`, err));
+    return Promise.race([load, timeout]).finally(() => clearTimeout(timer));
+  };
   await Promise.all([
-    document.fonts.load('600 44px "Noto Serif SC"', "赛事总览战报"),
-    document.fonts.load('700 24px "JetBrains Mono"', "0123456789 :"),
-    document.fonts.load('400 24px "Inter"', "WHL abc 0123"),
+    loadOne('600 44px "Noto Serif SC"', "赛事总览战报"),
+    loadOne('700 24px "JetBrains Mono"', "0123456789 :"),
+    loadOne('400 24px "Inter"', "WHL abc 0123"),
   ]);
 }
 
