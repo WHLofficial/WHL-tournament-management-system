@@ -2669,14 +2669,6 @@ button.add-stage {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.tac-bench-own {
-  /* 与「擅长」平级的第二行小字：擅长 = FIT 估算的适配分，自身角色 = 游戏里真实拥有的 +/++ */
-  display: block;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  font: 500 11px/1.4 var(--font-mono);
-  color: var(--muted);
-}
 .tac-bench-no {
   flex: none;
   width: 22px;

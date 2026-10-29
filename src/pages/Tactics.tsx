@@ -1601,20 +1601,17 @@ export default function Tactics() {
               {BENCH.map((i) => {
                 const key = `b${i}`;
                 const v = names[key] ?? "";
-                // S4 替补角色化：选中且有 fitProfile 才出「擅长」行（个人内 top3 + 该槽绝对分）；
+                // S4 替补角色化：选中且有 fitProfile 才出「擅长」行（个人内 top3 槽位，分数只进 title）；
                 // 无 meta / 未选人 / 自由文本名字整行不渲染。群归属与磁贴同源（fitGroupPid）。
                 const bpid = Number(v);
                 const benchTags =
                   Number.isInteger(bpid) && bpid > 0
                     ? fitBenchTopTags(fitOfPid.get(bpid), fitGroupPid.get(bpid) ?? "OUT")
                     : [];
-                const benchFit = benchTags.map((t) => `${t.slot} ${t.shown}`).join(" · ");
-                // 替补自己的角色档（role+ / role++）：与「擅长」（FIT 估算）不是一个口径——
-                // 前者是游戏内真实拥有的角色，后者是这套属性打该槽的适配分，两行分别标清。
-                const benchOwn =
-                  Number.isInteger(bpid) && bpid > 0
-                    ? playerOwnRoles(metaOfPid.get(bpid)).slice(0, 3)
-                    : [];
+                // 分数只留在 title 里备查：替补行按用户 2026-10-29 裁决只列槽位短码，
+                // 两行十来个符号堆在一起太吵（自身角色已从替补席移除，球员卡里仍可见）。
+                const benchFit = benchTags.map((t) => t.slot);
+                const benchFitTitle = benchTags.map((t) => `${t.slot} ${t.shown}`).join(" · ");
                 return (
                   <label className="tac-bench-slot" key={key}>
                     <span className="tac-bench-row">
@@ -1656,24 +1653,9 @@ export default function Tactics() {
                         />
                       )}
                     </span>
-                    {benchFit && (
-                      <small className="tac-bench-fit" title={benchFit}>
-                        擅长 {benchFit}
-                      </small>
-                    )}
-                    {benchOwn.length > 0 && (
-                      <small
-                        className="tac-bench-own"
-                        title={benchOwn
-                          .map(
-                            (r) =>
-                              `${r.pos} ${ROLE_FIT[r.slot]?.zh ?? r.role} ${
-                                r.tier === 2 ? "世界级（++）" : "熟悉（+）"
-                              }`,
-                          )
-                          .join(" · ")}
-                      >
-                        自身角色 {benchOwn.map(ownRoleTag).join(" · ")}
+                    {benchFit.length > 0 && (
+                      <small className="tac-bench-fit" title={benchFitTitle}>
+                        擅长 {benchFit.join(" · ")}
                       </small>
                     )}
                   </label>
