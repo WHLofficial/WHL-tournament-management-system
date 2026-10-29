@@ -32,6 +32,7 @@ import {
   type TacticState,
 } from "../../shared/tactics";
 import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
+import { ROLE_FIT } from "../../shared/roleFit";
 import { optimalXI } from "../../shared/optimalXI";
 import {
   fitPosGroup,
@@ -71,6 +72,30 @@ import type {
 } from "../../shared/types";
 
 const STAGE_ZH: Record<string, string> = { elim: "淘汰赛", round_robin: "循环赛", group: "小组赛" };
+
+// 角色/重心的中文标签（UI 友好）：FC26 官方术语是英文，磁贴上用短码不占位，但球员卡下拉、
+// 悬停提示面向中文教练——给中文名 + 短码。zh 名取自 ROLE_FIT 权重表（49 角色全量），
+// 取不到的组合回退官方英文名，不静默丢信息。
+const FOCUS_ZH: Record<string, string> = {
+  Defend: "防守",
+  Balanced: "平衡",
+  "Build-Up": "组织",
+  Support: "策应",
+  Attack: "进攻",
+  Versatile: "全能",
+  Aggressive: "激进",
+  "Ball-Winning": "拼抢",
+  Roaming: "游弋",
+  Wide: "拉边",
+};
+function roleZhFull(position: string, role: string): string {
+  const zh = ROLE_FIT[`${position}|${role}`]?.zh;
+  return zh ? `${zh} ${role}` : roleFull(role);
+}
+function focusZh(f: string): string {
+  return FOCUS_ZH[f] ? `${FOCUS_ZH[f]} ${f}` : f;
+}
+
 
 const LS_ASSIGN_OPEN = "ftc26-assign-open";
 const BENCH = [0, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -1223,8 +1248,8 @@ export default function Tactics() {
                     key={p.lid}
                     className={`tac-tile${selected === p.lid ? " sel" : ""}${mark}${dup ? " dup" : ""}`}
                     style={{ left: `${xy[0]}%`, top: `${100 - xy[1]}%` }}
-                    title={`${nm ? nm + " · " : ""}${roleFull(pl.role)} ${pl.focus}${tip ? ` · ${tip}` : ""}${fitTip}${dup ? " · 这名球员在本场占了多个位置" : ""}`}
-                    aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleFull(pl.role)} ${pl.focus}${tip ? `，${tip}` : ""}${dup ? "，位置重复" : ""}`}
+                    title={`${nm ? nm + " · " : ""}${roleZhFull(p.position, pl.role)} ${focusZh(pl.focus)}${tip ? ` · ${tip}` : ""}${fitTip}${dup ? " · 这名球员在本场占了多个位置" : ""}`}
+                    aria-label={`${p.position} ${POS_ZH[p.position]} ${nm || "未命名"}，角色 ${roleZhFull(p.position, pl.role)} ${focusZh(pl.focus)}${tip ? `，${tip}` : ""}${dup ? "，位置重复" : ""}`}
                     onClick={() => setSelected(selected === p.lid ? null : p.lid)}
                   >
                     {st && (st.susp > 0 || st.inj) ? (
@@ -1245,7 +1270,9 @@ export default function Tactics() {
                     ) : null}
                     <span className="tac-tile-top">
                       <b>{p.position}</b>
-                      <span className={`tac-tile-role ${fitTileClass(fitVal)}`}>
+                      {/* 空槽（没放人）不挂任何 fit 类：灰虚线的语义是「放了人但跨位置群/无数据」，
+                          没放人是空位不是异常，满屏虚线会把真信号淹没 */}
+                      <span className={`tac-tile-role ${Number.isInteger(pid) && pid > 0 ? fitTileClass(fitVal) : ""}`}>
                         {pl.role} - {focusAbbr(pl.focus)}
                       </span>
                     </span>
@@ -1262,7 +1289,7 @@ export default function Tactics() {
                 <>
                   <span className="tac-heat-title">热区</span>
                   <span className="tac-heat-who">
-                    {sel.position} {displayName(names[String(sel.lid)]) || "未命名"} · {roleFull(sel.role)}（{sel.focus}）
+                    {sel.position} {displayName(names[String(sel.lid)]) || "未命名"} · {roleZhFull(sel.position, sel.role)}（{focusZh(sel.focus)}）
                   </span>
                   <span className="tac-heat-key" aria-hidden="true">
                     <i className="tac-heat-3" />
@@ -1997,7 +2024,7 @@ export default function Tactics() {
                   >
                     {[...new Set(PTE26[sel.position].map((x) => x.role))].map((r) => (
                       <option key={r} value={r}>
-                        {roleFull(r)}
+                        {roleZhFull(sel.position, r)}
                       </option>
                     ))}
                   </select>
@@ -2012,7 +2039,7 @@ export default function Tactics() {
                       .filter((x) => x.role === sel.role)
                       .map((x) => (
                         <option key={x.focus} value={x.focus}>
-                          {x.focus}
+                          {focusZh(x.focus)}
                         </option>
                       ))}
                   </select>
