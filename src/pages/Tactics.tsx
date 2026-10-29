@@ -33,6 +33,7 @@ import {
 } from "../../shared/tactics";
 import { HEAT_COLS, HEAT_ROWS, heatOf } from "../../shared/roleHeat";
 import { ROLE_FIT } from "../../shared/roleFit";
+import { ownRoleTag, playerOwnRoles, roleMark } from "../../shared/playerRoles";
 import { optimalXI } from "../../shared/optimalXI";
 import {
   fitPosGroup,
@@ -95,7 +96,6 @@ function roleZhFull(position: string, role: string): string {
 function focusZh(f: string): string {
   return FOCUS_ZH[f] ? `${FOCUS_ZH[f]} ${f}` : f;
 }
-
 
 const LS_ASSIGN_OPEN = "ftc26-assign-open";
 const BENCH = [0, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -474,14 +474,17 @@ export default function Tactics() {
   // 没摆满 11 个位置就留空并提示。
   const assignPool = useMemo(() => assignPoolOf(form.pos, names), [form, names]);
   // 已提交阵容 DTO 里的 meta（含已指派但已不在首发的人）。它不再是唯一来源：
-  // 名册条目（bootstrap / 代打板的 players）也带同一份数据，阵容没交过时由后者兜底。
+  // 名册条目（bootstrap / 代打板的 players）也带同一份数据，阵容没交过时由后者兜底
+  // （与 fitOfPid / fitGroupPid 的优先级同口径：DTO > 名册自带，先到先得）。
   const metaOfPid = useMemo(() => {
     const m = new Map<number, PlayerMeta>();
-    if (!mine) return m;
-    for (const p of [...mine.starters, ...mine.bench]) if (p.meta) m.set(p.playerId, p.meta);
-    for (const a of mine.assign ?? []) if (a.meta) m.set(a.playerId, a.meta);
+    if (mine) {
+      for (const p of [...mine.starters, ...mine.bench]) if (p.meta) m.set(p.playerId, p.meta);
+      for (const a of mine.assign ?? []) if (a.meta) m.set(a.playerId, a.meta);
+    }
+    for (const p of teamPlayers ?? []) if (p.meta && !m.has(p.id)) m.set(p.id, p.meta);
     return m;
-  }, [mine]);
+  }, [mine, teamPlayers]);
   // 弹层与编排页共用的候选池：本场首发 + 名册文案 + 上面那份 meta（优先级见 assignCandidatesOf）
   const assignCandidates = useMemo<AssignCandidateItem[]>(
     () => assignCandidatesOf(assignPool, teamPlayers, metaOfPid),
@@ -1125,6 +1128,9 @@ export default function Tactics() {
   const sel = selected != null ? players.find((p) => p.lid === selected) ?? null : null;
   const selRisk = sel ? riskLine(statOf(names[String(sel.lid)])) : "";
   const selPid = sel ? Number(names[String(sel.lid)]) : NaN;
+  // 选中球员自己拥有的角色档（RoleID1-5 → role+ / role++）：球员卡一览、角色下拉后缀、
+  // 热区行共用这一份。纯展示，FIT 分值的 +3/+5 在 shared/fitScore 里独立算。
+  const selOwnRoles = playerOwnRoles(metaOfPid.get(selPid));
   // 球员卡里列出这名球员在本场担任的全部指派（点一下即清除该项）
   const selAssigns = ASSIGN_KEYS.filter((k) => Number.isInteger(selPid) && assign[k] === selPid);
   const risks = lineupRisks();
@@ -1289,7 +1295,13 @@ export default function Tactics() {
                 <>
                   <span className="tac-heat-title">热区</span>
                   <span className="tac-heat-who">
-                    {sel.position} {displayName(names[String(sel.lid)]) || "未命名"} · {roleZhFull(sel.position, sel.role)}（{focusZh(sel.focus)}）
+                    {sel.position} {displayName(names[String(sel.lid)]) || "未命名"} · {roleZhFull(sel.position, sel.role)}
+                    {(() => {
+                      // 球员自己在这个槽位有档才加 +/++（世界级「++」/熟悉「+」），无档不加字
+                      const own = selOwnRoles.find((r) => r.slot === `${sel.position}|${sel.role}`);
+                      return own ? ` ${roleMark(own.tier)}` : "";
+                    })()}
+                    （{focusZh(sel.focus)}）
                   </span>
                   <span className="tac-heat-key" aria-hidden="true">
                     <i className="tac-heat-3" />
@@ -1597,6 +1609,12 @@ export default function Tactics() {
                     ? fitBenchTopTags(fitOfPid.get(bpid), fitGroupPid.get(bpid) ?? "OUT")
                     : [];
                 const benchFit = benchTags.map((t) => `${t.slot} ${t.shown}`).join(" · ");
+                // 替补自己的角色档（role+ / role++）：与「擅长」（FIT 估算）不是一个口径——
+                // 前者是游戏内真实拥有的角色，后者是这套属性打该槽的适配分，两行分别标清。
+                const benchOwn =
+                  Number.isInteger(bpid) && bpid > 0
+                    ? playerOwnRoles(metaOfPid.get(bpid)).slice(0, 3)
+                    : [];
                 return (
                   <label className="tac-bench-slot" key={key}>
                     <span className="tac-bench-row">
@@ -1641,6 +1659,21 @@ export default function Tactics() {
                     {benchFit && (
                       <small className="tac-bench-fit" title={benchFit}>
                         擅长 {benchFit}
+                      </small>
+                    )}
+                    {benchOwn.length > 0 && (
+                      <small
+                        className="tac-bench-own"
+                        title={benchOwn
+                          .map(
+                            (r) =>
+                              `${r.pos} ${ROLE_FIT[r.slot]?.zh ?? r.role} ${
+                                r.tier === 2 ? "世界级（++）" : "熟悉（+）"
+                              }`,
+                          )
+                          .join(" · ")}
+                      >
+                        自身角色 {benchOwn.map(ownRoleTag).join(" · ")}
                       </small>
                     )}
                   </label>
@@ -1988,6 +2021,27 @@ export default function Tactics() {
                     />
                   )}
                 </label>
+                {/* 球员自己的角色档（游戏里的 role+ / role++，来自 RoleID1-5）：角色下拉只列
+                    「这个槽位能选的角色」，球员自己会哪些、哪一档，得单独摊开看——命中当前
+                    槽位的加 hit 高亮。纯展示，FIT 的 +3/+5 分值在 fitScore 里独立算。 */}
+                {selOwnRoles.length > 0 && (
+                  <p className="tac-own-roles">
+                    <span className="tac-own-label">自身角色</span>
+                    {selOwnRoles.map((r) => (
+                      <span
+                        key={r.slot}
+                        className={`asg-role t${r.tier}${
+                          r.slot === `${sel.position}|${sel.role}` ? " hit" : ""
+                        }`}
+                        title={`${r.pos} ${ROLE_FIT[r.slot]?.zh ?? r.role} · ${
+                          r.tier === 2 ? "世界级（++）" : "熟悉（+）"
+                        }`}
+                      >
+                        {ownRoleTag(r)}
+                      </span>
+                    ))}
+                  </p>
+                )}
                 {/* FIT 候选面板（B1 S6）：select 保留不动，其下按适配度排序列出全队。
                     点行与 select 走同一入口（setNames 写该槽）；key 带槽位——换槽/换角色重挂、展开态归零。 */}
                 {teamPlayers && (
@@ -2024,7 +2078,12 @@ export default function Tactics() {
                   >
                     {[...new Set(PTE26[sel.position].map((x) => x.role))].map((r) => (
                       <option key={r} value={r}>
+                        {/* 球员自己在「位置|角色」有档就带 +/++（RoleID1-5，纯展示；加分在 FIT 引擎） */}
                         {roleZhFull(sel.position, r)}
+                        {(() => {
+                          const own = selOwnRoles.find((o) => o.slot === `${sel.position}|${r}`);
+                          return own ? ` ${roleMark(own.tier)}` : "";
+                        })()}
                       </option>
                     ))}
                   </select>

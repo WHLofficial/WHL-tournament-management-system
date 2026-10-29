@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ASSIGN_ATTR_LABELS, roleFull } from "../../shared/tactics";
 import { getPlaystyle } from "../../shared/fc26Playstyles";
 import { ROLE_FIT } from "../../shared/roleFit";
+import { ownRoleTag, playerOwnRoles } from "../../shared/playerRoles";
 import { fitTile, type FitGroup, type FitProfile, type FitSlotScore } from "../../shared/fitScore";
 import type { PlayerMeta } from "../../shared/types";
 
@@ -199,6 +200,10 @@ export function FitCandidateList({
           const bd = score?.breakdown;
           const maxC = bd ? Math.max(...bd.attr.map(([, , c]) => c), 0) : 0;
           const roleBonus = bd ? (bd.roleHit === 2 ? 5 : bd.roleHit === 1 ? 3 : 0) : 0;
+          // 球员自己的角色档（游戏里的 role+ / role++，RoleID1-5）：挂在球员身上的静态属性，
+          // 与当前槽无关，所以整行展示；命中当前槽的加 hit 高亮——明细里的「角色熟悉 +3/+5」
+          // 就是它折算的，但这里只展示、不参与算分（口径见 shared/playerRoles.ts）。
+          const ownRoles = playerOwnRoles(player.meta).slice(0, 3);
           // CA/PA 参考值（用户 2026-10-25 修订：可见但只作参考）——引擎不读、不进公式、
           // 不参与排序与档位（fitScore.ts 硬口径）；这里纯展示，行内 CA 列 + 明细 CA/PA 行
           const attrs = player.meta?.attrs;
@@ -249,6 +254,26 @@ export function FitCandidateList({
                           {c.chs}
                         </span>
                       ))}
+                    </span>
+                  )}
+                  {ownRoles.length > 0 && (
+                    <span className="asg-attrs asg-own">
+                      <span className="asg-own-label">自身角色</span>
+                      {ownRoles.map((r) => {
+                        const hit = r.slot === slotKey;
+                        const zh = ROLE_FIT[r.slot]?.zh ?? `${r.pos} ${r.role}`;
+                        return (
+                          <span
+                            key={r.slot}
+                            className={`asg-role t${r.tier}${hit ? " hit" : ""}`}
+                            title={`${r.pos} ${zh} · ${
+                              r.tier === 2 ? "世界级（++）" : "熟悉（+）"
+                            }${hit ? " · 就是当前槽位" : ""}`}
+                          >
+                            {ownRoleTag(r)}
+                          </span>
+                        );
+                      })}
                     </span>
                   )}
                 </span>

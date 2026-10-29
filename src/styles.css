@@ -2660,12 +2660,22 @@ button.add-stage {
   min-width: 0;
 }
 .tac-bench-fit {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap; /* 超长省略，全量在 title；窄屏替补本就一列一项不挤占 */
+  /* 整条换行而不是省略号（原来 overflow:hidden + ellipsis 在窄列里必然截断）：
+     替补列本来就一列一项，top3 标签整行放得下就一行、放不下就折行，全量始终可见 */
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
   font: 500 11px/1.4 var(--mono);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+.tac-bench-own {
+  /* 与「擅长」平级的第二行小字：擅长 = FIT 估算的适配分，自身角色 = 游戏里真实拥有的 +/++ */
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font: 500 11px/1.4 var(--font-mono);
+  color: var(--muted);
 }
 .tac-bench-no {
   flex: none;
@@ -4315,6 +4325,48 @@ button.add-stage {
   background: #eeeae2;
   border-color: #d8d2c4;
   color: #666;
+}
+/* 自身角色 chip（游戏里的 role+ / role++，数据来自 RoleID1-5）：FIT 分无关的静态属性，
+   所以用中性方胶囊而不是磁贴四色底衬；t2 = 世界级（++）暖金、t1 = 熟悉（+）灰白，
+   hit = 正好是当前查看的槽位（描边主色 + 加粗）——玩家一眼看出「他本来就会这个角色」。 */
+.asg-own {
+  margin-top: 2px;
+}
+.asg-own-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.asg-role {
+  padding: 0 5px;
+  border: 1px solid #d8d2c4;
+  border-radius: 6px;
+  background: #f2f5f2;
+  color: var(--muted);
+  font: 600 11px/16px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.asg-role.t2 {
+  border-color: #e2c98f;
+  background: #f7eeda;
+  color: #7a5c1e;
+}
+.asg-role.hit {
+  border-color: var(--pitch);
+  box-shadow: inset 0 0 0 1px var(--pitch);
+  font-weight: 700;
+}
+/* 球员卡「自身角色」行：角色下拉只列本槽能选的角色，这里把这人会打的角色全摊开 */
+.tac-own-roles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0;
+}
+.tac-own-label {
+  font-size: 12px;
+  color: var(--muted);
 }
 .asg-none {
   color: var(--muted);
