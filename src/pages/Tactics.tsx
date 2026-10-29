@@ -1209,7 +1209,8 @@ export default function Tactics() {
                 const mark = st && st.susp > 0 ? (st.inj ? " both" : " susp") : st && st.inj ? " inj" : "";
                 const tip = statTip(st);
                 // FIT 底衬（B1 S5）：个人内契合分（和自己比，本位置群内分池）→ fit-g/y/o/na 四态；
-                // 跨位置群槽位（如门将摆上场）无档走灰虚线，悬停显「非其位置群」不显两个数。
+                // 门将摆上场记 0 分（走红橙档，悬停显「门将不客串」）；场上球员摆门将仍无档走
+                // 灰虚线，悬停显「非其位置群」。
                 // 磁贴本体严禁出现数字（spec §3/§5.1），两个数只进悬停提示；无数据不追加。
                 const slotKey = `${p.position}|${pl.role}`;
                 const prof = Number.isInteger(pid) && pid > 0 ? fitOfPid.get(pid) ?? null : null;

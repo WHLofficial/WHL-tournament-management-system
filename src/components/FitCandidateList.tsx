@@ -89,8 +89,8 @@ interface FitRow {
   player: FitCandidatePlayer;
   /** 该槽位得分；null = 无 meta 或该角色关键属性键全缺（缺数据是事实，不是 0 分） */
   score: FitSlotScore | null;
-  /** 个人内契合分（展开明细用；与行首绝对分各归其位，spec §4.2 ①②）。跨位置群槽位为 null
-   *  （fitTile 位置群兜底定稿：无档 ≠ 缺数据，绝对分行首照显） */
+  /** 个人内契合分（展开明细用；与行首绝对分各归其位，spec §4.2 ①②）。null = 无 meta /
+   *  槽位缺键 / 场上球员的 GK 族槽（fitTile 无档；门将群外场槽位记 0，不再返回 null） */
   tile: number | null;
   suffix: string;
   elsewhere: string[];
@@ -139,9 +139,10 @@ export function FitCandidateList({
     return {
       player: p,
       score: profile?.get(slotKey) ?? null,
-      // 跨位置群槽位（如门将的场上槽位）fitTile 返回 null → 明细里显示「无」，磁贴走灰虚线；
-      // group 必须与磁贴同源（groupOfPid，DTO meta 优先），不能用行内 p.meta 自判——否则
-      // 「名册 meta 缺、DTO meta 带 GK PosID」的窗口里，同一人磁贴灰虚线、面板明细却出档
+      // 门将的场上槽位 fitTile 记 0（2026-10-29 口径，明细显 0 不再显「无」）；场上球员的
+      // GK 族槽仍为 null → 明细显「无」、磁贴灰虚线。group 必须与磁贴同源（groupOfPid，
+      // DTO meta 优先），不能用行内 p.meta 自判——否则「名册 meta 缺、DTO meta 带 GK PosID」
+      // 的窗口里，同一人磁贴灰虚线、面板明细却出档
       tile: fitTile(profile, slotKey, groupOfPid.get(p.id) ?? "OUT"),
       suffix: suffixOf?.(p.id) ?? "",
       elsewhere: elsewhereOf(p.id),

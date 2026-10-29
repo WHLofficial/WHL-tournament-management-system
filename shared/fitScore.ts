@@ -4,8 +4,9 @@
 // 两个指标各归其位（spec §3/§4.2，不得混用）：
 // - fitTile：个人内契合，「和自己比」——score（base+徽章）在自己同族槽位池里的百分位 0-99，
 //   磁贴底衬用（阈值 85/50 在 UI 侧）。PosID/RoleID 不参与个人内比较（已隐含在属性结构里，
-//   且 RoleID 有时乱给）。GK 族槽位（GK|GK/GK|SK/GK|BPK）与场上族槽位分池排，且只在本位置群
-//   内出档（fitPosGroup，跨群一律 null——兜底定稿见 fitTile 注释）。
+//   且 RoleID 有时乱给）。GK 族槽位（GK|GK/GK|SK/GK|BPK）与场上族槽位分池排。门将群球员
+//   （用户 2026-10-29 口径）：三个门将槽位压到 85-99（最差也绿档），外场槽位统一 0 分；
+//   场上群球员的 GK 族槽位仍无档（null）——详见 fitTile 注释。
 // - rankRaw / rankShown：绝对分，「和联盟比」——base + PosID 命中 +2 + RoleID 熟悉档 +3/+5
 //   + 徽章（封顶 3），候选面板排序与行首数字用。排序用未截断 rankRaw（顶级 14 人会到 100-105），
 //   显示层 min(99, round(rankRaw))——封顶只压显示、不压排序。绝对分跨位置群照算（门将也能在
@@ -50,8 +51,13 @@ export type FitProfile = Map<string, FitSlotScore | null>;
 /** GK 族槽位池：三个门将角色。分池依据槽位族属，不依据球员（spec §4.2 ①） */
 const isGkSlot = (slot: string): boolean => slot.startsWith("GK|");
 
-/** 位置群：门将群 / 场上群。fitTile 只在本群槽位内出档（用户 2026-10-25 兜底定稿）。 */
+/** 位置群：门将群 / 场上群。fitTile 按位置群出档（门将群外场槽位记 0 分）。 */
 export type FitGroup = "GK" | "OUT";
+
+/** 门将展示底：三个门将槽位的个人内百分位映射到 85-99（最差也绿档，用户 2026-10-29 口径） */
+const GK_TILE_FLOOR = 85;
+/** 门将群外场槽位的展示分：门将不客串（不再灰虚线无档，统一显示 0） */
+const GK_OUT_TILE = 0;
 
 /**
  * 位置群判定：attrs 的 PosID1-4 经 FC26_POS_BY_ID 映射后任一为 GK → 门将群，否则场上群。
@@ -156,13 +162,15 @@ export function fitProfileAll(meta: PlayerMeta | undefined): FitProfile | null {
  * 定义（spec §4.2，单测钉住）：池内排名 / (n-1) × 99；排名取「严格低于自己的个数」，
  * 并列同分；池内最高 = 99；池内只剩自己（n=1）= 99；自己无数据或 profile 为空 → null。
  *
- * 位置群兜底（用户 2026-10-25 定稿）：跨位置群槽位一律返回 null——门将群球员的场上族槽位、
- * 场上群球员的 GK 族槽位都无档（UI 走灰虚线 + 悬停「非其位置群」，文案见 fitTileTip）。
+ * 位置群口径（用户 2026-10-29 修订，取代 2026-10-25 的「跨群一律 null」）：
+ * - 门将群球员：三个门将槽位的百分位展示映射到 85-99（最差也绿档）；外场槽位统一 0 分
+ *   （门将不客串——显 0 而不是灰虚线「非其位置群」）。
+ * - 场上群球员：GK 族槽位仍返回 null（无档，灰虚线 + 悬停「非其位置群」，见 fitTileTip）。
  * 缘由备查：S5 生产冒烟（2026-10-23 快照全量 43 名门将）出 257 个场上绿档而绝对分只有
  * 34-53——个人内百分位恒把池内前 ~15% 涂绿，GK/场上分池压不住门将场上槽位的相对高档。
  * 不用「绝对分下限」兜底：出球型门将（BPK）的传球属性与低 CA 场上球员重叠，阈值没有干净
  * 分隔；且任何绝对下限都会连带剥夺低 CA 场上球员的绿档，违背「低 CA 也有最佳位置」定稿。
- * 位置群判定（PosID 映射）无假阳性。本群内槽位的百分位算法与阈值完全不变。
+ * 位置群判定（PosID 映射）无假阳性。本群内槽位的百分位算法不变，映射只发生在返回值末段。
  */
 export function fitTile(
   profile: FitProfile | null | undefined,
@@ -172,8 +180,8 @@ export function fitTile(
   if (!profile) return null;
   const self = profile.get(slot);
   if (!self) return null;
-  if (isGkSlot(slot) !== (group === "GK")) return null; // 跨位置群 → 无档
   const gk = isGkSlot(slot);
+  if (gk !== (group === "GK")) return group === "GK" ? GK_OUT_TILE : null; // 门将外场 0；场上球员的 GK 槽仍无档
   let n = 0;
   let less = 0;
   for (const [s, v] of profile) {
@@ -181,8 +189,8 @@ export function fitTile(
     n += 1;
     if (v.score < self.score) less += 1;
   }
-  if (n <= 1) return 99; // n=0 理论不可达（self 必在池内），一并按「只剩自己」= 99
-  return Math.round((less / (n - 1)) * 99);
+  const raw = n <= 1 ? 99 : Math.round((less / (n - 1)) * 99); // n=0 理论不可达，一并按「只剩自己」= 99
+  return gk ? GK_TILE_FLOOR + Math.round((raw / 99) * (99 - GK_TILE_FLOOR)) : raw;
 }
 
 /**
@@ -200,5 +208,8 @@ export function fitTileTip(
   if (!score) return "";
   const tile = fitTile(profile, slot, group);
   if (tile == null) return " · 非其位置群";
+  if (isGkSlot(slot) !== (group === "GK")) {
+    return ` · 门将不客串（0 分） · 该位置水平 ${score.rankShown}(本站估算,非 FC26 游戏内 CAPA)`;
+  }
   return ` · 个人内契合 ${tile} · 该位置水平 ${score.rankShown}(本站估算,非 FC26 游戏内 CAPA)`;
 }

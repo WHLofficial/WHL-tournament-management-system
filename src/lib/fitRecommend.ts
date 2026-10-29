@@ -216,8 +216,9 @@ export interface FitBenchTag {
 
 /**
  * 替补槽的「擅长」行：个人内 fitTile 降序取 top3（他最适合打哪），值给该槽 rankShown
- * （打上去什么水平，与候选面板行首同口径）。跨位置群槽位 fitTile 无档（门将的场上槽、
- * 场上球员的 GK 族槽），不进「最适合打哪」榜。并列时按 shown 降序、再按槽位键稳定序。
+ * （打上去什么水平，与候选面板行首同口径）。只统计本位置群槽位——门将的场上槽位现在
+ * fitTile 记 0 分（2026-10-29 口径），必须按槽位族跳过，否则「擅长 ST|AF 0」会混进榜；
+ * 场上球员的 GK 族槽同样跳过。并列时按 shown 降序、再按槽位键稳定序。
  * profile 为 null（无 meta）或未选人由调用方传 null/undefined → 返回空数组，整行不渲染。
  */
 export function fitBenchTopTags(
@@ -229,6 +230,7 @@ export function fitBenchTopTags(
   const tagged: { slot: string; tile: number; shown: number }[] = [];
   for (const [slot, s] of profile) {
     if (!s) continue;
+    if (slot.startsWith("GK|") !== (group === "GK")) continue; // 跨位置群不计入「擅长」
     const tile = fitTile(profile, slot, group);
     if (tile == null) continue;
     tagged.push({ slot, tile, shown: s.rankShown });

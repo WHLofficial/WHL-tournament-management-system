@@ -4,8 +4,8 @@
 // ③ 加分：PosID 命中 +2、RoleID 一档 +3 / ++ 档 +5（同槽位多枚取最高档）、徽章银 +0.5 / 金 +1 封顶 3；
 // ④ 无 meta / 无 attrs → null；6 键全缺 → 整槽位 null；缺键按已有键加权；
 // ⑤ fitTile：个人内百分位 = 排名/(n-1)×99、池内最高 99、n=1 = 99、GK 族与场上族分池；
-//   位置群兜底（用户 2026-10-25 定稿）：跨群槽位一律 null——门将的场上槽位、场上球员的
-//   GK 槽位都无档（灰虚线 + 悬停「非其位置群」），本群内档位与阈值 85/50 不变，
+//   位置群口径（用户 2026-10-29）：门将三槽映射到 85-99（99/92/85），门将的场上槽位记 0；
+//   场上球员的 GK 槽位仍无档（null，灰虚线 + 悬停「非其位置群」），
 //   绝对分 rankShown 跨群照算（候选面板不缺行）；
 // ⑥ rankRaw 不被 99 截断（候选排序口径），rankShown 才封顶。
 import { describe, expect, it } from "vitest";
@@ -269,14 +269,14 @@ describe("fitTile：个人内百分位与分池", () => {
       "ST|AF": 10,
       "ST|PO": 20,
     });
-    // GK 池 n=3：GK|SK 是次高 → 50（混池会是 47/48×99 ≈ 97）
-    expect(fitTile(p, "GK|SK", "GK")).toBe(50);
+    // GK 池 n=3：GK|SK 是次高 → 原始 50，门将展示映射后 85 + round(50/99×14) = 92
+    expect(fitTile(p, "GK|SK", "GK")).toBe(92);
     // 场上池只有两个槽位（GK 三槽不计入）：ST|PO 是最高 → 99（混池会被 GK 分数压下去）
     expect(fitTile(p, "ST|PO", "OUT")).toBe(99);
     expect(fitTile(p, "ST|AF", "OUT")).toBe(0);
   });
 
-  it("位置群兜底（用户 2026-10-25 定稿）：跨群槽位一律无档，本群内百分位不受影响", () => {
+  it("位置群口径（用户 2026-10-29）：门将外场槽记 0，场上球员的 GK 槽仍无档", () => {
     const p = profOf({
       "GK|GK": 90,
       "GK|SK": 80,
@@ -284,27 +284,27 @@ describe("fitTile：个人内百分位与分池", () => {
       "ST|AF": 10,
       "ST|PO": 20,
     });
-    // 门将群球员：场上族槽位全 null（S5 生产冒烟的 257 个绿档由此归零）
-    expect(fitTile(p, "ST|PO", "GK")).toBeNull();
-    expect(fitTile(p, "ST|AF", "GK")).toBeNull();
-    // 场上群球员：GK 族槽位全 null
+    // 门将群球员：场上族槽位统一 0（不再灰虚线无档；S5 的 257 个假绿档由此归零）
+    expect(fitTile(p, "ST|PO", "GK")).toBe(0);
+    expect(fitTile(p, "ST|AF", "GK")).toBe(0);
+    // 场上群球员：GK 族槽位仍 null
     expect(fitTile(p, "GK|GK", "OUT")).toBeNull();
     expect(fitTile(p, "GK|SK", "OUT")).toBeNull();
   });
 
-  it("门将 fixture：GK 槽 99/50/0 照常出档（低 CA 门将 GK 绿档保留），场上 46 槽全 null（S5 冒烟定稿）", () => {
+  it("门将 fixture：GK 槽映射 99/92/85（最差也绿档），场上 46 槽统一 0", () => {
     const p = fitProfileAll(GK_META)!;
     expect(fitPosGroup(GK_META)).toBe("GK");
     expect(fitTile(p, "GK|GK", "GK")).toBe(99);
-    expect(fitTile(p, "GK|SK", "GK")).toBe(50);
-    expect(fitTile(p, "GK|BPK", "GK")).toBe(0);
+    expect(fitTile(p, "GK|SK", "GK")).toBe(92);
+    expect(fitTile(p, "GK|BPK", "GK")).toBe(85);
 
     const outfieldSlots = Object.keys(ROLE_FIT).filter((s) => !s.startsWith("GK|"));
     expect(outfieldSlots).toHaveLength(46);
-    // fixture 属性给全：场上槽位 score 全部可算（候选面板绝对分照显），但档位全 null
+    // fixture 属性给全：场上槽位 score 全部可算（候选面板绝对分照显），但门将不客串 → 0
     for (const s of outfieldSlots) {
       expect(p.get(s), s).not.toBeNull();
-      expect(fitTile(p, s, "GK"), s).toBeNull();
+      expect(fitTile(p, s, "GK"), s).toBe(0);
     }
     expect(fitTile(p, "NOPE|X", "GK")).toBeNull(); // 陌生槽位键 → 无数据
   });
@@ -332,9 +332,19 @@ describe("fitTileTip：磁贴悬停 FIT 追加段（与底衬同口径）", () =
     ); // 池内只剩自己 → 99
   });
 
-  it("跨群槽位：不显两个数，改显「非其位置群」", () => {
+  it("场上球员的 GK 槽：不显两个数，改显「非其位置群」", () => {
     const p = tipProf([["GK|GK", { score: 90, rankShown: 83 }]]);
     expect(fitTileTip(p, "GK|GK", "OUT")).toBe(" · 非其位置群");
+  });
+
+  it("门将的场上槽：显「门将不客串（0 分）」+ 该位置水平", () => {
+    const p = tipProf([
+      ["ST|PO", { score: 40, rankShown: 61 }],
+      ["GK|GK", { score: 90, rankShown: 83 }],
+    ]);
+    expect(fitTileTip(p, "ST|PO", "GK")).toBe(
+      " · 门将不客串（0 分） · 该位置水平 61(本站估算,非 FC26 游戏内 CAPA)",
+    );
   });
 
   it("无 profile / 槽位缺键 → 空串（「无数据不追加」定稿不变）", () => {
