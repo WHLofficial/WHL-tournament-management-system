@@ -147,6 +147,25 @@ describe("P3 读端：现役口径只看履历开放窗口", () => {
     ]);
   });
 
+  it("射手榜队名跟当前窗口；已无窗口的离队球员事件仍显示，队名回退「-」", async () => {
+    const { env, sqlite } = freshEnv();
+    const toplists = async () => {
+      const r = await app.request("/api/public/tournaments/7/toplists", {}, env, execCtx as never);
+      expect(r.status).toBe(200);
+      return (await r.json()) as { scorers: Array<{ playerName: string; teamName: string }> };
+    };
+    const byName = async () => new Map((await toplists()).scorers.map((s) => [s.playerName, s]));
+    let list = await byName();
+    expect(list.get("张三")?.teamName).toBe("蓝队"); // 进球时在红队，现在人在蓝队
+    expect(list.get("赵六")?.teamName).toBe("蓝队");
+
+    // 张三彻底解约（关窗）：历史进球仍保留，队名回退「-」
+    sqlite.prepare("UPDATE player_team_history SET left_at = '2026-04-01T00:00:00Z' WHERE player_id = 100").run();
+    list = await byName();
+    expect(list.get("张三")?.teamName).toBe("-");
+    expect(list.get("张三")).toBeTruthy();
+  });
+
   it("伤停跟现役窗口：公开/教练筛新队，比赛缺阵与管理端全量仍按登记队", async () => {
     const { db } = freshEnv();
     const all = await listActiveInjuries(db);

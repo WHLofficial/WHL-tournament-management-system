@@ -1,5 +1,7 @@
 // 单赛事榜单与数据统计：公开页与管理端共用（草稿守卫由调用方决定）。
 // 口径：球员榜按事件；球队进球/失球/零封按完赛比分（与积分榜一致）；趣味/趋势按完赛比分。
+import { currentTeamIdSql } from "./squad";
+import { loadSnapshot } from "./tournamentSnapshot";
 
 export interface PlayerRow {
   playerId: number;
@@ -89,6 +91,11 @@ interface EventRow {
   type: string;
   player_name: string | null;
   assist_name: string | null;
+  /** 当前所属队（开放窗口）；无开放窗口 = 已离队 → null，榜单显示 "-" */
+  player_team_id: number | null;
+  player_team_name: string | null;
+  assist_team_id: number | null;
+  assist_team_name: string | null;
   team_id: number;
   team_name: string;
 }
@@ -154,6 +161,8 @@ async function fetchEvents(db: D1Database, tid: number) {
     .prepare(
       `SELECT me.match_id, me.player_id, me.assist_player_id, me.type,
          p.name AS player_name, ap.name AS assist_name,
+         pt.id AS player_team_id, pt.name AS player_team_name,
+         apt.id AS assist_team_id, apt.name AS assist_team_name,
          t.id AS team_id, t.name AS team_name
        FROM match_event me
        JOIN match m ON m.id = me.match_id
@@ -162,6 +171,8 @@ async function fetchEvents(db: D1Database, tid: number) {
        JOIN team t ON t.id = e.team_id
        LEFT JOIN player p ON p.id = me.player_id
        LEFT JOIN player ap ON ap.id = me.assist_player_id
+       LEFT JOIN team pt ON pt.id = ${currentTeamIdSql("me.player_id")}
+       LEFT JOIN team apt ON apt.id = ${currentTeamIdSql("me.assist_player_id")}
        WHERE s.tournament_id = ?`
     )
     .bind(tid)
@@ -204,7 +215,40 @@ function aggregateSides(rows: FinishedRow[]): Map<number, SideAgg> {
 }
 
 export async function buildToplists(db: D1Database, tid: number): Promise<Toplists> {
+  const statusRow = await db
+    .prepare("SELECT status FROM tournament WHERE id = ?")
+    .bind(tid)
+    .first<{ status: string }>();
+  const archived = statusRow?.status === "archived";
+  // 归档有快照 = 队名/球员名按归档瞬间冻结；归档无快照（旧数据）= 按事件队去重推导；
+  // 赛期 = 现役开放窗口（转会跟着变，离队显示 "-"）。损坏/缺失都回退，不 500。
+  const snap = archived ? await loadSnapshot(db, tid) : null;
   const [ev, fin] = await Promise.all([fetchEvents(db, tid), fetchFinished(db, tid)]);
+  const evRows = ev.results ?? [];
+
+  const snapPlayerNames = new Map(snap?.players.map((p) => [p.playerId, p.playerName]) ?? []);
+  const snapPlayerTeams = new Map(
+    snap?.players.map((p) => [p.playerId, p.teams.map((t) => t.teamName).join(" / ")]) ?? []
+  );
+  const snapTeamNames = new Map(snap?.teams.map((t) => [t.teamId, t.teamName]) ?? []);
+  // 旧归档没有快照时的兜底：这个人在本届事件里代表过哪些队（按首次出现顺序去重）
+  const eventTeams = new Map<number, string[]>();
+  const addEventTeam = (playerId: number, teamName: string) => {
+    const arr = eventTeams.get(playerId) ?? [];
+    if (!arr.includes(teamName)) arr.push(teamName);
+    eventTeams.set(playerId, arr);
+  };
+  for (const r of evRows) {
+    if (r.player_id !== null) addEventTeam(r.player_id, r.team_name);
+    if (r.assist_player_id !== null) addEventTeam(r.assist_player_id, r.team_name);
+  }
+  const playerNameOf = (id: number, live: string) => snapPlayerNames.get(id) ?? live;
+  const teamNameOf = (id: number, live: string | null, eventTeam: string): string => {
+    const frozen = snapPlayerTeams.get(id);
+    if (frozen) return frozen;
+    if (archived) return (eventTeams.get(id) ?? [eventTeam]).join(" / ");
+    return live ?? "-";
+  };
 
   interface PlayerBucket {
     name: string;
@@ -229,15 +273,20 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
 
   // 两黄变一红口径：red_2y 计 1 张红牌；与 red_2y 同场同球员的黄牌不计入黄牌数
   const twoYellow = new Set<string>();
-  for (const r of ev.results ?? []) {
+  for (const r of evRows) {
     if (r.type === "red_2y") twoYellow.add(`${r.match_id}:${r.player_id}`);
   }
   const isYellow = (r: EventRow) =>
     r.type === "yellow" && !twoYellow.has(`${r.match_id}:${r.player_id}`);
 
-  for (const r of ev.results ?? []) {
+  for (const r of evRows) {
+    // 赛期队名 = 现在属于哪队（转会跟着变，离队 "-"）；归档 = 快照里冻的「待过哪些队」
     if (r.player_id !== null && r.player_name !== null) {
-      const b = bucket(r.player_id, r.player_name, r.team_name);
+      const b = bucket(
+        r.player_id,
+        playerNameOf(r.player_id, r.player_name),
+        teamNameOf(r.player_id, r.player_team_name, r.team_name)
+      );
       if (r.type === "goal" || r.type === "pen_goal") {
         b.goals += 1;
         if (r.type === "pen_goal") b.penGoals += 1;
@@ -247,11 +296,15 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
       players.set(r.player_id, b);
     }
     if (r.assist_player_id !== null && r.assist_name !== null) {
-      const b = bucket(r.assist_player_id, r.assist_name, r.team_name);
+      const b = bucket(
+        r.assist_player_id,
+        playerNameOf(r.assist_player_id, r.assist_name),
+        teamNameOf(r.assist_player_id, r.assist_team_name, r.team_name)
+      );
       b.assists += 1;
       players.set(r.assist_player_id, b);
     }
-    const tb = teams.get(r.team_id) ?? { name: r.team_name, yellows: 0, reds: 0 };
+    const tb = teams.get(r.team_id) ?? { name: snapTeamNames.get(r.team_id) ?? r.team_name, yellows: 0, reds: 0 };
     if (isYellow(r)) tb.yellows += 1;
     else if (r.type === "red" || r.type === "red_2y") tb.reds += 1;
     teams.set(r.team_id, tb);
@@ -305,6 +358,13 @@ export async function buildToplists(db: D1Database, tid: number): Promise<Toplis
 }
 
 export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
+  const statusRow = await db
+    .prepare("SELECT status FROM tournament WHERE id = ?")
+    .bind(tid)
+    .first<{ status: string }>();
+  const snap =
+    statusRow?.status === "archived" ? await loadSnapshot(db, tid) : null;
+  const snapTeamNames = new Map(snap?.teams.map((t) => [t.teamId, t.teamName]) ?? []);
   const [statusRows, typeRows, fin, injuryRows, cardRow] = await Promise.all([
     db
       .prepare(
@@ -366,7 +426,11 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
   }
   goals.avg = avg2(goals.total, progress.finished);
 
-  const rows = fin.results ?? [];
+  const rows = (fin.results ?? []).map((r) => ({
+    ...r,
+    home_team_name: snapTeamNames.get(r.home_team_id) ?? r.home_team_name,
+    away_team_name: snapTeamNames.get(r.away_team_id) ?? r.away_team_name,
+  }));
   const highlights = rows.map((r) => ({
     matchId: r.id,
     homeName: r.home_team_name,
@@ -425,7 +489,8 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
     const row = await db
       .prepare(
         `SELECT m.round, m.score_home, m.score_away,
-           ht.name AS home_team_name, at.name AS away_team_name,
+           he.team_id AS home_team_id, ht.name AS home_team_name,
+           ae.team_id AS away_team_id, at.name AS away_team_name,
            s.kind AS stage_kind, s.sort_order AS stage_order
          FROM match m
          JOIN stage s ON s.id = m.stage_id
@@ -440,7 +505,9 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
         round: number;
         score_home: number | null;
         score_away: number | null;
+        home_team_id: number;
         home_team_name: string;
+        away_team_id: number;
         away_team_name: string;
         stage_kind: string;
         stage_order: number;
@@ -448,8 +515,8 @@ export async function buildStats(db: D1Database, tid: number): Promise<Stats> {
     if (row) {
       injuryMatch = {
         matchId: inj.match_id,
-        homeName: row.home_team_name,
-        awayName: row.away_team_name,
+        homeName: snapTeamNames.get(row.home_team_id) ?? row.home_team_name,
+        awayName: snapTeamNames.get(row.away_team_id) ?? row.away_team_name,
         scoreHome: row.score_home,
         scoreAway: row.score_away,
         stageName: stageLabel(row.stage_kind, row.stage_order),

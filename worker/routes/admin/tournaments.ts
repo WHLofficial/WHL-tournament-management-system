@@ -41,6 +41,7 @@ import {
 } from "../../../shared/rankZones";
 import { deleteImage, mediaUrl, saveImage } from "../../lib/media";
 import { putDefaultCover } from "../../lib/defaultCover";
+import { buildSnapshot, countUnsyncedPlayers } from "../../lib/tournamentSnapshot";
 import { requireSuperadmin } from "../../middleware/auth";
 
 type Status = TournamentDTO["status"];
@@ -643,6 +644,47 @@ app.post("/:id/transition", async (c) => {
   if (!t) return c.json({ message: "赛事不存在" }, 404);
   if (!to || !ALLOWED[t.status].includes(to)) {
     return c.json({ message: `不能从「${t.status}」切换到「${to ?? "?"}」` }, 400);
+  }
+
+  if (to === "archived") {
+    // 归档不可逆：快照里冻的是「这些人待过哪些队」，履历还没回填就归档 = 把同步延迟永久写进历史。
+    // 这里 fail-closed，等回填覆盖后再归档（409 带缺失人数，前端可提示）。
+    const missing = await countUnsyncedPlayers(c.env.DB, id);
+    if (missing > 0) {
+      return c.json(
+        {
+          error: "history_incomplete",
+          missing,
+          message: `还有 ${missing} 名有比赛事件的球员履历未回填，暂不能归档`,
+        },
+        409
+      );
+    }
+    // batch 前再确认一次状态：并发窗口（别处刚改状态/刚录事件）下宁可重试
+    const fresh = await c.env.DB.prepare("SELECT status FROM tournament WHERE id = ?")
+      .bind(id)
+      .first<{ status: Status }>();
+    if (!fresh || fresh.status !== "running") {
+      return c.json({ message: "赛事状态已变化，请刷新后重试" }, 409);
+    }
+    let payload;
+    try {
+      payload = await buildSnapshot(c.env.DB, id);
+    } catch (e) {
+      // 快照构建失败不归档，可重试；不能出现「状态已归档但没有快照」
+      return c.json(
+        { message: `归档快照生成失败：${e instanceof Error ? e.message : String(e)}` },
+        500
+      );
+    }
+    // 快照与状态同一次 batch 提交：归档不可逆，不能出现只写一半
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        "INSERT OR REPLACE INTO tournament_snapshot (tournament_id, payload_json) VALUES (?, ?)"
+      ).bind(id, JSON.stringify(payload)),
+      c.env.DB.prepare("UPDATE tournament SET status = 'archived' WHERE id = ? AND status = 'running'").bind(id),
+    ]);
+    return c.json({ ok: true });
   }
 
   await c.env.DB.prepare("UPDATE tournament SET status = ? WHERE id = ?")
