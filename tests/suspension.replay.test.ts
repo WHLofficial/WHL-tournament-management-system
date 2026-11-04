@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
-import { applyMigrations, createTestD1, createTestKV, sqlGet } from "./d1";
+import { applyMigrations, createTestD1, createTestKV, insertPlayer, sqlGet } from "./d1";
 
 type Env = Record<string, unknown>;
 type PlayerStatus = {
@@ -54,11 +54,12 @@ function freshEnv() {
   const e = sqlite.prepare("INSERT INTO entry (id, tournament_id, team_id, seed, group_id) VALUES (?, ?, ?, ?, NULL)");
   e.run(300, TID, 30, 1);
   e.run(301, TID, 31, 2);
-  const p = sqlite.prepare("INSERT INTO player (id, team_id, name, number, created_at) VALUES (?, ?, ?, NULL, ?)");
-  p.run(300, 30, "张三", iso);
-  p.run(301, 30, "李四", iso);
-  p.run(302, 31, "王五", iso);
-  p.run(303, 31, "赵六", iso);
+  for (const [id, teamId, name] of [
+    [300, 30, "张三"],
+    [301, 30, "李四"],
+    [302, 31, "王五"],
+    [303, 31, "赵六"],
+  ] as const) insertPlayer(sqlite, { id, teamId, name, createdAt: iso });
 
   const env: Env = {
     DB: createTestD1(sqlite),

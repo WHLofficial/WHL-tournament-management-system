@@ -2,7 +2,7 @@
 // 口径直连 buildFeed / buildWeekly：比赛必须落在「本周」窗口内，故完赛时刻取运行时刻。
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { applyMigrations, createTestD1 } from "./d1";
+import { applyMigrations, createTestD1, insertPlayer } from "./d1";
 import { buildFeed, buildRoundRecap, buildWeekly } from "../worker/lib/feedNews";
 import { INJURY_CLEAR_TAIL, INJURY_OUT_TAIL } from "../worker/lib/copybanks";
 import { pickText } from "../shared/textpick";
@@ -32,7 +32,7 @@ function freshDb(opts: FixtureOpts = {}) {
   sqlite.prepare("INSERT INTO user (id, name, email, password_hash, role, locked, must_change_pw) VALUES (1, '管理员', '', 'x', 'admin', 0, 0)").run();
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (10, 1, '红队', ?)").run(iso);
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (11, 1, '蓝队', ?)").run(iso);
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (100, 10, '张三')").run();
+  insertPlayer(sqlite, { id: 100, teamId: 10, name: "张三" });
   sqlite
     .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by) VALUES (7, 1, '联赛', 'round_robin', 'running', 1)")
     .run();

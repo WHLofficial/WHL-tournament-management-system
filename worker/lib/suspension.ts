@@ -162,7 +162,7 @@ function replay(
 // 计算单赛事内所有有红黄牌记录球员的停赛状态。
 // 有清零锚点时拆两遍：锚点前事件完整重放（清零前已生效的停赛定格后继续执行），
 // 锚点后事件黄牌从零重计；补录旧比赛的事件按 created_at 归段，不污染新累积。
-// teamId 给定时只重放这一队（按 player.team_id 认人，不靠事件挂在哪个 entry 上）：
+// teamId 给定时只重放这一队（按现役履历窗口认人，不靠事件挂在哪个 entry 上）：
 // 球员结果只取决于「他自己那支队的比赛序 + 他自己的事件」，收窄读入量与全量算出的该队结果一致
 // ——教练端不必把整个赛事的红黄牌读出来。
 export async function computeSuspensions(
@@ -176,7 +176,11 @@ export async function computeSuspensions(
     ? ` AND (m.home_entry_id IN (SELECT id FROM entry WHERE team_id = ?)
              OR m.away_entry_id IN (SELECT id FROM entry WHERE team_id = ?))`
     : "";
-  const eventFilter = scoped ? " AND p.team_id = ?" : "";
+  // 现役窗口认人：转出球员不再算旧队的人，转入球员归新队；已离队者无开放窗口、不参与本队重放
+  const eventFilter = scoped
+    ? ` AND EXISTS (SELECT 1 FROM player_team_history h
+                     WHERE h.player_id = p.id AND h.team_id = ? AND h.left_at IS NULL)`
+    : "";
   const mParams: number[] = teamId != null ? [tid, teamId, teamId] : [tid];
   const eParams: number[] = teamId != null ? [tid, teamId] : [tid];
   const [matches, events] = await Promise.all([

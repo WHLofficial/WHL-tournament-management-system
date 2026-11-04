@@ -9,6 +9,7 @@ import {
 } from "../../shared/tactics";
 import type { AssignKey } from "../../shared/tactics";
 import { loadPlayerMeta } from "./playerMeta";
+import { squadOwnedCountSql } from "./squad";
 import type {
   LineupAssignDTO,
   LineupBenchDTO,
@@ -152,9 +153,7 @@ export async function validateAssign(
   const ids = [...new Set(Object.values(assign))];
   if (ids.length) {
     const owned = await db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM player WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`,
-      )
+      .prepare(squadOwnedCountSql(ids.length))
       .bind(teamId, ...ids)
       .first<{ n: number }>();
     if (owned?.n !== ids.length) {

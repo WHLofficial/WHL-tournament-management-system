@@ -252,50 +252,42 @@ export async function listMatchAbsences(
 
 // 伤停动态板块（榜单 tab）：全平台（或某队）「伤停中」球员，按队分组。
 // 每条登记若还有未打完的缺阵场即在列；跨赛事标注赛事名。
+// 队名与队伍筛选走「当前开放窗口」（设计 §4.6）：转出球员不再占旧队、转入球员新队能看到
+// 仍生效的伤停；injury.team_id 仍是登记时的历史事实，只给管理端全量与比赛缺阵用。
 export async function listActiveInjuries(
   db: D1Database,
   teamId?: number
 ): Promise<InjuryWatchDTO[]> {
-  const [injuries, misses] = await Promise.all([
-    teamId != null
-      ? db
-          .prepare(
-            `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
-                    me.type AS event_type, me.minute AS event_minute,
-                    p.name AS player_name, t.name AS team_name,
-                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
-                    fm.round AS from_round, fs.kind AS from_stage_kind
-             FROM injury i
-             JOIN match_event me ON me.id = i.event_id
-             JOIN player p ON p.id = i.player_id
-             JOIN team t ON t.id = i.team_id
-             JOIN match fm ON fm.id = me.match_id
-             JOIN stage fs ON fs.id = fm.stage_id
-             JOIN tournament ft ON ft.id = fs.tournament_id
-             WHERE i.team_id = ?`
-          )
-          .bind(teamId)
-          .all<InjuryRow & { team_name: string }>()
-      : db
-          .prepare(
-            `SELECT i.id, i.team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
-                    me.type AS event_type, me.minute AS event_minute,
-                    p.name AS player_name, t.name AS team_name,
-                    fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
-                    fm.round AS from_round, fs.kind AS from_stage_kind
-             FROM injury i
-             JOIN match_event me ON me.id = i.event_id
-             JOIN player p ON p.id = i.player_id
-             JOIN team t ON t.id = i.team_id
-             JOIN match fm ON fm.id = me.match_id
-             JOIN stage fs ON fs.id = fm.stage_id
-             JOIN tournament ft ON ft.id = fs.tournament_id`
-          )
-          .all<InjuryRow & { team_name: string }>(),
-    teamId != null ? missesForTeams(db, [teamId]) : missesAll(db),
-  ]);
+  const injuries = await db
+    .prepare(
+      `SELECT i.id, ct.id AS team_id, i.player_id, i.event_id, i.injury_name, i.note, i.created_at,
+              me.type AS event_type, me.minute AS event_minute,
+              p.name AS player_name, ct.name AS team_name,
+              fm.id AS from_match_id, ft.id AS from_tournament_id, ft.name AS from_tournament_name,
+              fm.round AS from_round, fs.kind AS from_stage_kind
+       FROM injury i
+       JOIN match_event me ON me.id = i.event_id
+       JOIN player p ON p.id = i.player_id
+       LEFT JOIN team ct ON ct.id = (
+         SELECT h.team_id FROM player_team_history h
+         WHERE h.player_id = i.player_id AND h.left_at IS NULL
+         ORDER BY h.joined_at DESC, h.id DESC LIMIT 1
+       )
+       JOIN match fm ON fm.id = me.match_id
+       JOIN stage fs ON fs.id = fm.stage_id
+       JOIN tournament ft ON ft.id = fs.tournament_id
+       WHERE ${teamId != null ? "ct.id = ?" : "ct.id IS NOT NULL"}`
+    )
+    .bind(...(teamId != null ? [teamId] : []))
+    .all<InjuryRow & { team_name: string }>();
+  const rows = injuries.results ?? [];
+  // 缺阵场按已筛出的登记 id 取：这里已按现役窗口筛人，再按 injury.team_id 筛会漏掉
+  // 转入球员的缺阵进度（人被查出来、misses 却为空，就会误判成已伤愈而不显示）
+  const misses = rows.length
+    ? await missesForInjuryIds(db, rows.map((r) => r.id))
+    : { results: [] as MissRow[] };
   const out: InjuryWatchDTO[] = [];
-  for (const inj of assembleRaw(injuries.results ?? [], misses.results ?? [], (r) => (r as InjuryRow & { team_name: string }).team_name).values()) {
+  for (const inj of assembleRaw(rows, misses.results ?? [], (r) => (r as InjuryRow & { team_name: string }).team_name).values()) {
     const remaining = inj.misses.filter((m) => m.status !== "finished");
     if (remaining.length === 0) continue; // 已伤愈，不在「伤停中」
     out.push({
@@ -558,6 +550,24 @@ function missesForTeams(db: D1Database, teamIds: number[]): Promise<D1Result<Mis
        ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id`
     )
     .bind(...teamIds)
+    .all<MissRow>();
+}
+
+// 按伤停登记 id 取缺阵场：伤停动态已按现役窗口筛人，缺阵场不能再用 injury.team_id 筛
+function missesForInjuryIds(db: D1Database, ids: number[]): Promise<D1Result<MissRow>> {
+  return db
+    .prepare(
+      `SELECT im.injury_id, im.match_id, t2.id AS tournament_id, t2.name AS tournament_name,
+              m.round, s.kind AS stage_kind, m.status
+       FROM injury_miss im
+       JOIN injury i ON i.id = im.injury_id
+       JOIN match m ON m.id = im.match_id
+       JOIN stage s ON s.id = m.stage_id
+       JOIN tournament t2 ON t2.id = s.tournament_id
+       WHERE im.injury_id IN (${ids.map(() => "?").join(",")})
+       ORDER BY s.sort_order, m.round, m.slot, m.leg, m.id`
+    )
+    .bind(...ids)
     .all<MissRow>();
 }
 

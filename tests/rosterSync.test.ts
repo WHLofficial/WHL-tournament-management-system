@@ -80,6 +80,9 @@ function seedPlayer(
   number: string | null = null
 ) {
   sqlite.prepare("INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)").run(id, teamId, name, number);
+  sqlite
+    .prepare("INSERT INTO player_team_history (player_id, team_id, joined_at, source) VALUES (?, ?, ?, 'seed')")
+    .run(id, teamId, "2026-01-01T00:00:00.000Z");
 }
 
 /** 给 player 100 挂一条进球事件：删这个球员会被 match_event 外键拦下 */

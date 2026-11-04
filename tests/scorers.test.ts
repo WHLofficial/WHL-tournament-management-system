@@ -1,7 +1,7 @@
 // 射手榜并列口径在叙事侧的对齐：赛前榜（scorersBefore）与榜单同规则——同球数点球少的排前。
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { applyMigrations, createTestD1 } from "./d1";
+import { applyMigrations, createTestD1, insertPlayer } from "./d1";
 import { fetchScorerTotals, scorersBefore, rankOf, type ScorerTotal } from "../worker/lib/context";
 
 function freshDb() {
@@ -11,9 +11,9 @@ function freshDb() {
   sqlite.prepare("INSERT INTO user (id, name, email, password_hash, role, locked, must_change_pw) VALUES (1, '管理员', '', 'x', 'admin', 0, 0)").run();
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (10, 1, '红队', ?)").run(iso);
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (11, 1, '蓝队', ?)").run(iso);
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (100, 10, '安七')").run();
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (101, 11, '赵六')").run();
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (102, 10, '王五')").run();
+  insertPlayer(sqlite, { id: 100, teamId: 10, name: "安七" });
+  insertPlayer(sqlite, { id: 101, teamId: 11, name: "赵六" });
+  insertPlayer(sqlite, { id: 102, teamId: 10, name: "王五" });
   sqlite
     .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by) VALUES (7, 1, '联赛', 'round_robin', 'running', 1)")
     .run();

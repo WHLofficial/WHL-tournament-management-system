@@ -15,6 +15,7 @@ import { AuthApiError, authBindTeam, boundAccounts, boundTeamId, teamMembers } f
 import { requirePermission, requirePwChanged } from "../middleware/auth";
 import { computeSuspensions, parseSuspensionConfig } from "../lib/suspension";
 import { listActiveInjuries } from "../lib/injury";
+import { SQUAD_PLAYERS_SQL, squadOwnedCountSql } from "../lib/squad";
 import { auditStmt } from "../lib/audit";
 import { accountNames, findGrantForGrantee, findGrantForTeam, getGranteeSession, listGranteeSessions } from "../lib/lineupProxy";
 import { loadPlayerMeta, trimPlayerMetaForPool } from "../lib/playerMeta";
@@ -90,10 +91,7 @@ async function buildMeTeam(env: AppEnv["Bindings"], tm: number) {
     .bind(tm)
     .first<{ id: number; name: string }>();
   const [players, members, entries] = await Promise.all([
-    env.DB.prepare(
-      `SELECT id, name, number FROM player WHERE team_id = ?
-       ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id`
-    )
+    env.DB.prepare(SQUAD_PLAYERS_SQL)
       .bind(tm)
       .all<{ id: number; name: string; number: string | null }>(),
     teamMembers(env, tm),
@@ -380,9 +378,7 @@ app.put("/matches/:mid/lineup", async (c) => {
   }
 
   const ids = [...new Set(slots.map((s) => s.player_id))];
-  const owned = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM player WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`,
-  )
+  const owned = await c.env.DB.prepare(squadOwnedCountSql(ids.length))
     .bind(teamId, ...ids)
     .first<{ n: number }>();
   if (owned?.n !== ids.length) {
@@ -449,10 +445,7 @@ app.get("/proxy/:mid/board", async (c) => {
   if (!session) return c.json({ message: "这场没有你的代打授权" }, 403);
 
   const [players, injuries, lineup, slice] = await Promise.all([
-    c.env.DB.prepare(
-      `SELECT id, name, number FROM player WHERE team_id = ?
-       ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id`,
-    )
+    c.env.DB.prepare(SQUAD_PLAYERS_SQL)
       .bind(session.teamId)
       .all<{ id: number; name: string; number: string | null }>(),
     listActiveInjuries(c.env.DB, session.teamId),
@@ -521,9 +514,7 @@ app.put("/proxy/:mid/lineup", async (c) => {
 
   // 球员归属按被代打队判：代打者交的必须是目标队的在册球员
   const ids = [...new Set(slots.map((s) => s.player_id))];
-  const owned = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM player WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`,
-  )
+  const owned = await c.env.DB.prepare(squadOwnedCountSql(ids.length))
     .bind(grant.teamId, ...ids)
     .first<{ n: number }>();
   if (owned?.n !== ids.length) {

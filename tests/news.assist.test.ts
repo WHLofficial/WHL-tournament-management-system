@@ -2,7 +2,7 @@
 // 数据里几乎每个进球都记了助攻，逐个写太机械；口径直连 buildFeed（快讯/综述/周报同源）与 buildMatchReport（战报）。
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { applyMigrations, createTestD1 } from "./d1";
+import { applyMigrations, createTestD1, insertPlayer } from "./d1";
 import { buildFeed } from "../worker/lib/feedNews";
 import { buildMatchReport } from "../worker/lib/report";
 
@@ -28,7 +28,7 @@ function fourGoalDb() {
     [200, 11, "蓝前锋"],
     [201, 11, "蓝中场"],
   ] as const) {
-    sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (?, ?, ?)").run(id, team, name);
+    insertPlayer(sqlite, { id, teamId: team, name });
   }
   sqlite
     .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by) VALUES (7, 1, '联赛', 'round_robin', 'running', 1)")
@@ -57,8 +57,8 @@ function singleGoalDb() {
   sqlite.prepare("INSERT INTO user (id, name, email, password_hash, role, locked, must_change_pw) VALUES (1, '管理员', '', 'x', 'admin', 0, 0)").run();
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (10, 1, '红队', ?)").run(iso);
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (11, 1, '蓝队', ?)").run(iso);
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (100, 10, '红前锋')").run();
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (101, 10, '红中场')").run();
+  insertPlayer(sqlite, { id: 100, teamId: 10, name: "红前锋" });
+  insertPlayer(sqlite, { id: 101, teamId: 10, name: "红中场" });
   sqlite
     .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by) VALUES (7, 1, '联赛', 'round_robin', 'running', 1)")
     .run();

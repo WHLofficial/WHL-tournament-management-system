@@ -8,6 +8,7 @@ import {
   type TournamentDTO,
 } from "../../../shared/types";
 import { defaultCrossTemplate } from "../../lib/seeding";
+import { TOURNAMENT_SQUAD_PLAYERS_SQL } from "../../lib/squad";
 import { pushError, pushTeamToClub } from "../../lib/clubSync";
 import { BULK_MAX, parseBulkLine } from "../../lib/teamBulk";
 import {
@@ -189,7 +190,7 @@ app.get("/:id", async (c) => {
       `SELECT e.id, e.team_id, e.seed, e.group_id,
          (SELECT COALESCE(SUM(d.points), 0) FROM points_deduction d WHERE d.entry_id = e.id) AS points_deducted,
          tm.name AS team_name, tm.logo_key,
-         (SELECT COUNT(*) FROM player p WHERE p.team_id = e.team_id) AS player_count
+         (SELECT COUNT(*) FROM player_team_history h WHERE h.team_id = e.team_id AND h.left_at IS NULL) AS player_count
        FROM entry e JOIN team tm ON tm.id = e.team_id
        WHERE e.tournament_id = ? ORDER BY e.seed`
     )
@@ -643,6 +644,7 @@ app.post("/:id/transition", async (c) => {
   if (!to || !ALLOWED[t.status].includes(to)) {
     return c.json({ message: `不能从「${t.status}」切换到「${to ?? "?"}」` }, 400);
   }
+
   await c.env.DB.prepare("UPDATE tournament SET status = ? WHERE id = ?")
     .bind(to, id)
     .run();
@@ -994,11 +996,8 @@ app.get(
 // 前端原来逐队打 `?teamId=` / `teams/:id`：12~20 队的赛事就是 12~20 次请求（每次一轮往返）。
 // 这两个端点一次给齐全部参赛队、按 team_id 分组；行读与逐队调用相当（名单反而更省，
 // 少了每队一次的 team 行读取），省下来的是请求数与往返。
-// 排序表达式与 teams.ts 的单队名单逐字一致，避免优化器静默不用 idx_player_team。
-export const TOURNAMENT_TEAM_PLAYERS_SQL = `SELECT id, team_id, name, number
-   FROM player
-  WHERE team_id IN (SELECT team_id FROM entry WHERE tournament_id = ?)
-  ORDER BY team_id, (number IS NULL), CAST(number AS INTEGER), number, id`;
+// 排序表达式与单队名单逐字一致（都来自 lib/squad），避免优化器静默不用履历索引。
+export const TOURNAMENT_TEAM_PLAYERS_SQL = TOURNAMENT_SQUAD_PLAYERS_SQL;
 
 app.get("/:id/team-players", async (c) => {
   const id = Number(c.req.param("id"));

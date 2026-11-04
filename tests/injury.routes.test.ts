@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
 import { hashPassword } from "../worker/lib/crypto";
-import { applyMigrations, createTestD1, createTestKV } from "./d1";
+import { applyMigrations, createTestD1, createTestKV, insertPlayer } from "./d1";
 import { listActiveInjuries } from "../worker/lib/injury";
 
 let userHash = "";
@@ -20,8 +20,8 @@ function freshEnv() {
   const iso = "2026-01-01T00:00:00Z";
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (10, 1, '红队', ?)").run(iso);
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (11, 1, '蓝队', ?)").run(iso);
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (100, 10, '张三')").run();
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (101, 11, '李四')").run();
+  insertPlayer(sqlite, { id: 100, teamId: 10, name: "张三" });
+  insertPlayer(sqlite, { id: 101, teamId: 11, name: "李四" });
   // 两届赛事：A（受伤地）与 B（跨赛事缺阵地）
   sqlite
     .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by) VALUES (7, 1, '联赛', 'round_robin', 'running', 1)")

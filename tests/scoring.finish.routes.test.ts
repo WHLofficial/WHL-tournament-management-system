@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
-import { applyMigrations, createTestD1, createTestKV, sqlAll, sqlGet } from "./d1";
+import { applyMigrations, createTestD1, createTestKV, insertPlayer, sqlAll, sqlGet } from "./d1";
 
 type Env = Record<string, unknown>;
 
@@ -513,12 +513,11 @@ describe("scoring 报分（finish）", () => {
 // 这是比分与纪律数据的唯一人工来源（live 时实时累计、终场不传比分时也读它），
 // 而 red_2y 由「同场第二张黄牌」派生、直接喂给停赛重放 —— 所以校验顺序也要钉住。
 function addPlayers(sqlite: DatabaseSync) {
-  const p = sqlite.prepare("INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)");
-  p.run(1, 10, "甲射手", 9);
-  p.run(2, 10, "甲助攻", 7);
-  p.run(3, 11, "乙球员", 4);
-  p.run(4, 12, "丙球员", 5);
-  p.run(5, 13, "丁球员", 6);
+  insertPlayer(sqlite, { id: 1, teamId: 10, name: "甲射手", number: "9" });
+  insertPlayer(sqlite, { id: 2, teamId: 10, name: "甲助攻", number: "7" });
+  insertPlayer(sqlite, { id: 3, teamId: 11, name: "乙球员", number: "4" });
+  insertPlayer(sqlite, { id: 4, teamId: 12, name: "丙球员", number: "5" });
+  insertPlayer(sqlite, { id: 5, teamId: 13, name: "丁球员", number: "6" });
 }
 
 const EVENT_HEADERS = { Cookie: "whl_session=tok-admin", "Content-Type": "application/json" };

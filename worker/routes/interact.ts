@@ -34,10 +34,11 @@ app.post("/matches/:mid/motm", requireUser, async (c) => {
   if (match.status !== "finished")
     return c.json({ error: "not_finished", message: "比赛完赛后才能投票" }, 409);
 
-  // 只能投本场两队球员（player 按 team_id 归属，entry 按 team 匹配本场两侧）
+  // 只能投本场两队球员（归属按开放窗口，entry 按 team 匹配本场两侧）
   const mine = await c.env.DB.prepare(
     `SELECT p.id FROM player p
-     JOIN entry e ON e.team_id = p.team_id
+     JOIN player_team_history h ON h.player_id = p.id AND h.left_at IS NULL
+     JOIN entry e ON e.team_id = h.team_id
      WHERE p.id = ? AND e.id IN (?, ?)`,
   )
     .bind(playerId, match.home_entry_id, match.away_entry_id)

@@ -2,7 +2,7 @@
 // 账本的队名靠事件行的 entry_id 反推该场主客队名，窄查询一旦丢列或把 LEFT JOIN 写成 INNER，队名就会串。
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { applyMigrations, createTestD1 } from "./d1";
+import { applyMigrations, createTestD1, insertPlayer } from "./d1";
 import { buildFeed } from "../worker/lib/feedNews";
 import { fetchFinishedWindow } from "../worker/lib/context";
 
@@ -21,9 +21,9 @@ function narrativeDb() {
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (10, 1, '红队', ?)").run(iso);
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (11, 1, '蓝队', ?)").run(iso);
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (12, 1, '黄队', ?)").run(iso);
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (100, 10, '红前锋')").run();
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (200, 11, '蓝前锋')").run();
-  sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (300, 12, '黄前锋')").run();
+  insertPlayer(sqlite, { id: 100, teamId: 10, name: "红前锋" });
+  insertPlayer(sqlite, { id: 200, teamId: 11, name: "蓝前锋" });
+  insertPlayer(sqlite, { id: 300, teamId: 12, name: "黄前锋" });
   sqlite
     .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by) VALUES (7, 1, '联赛', 'round_robin', 'running', 1)")
     .run();

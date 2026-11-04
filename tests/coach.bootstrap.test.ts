@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
-import { applyMigrations, createTestD1, createTestKV } from "./d1";
+import { applyMigrations, createTestD1, createTestKV, insertPlayer } from "./d1";
 
 // 认证中心的极简镜像：boundTeamId / teamMembers / boundAccounts 只跑裸 SQL（worker/lib/authClient.ts）
 function authDb(bindTourTeamId: number | null): D1Database {
@@ -41,7 +41,7 @@ function freshEnv(bind: number | null) {
     [101, 10, "李四", "9"],
     [102, 11, "王五", "1"],
   ] as const) {
-    sqlite.prepare("INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)").run(pid, tid, name, num);
+    insertPlayer(sqlite, { id: pid, teamId: tid, name, number: num });
   }
   // 联赛 7（在打）、草稿 8（不该进待赛列表）
   const t = sqlite.prepare(

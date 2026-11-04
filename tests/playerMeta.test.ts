@@ -21,7 +21,7 @@ import {
   upsertPlayerMeta,
 } from "../worker/lib/clubMeta";
 import { loadPlayerMeta, trimPlayerMetaForPool } from "../worker/lib/playerMeta";
-import { createTestDb, createTestKV, sqlAll } from "./d1";
+import { createTestDb, createTestKV, insertPlayer, sqlAll } from "./d1";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -35,10 +35,7 @@ function seedPlayers(sqlite: DatabaseSync, ids: number[]): void {
       "INSERT INTO team (id, org_id, name, created_at) VALUES (7, 1, '阿森纳', ?)",
     )
     .run("2026-01-01T00:00:00Z");
-  const ins = sqlite.prepare(
-    "INSERT INTO player (id, team_id, name, number) VALUES (?, 7, ?, NULL)",
-  );
-  for (const id of ids) ins.run(id, `球员${id}`);
+  for (const id of ids) insertPlayer(sqlite, { id, teamId: 7, name: `球员${id}` });
 }
 
 function insertMeta(

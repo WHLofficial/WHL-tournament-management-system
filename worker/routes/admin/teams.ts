@@ -6,6 +6,7 @@ import { pushError, pushTeamToClub } from "../../lib/clubSync";
 import { BULK_MAX, NAME_MAX, parseBulkLine } from "../../lib/teamBulk";
 import { teamCodes, teamMembers } from "../../lib/authClient";
 import { listTeamInjuries } from "../../lib/injury";
+import { SQUAD_PLAYERS_SQL } from "../../lib/squad";
 
 const app = new Hono<AppEnv>();
 
@@ -13,7 +14,7 @@ const app = new Hono<AppEnv>();
 app.get("/", async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT t.id, t.name, t.logo_key,
-       (SELECT COUNT(*) FROM player p WHERE p.team_id = t.id) AS player_count,
+       (SELECT COUNT(*) FROM player_team_history h WHERE h.team_id = t.id AND h.left_at IS NULL) AS player_count,
        (SELECT COUNT(*) FROM entry e WHERE e.team_id = t.id) AS entry_count
      FROM team t WHERE t.org_id = 1 ORDER BY t.name`
   ).all<{ id: number; name: string; logo_key: string | null; player_count: number; entry_count: number }>();
@@ -123,9 +124,8 @@ app.post("/bulk", async (c) => {
   );
 });
 
-// 单队名单（排序表达式与 tournament 作用域的批量版保持一致，避免优化器静默不用 idx_player_team）
-export const TEAM_PLAYERS_SQL =
-  "SELECT id, name, number FROM player WHERE team_id = ? ORDER BY (number IS NULL), CAST(number AS INTEGER), number, id";
+// 单队名单（排序表达式与赛事作用域批量版一致，避免优化器静默不用履历索引）
+export const TEAM_PLAYERS_SQL = SQUAD_PLAYERS_SQL;
 
 // 球队详情 + 名单
 app.get("/:id", async (c) => {

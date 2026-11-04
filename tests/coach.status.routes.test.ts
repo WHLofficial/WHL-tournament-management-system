@@ -8,7 +8,7 @@ import app from "../worker/index";
 import { hashPassword } from "../worker/lib/crypto";
 import { computeSuspensions, getSuspensionConfig } from "../worker/lib/suspension";
 import { FORMS } from "../shared/tactics";
-import { applyMigrations, createTestD1, createTestKV } from "./d1";
+import { applyMigrations, createTestD1, createTestKV, insertPlayer } from "./d1";
 
 let userHash = "";
 
@@ -54,7 +54,7 @@ function freshEnv(opts: { bind?: number | null; noAuthDb?: boolean } = {}) {
     [111, 10, "队员111"],
     [102, 11, "王五"],
   ] as const) {
-    sqlite.prepare("INSERT INTO player (id, team_id, name) VALUES (?, ?, ?)").run(pid, tid, name);
+    insertPlayer(sqlite, { id: pid, teamId: tid, name });
   }
   // 联赛 7（在打，有已完赛可消耗停赛）、冠军杯 9（更新 → 默认赛事）、草稿 8（不该出现）
   const t = sqlite.prepare(

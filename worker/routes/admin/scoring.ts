@@ -397,7 +397,8 @@ app.post("/:id/events", async (c) => {
       pids.length
         ? c.env.DB.prepare(
             `SELECT p.id FROM player p
-             JOIN entry e ON e.team_id = p.team_id
+             JOIN player_team_history h ON h.player_id = p.id AND h.left_at IS NULL
+             JOIN entry e ON e.team_id = h.team_id
              WHERE e.id = ? AND p.id IN (${pids.map(() => "?").join(",")})`
           )
             .bind(body.entryId, ...pids)
@@ -417,7 +418,7 @@ app.post("/:id/events", async (c) => {
     if (m.status === "pending") return fail(c, 400, "比赛还没开打，开赛后才能录事件");
     if (body.entryId !== m.home_entry_id && body.entryId !== m.away_entry_id)
       return fail(c, 400, "该球队不在本场对阵中");
-    // 球员归属校验：射手/助攻必须属于该参赛队（entry.team_id 关联 player.team_id）
+    // 球员归属校验：射手/助攻必须属于该参赛队（entry.team_id 关联球员的现役履历窗口）
     const ownedIds = new Set((owned?.results ?? []).map((r) => r.id));
     if (body.playerId != null && !ownedIds.has(body.playerId))
       return fail(c, 400, "进球球员不属于该球队");
@@ -595,7 +596,8 @@ app.put("/:id/events/:eventId", async (c) => {
       pids.length
         ? c.env.DB.prepare(
             `SELECT p.id FROM player p
-             JOIN entry e ON e.team_id = p.team_id
+             JOIN player_team_history h ON h.player_id = p.id AND h.left_at IS NULL
+             JOIN entry e ON e.team_id = h.team_id
              WHERE e.id = ? AND p.id IN (${pids.map(() => "?").join(",")})`
           )
             .bind(body.entryId, ...pids)

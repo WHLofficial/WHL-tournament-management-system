@@ -18,7 +18,7 @@ import {
   pairEa,
 } from "../shared/tactics";
 import { normalizeAssign, parseAssignJson } from "../worker/lib/lineup";
-import { applyMigrations, createTestD1, createTestKV } from "./d1";
+import { applyMigrations, createTestD1, createTestKV, insertPlayer } from "./d1";
 
 let userHash = "";
 
@@ -56,11 +56,10 @@ function freshEnv() {
   u.run(3, "管理员", userHash, "admin");
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (10, 1, '红队', '2026-01-01T00:00:00Z')").run();
   sqlite.prepare("INSERT INTO team (id, org_id, name, created_at) VALUES (11, 1, '蓝队', '2026-01-01T00:00:00Z')").run();
-  const p = sqlite.prepare("INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)");
   const red = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111];
   const blue = [200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210];
-  red.forEach((id, i) => p.run(id, 10, `红${i + 1}`, String(i + 1)));
-  blue.forEach((id, i) => p.run(id, 11, `蓝${i + 1}`, String(i + 1)));
+  red.forEach((id, i) => insertPlayer(sqlite, { id, teamId: 10, name: `红${i + 1}`, number: String(i + 1) }));
+  blue.forEach((id, i) => insertPlayer(sqlite, { id, teamId: 11, name: `蓝${i + 1}`, number: String(i + 1) }));
   sqlite
     .prepare("INSERT INTO tournament (id, org_id, name, format, status, created_by, created_at) VALUES (7, 1, '联赛', 'round_robin', 'running', 1, '2026-01-01T00:00:00Z')")
     .run();
