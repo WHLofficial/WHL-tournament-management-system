@@ -218,8 +218,8 @@ export async function syncRosters(
     if (!cur) {
       stmts.push(
         db
-          .prepare("INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)")
-          .bind(fcId, want.teamId, want.name, want.number)
+          .prepare("INSERT INTO player (id, name, number) VALUES (?, ?, ?)")
+          .bind(fcId, want.name, want.number)
       );
       stmts.push(
         db
@@ -257,8 +257,8 @@ export async function syncRosters(
     }
     stmts.push(
       db
-        .prepare("UPDATE player SET name = ?, number = ?, team_id = ? WHERE id = ?")
-        .bind(want.name, want.number, want.teamId, fcId)
+        .prepare("UPDATE player SET name = ?, number = ? WHERE id = ?")
+        .bind(want.name, want.number, fcId)
     );
     if (renamed) {
       out.renamed += 1;

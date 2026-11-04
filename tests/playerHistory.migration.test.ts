@@ -26,7 +26,7 @@ function run0033(sqlite: DatabaseSync): void {
   sqlite.exec(readFileSync(dir + f, "utf8"));
 }
 
-function seedTeamAndPlayers(sqlite: DatabaseSync, legacyTeamColumn = true): void {
+function seedTeamAndPlayers(sqlite: DatabaseSync, legacyTeamColumn = false): void {
   sqlite.exec("INSERT INTO team (id, org_id, name) VALUES (1, 1, '甲队')");
   sqlite.exec("INSERT INTO team (id, org_id, name) VALUES (2, 1, '乙队')");
   // legacyTeamColumn 只在「迁移到 0032 为止」的库上用；全量迁移后的 player 已无归属列
@@ -136,5 +136,38 @@ describe("0033 player_team_history", () => {
 
     sqlite.exec("DELETE FROM team WHERE id = 2");
     expect(sqlGet<{ n: number }>(sqlite, "SELECT COUNT(*) AS n FROM player_team_history")?.n).toBe(0);
+  });
+});
+
+describe("0035 删归属列", () => {
+  it("列与旧索引都消失，履历保留；回滚时可按开放窗口回填可空列", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    applyMigrations(sqlite);
+    seedTeamAndPlayers(sqlite);
+    openWindow(sqlite, 11, 1);
+    openWindow(sqlite, 12, 2);
+
+    const playerCols = sqlAll<{ name: string }>(sqlite, "PRAGMA table_info(player)").map((c) => c.name);
+    expect(playerCols).not.toContain("team_id");
+    const indexes = sqlAll<{ name: string }>(sqlite, "SELECT name FROM sqlite_master WHERE type = 'index'").map(
+      (i) => i.name,
+    );
+    expect(indexes).not.toContain("idx_player_team");
+    expect(sqlGet<{ n: number }>(sqlite, "SELECT COUNT(*) AS n FROM player_team_history")?.n).toBe(2);
+
+    // 回滚 smoke：加回可空列 → 用开放窗口回填 → 旧索引可重建
+    sqlite.exec("ALTER TABLE player ADD COLUMN team_id INTEGER");
+    sqlite.exec(
+      `UPDATE player SET team_id = (
+         SELECT h.team_id FROM player_team_history h
+         WHERE h.player_id = player.id AND h.left_at IS NULL
+         ORDER BY h.joined_at DESC, h.id DESC LIMIT 1
+       )`,
+    );
+    sqlite.exec("CREATE INDEX idx_player_team ON player(team_id)");
+    expect(sqlAll(sqlite, "SELECT id, team_id FROM player ORDER BY id")).toEqual([
+      { id: 11, team_id: 1 },
+      { id: 12, team_id: 2 },
+    ]);
   });
 });

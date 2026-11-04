@@ -84,7 +84,7 @@ export function applyMigrations(sqlite: DatabaseSync): void {
   }
 }
 
-// 球员 + 一条 seed 开放窗口（阶段 A 仍双写 player.team_id，0035 才删列）。
+// 球员 + 一条 seed 开放窗口（0035 起 player 表不再有归属列）。
 // 读端只看履历，测试造人一律走这里，别再手写只插 player 的 INSERT。
 export function insertPlayer(
   sqlite: DatabaseSync,
@@ -92,8 +92,8 @@ export function insertPlayer(
 ): void {
   const at = p.createdAt ?? "2026-01-01T00:00:00.000Z";
   sqlite
-    .prepare("INSERT INTO player (id, team_id, name, number, created_at) VALUES (?, ?, ?, ?, ?)")
-    .run(p.id, p.teamId, p.name, p.number ?? null, at);
+    .prepare("INSERT INTO player (id, name, number, created_at) VALUES (?, ?, ?, ?)")
+    .run(p.id, p.name, p.number ?? null, at);
   sqlite
     .prepare(
       "INSERT INTO player_team_history (player_id, team_id, joined_at, source) VALUES (?, ?, ?, 'seed')",
