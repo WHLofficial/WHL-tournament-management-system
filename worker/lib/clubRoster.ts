@@ -8,18 +8,19 @@
 // 1 小时 cron，且本仓读不到俱乐部平台库、反向拉不出「俱乐部有而赛事无」。所以建档走对称的
 // `POST /api/internal/team-upsert`（见 worker/lib/clubSync.ts）；名册一行都不推。
 //
-// 对账语义（squads 是俱乐部平台的一线队全量快照）：
-// - club 有 / tour 无 → INSERT，**用 fcId 当 player.id**（两库早前一起 rekey 过，
-//   赛事系统的 player.id 就是 FC26 playerid）
-// - 两队不同 → 改 team_id（球员换队）
+// 对账语义（squads 是俱乐部平台的一线队全量快照，v5.5 起归属写进 player_team_history）：
+// - club 有 / tour 无 → INSERT player + 开一条开放窗口
+// - 两队不同 / 本仓没有开放窗口 → 同一 batch 里先关旧窗、再开新窗（球员转会）
 // - 姓名、号码一律以 club 为准 → UPDATE
-// - club 无 / tour 有（且该行挂在对账范围内的队里）→ DELETE；被外键拦下（有比赛事件引用过）
-//   就保留并在响应里点名，绝不为了「同步干净」删掉历史比赛记录
+// - club 无 / tour 有（且开放窗口挂在对账范围内的队里）→ **关窗，不删人**；
+//   历史比赛事件、伤停登记原样保留，离队球员从名单里消失只是因为没了开放窗口
 //
-// 三条防御（这是个会删数据的定时任务，宁可少做也不做错）：
+// 三条防御（这是个会改归属的定时任务，宁可少做也不做错）：
 // ① club 平台回 0 支球队 → 整体跳过，一条都不动（空快照多半是对方挂了或配置写错）；
-// ② 响应形状不对 → 抛错不写库（形状坏掉会让「club 无」对每一行都为真 ⇒ 误删全库）；
-// ③ 只对「club 平台名下出现过的队」做删除，其他队（手工建的队）一行不碰。
+// ② 响应形状不对 → 抛错不写库（形状坏掉会让「club 无」对每一行都为真 ⇒ 误关全队窗口）；
+// ③ 只对「club 平台名下出现过的队」做关窗，其他队（手工建的队）一行不碰。
+// 另加骤降防护：某队一次消失 ≥5 人且占比 ≥50% 时跳过该队关窗（除非 force），
+// 防止俱乐部平台半截快照把整队关空。
 import type { Bindings } from "../env";
 import { metaSyncLog, syncPlayerMeta } from "./clubMeta";
 
@@ -44,9 +45,17 @@ export interface SyncSummary {
   teamMoved: number;
   renamed: number;
   renumbered: number;
-  /** 计划删除的行数（dryRun 时就是「会删这么多」） */
+  /** 开放窗口挂在对账队、但快照里没有的人（计划关窗数；dryRun 时就是「会关这么多」） */
   stale: number;
-  /** 实际删掉的行数；被外键拦下的进 kept */
+  /** 关掉的窗口数（换队 + 离队；dryRun 时为计划数） */
+  closed: number;
+  /** 新开的窗口数（新增 + 换队；dryRun 时为计划数） */
+  opened: number;
+  /** 因快照缺失而关窗的离队人数（dryRun 时为计划数） */
+  departed: number;
+  /** 骤降防护跳过的队（缺席人数 / 该队开放窗口数） */
+  skippedTeams: { teamId: number; absent: number; open: number }[];
+  /** 兼容旧字段：关窗语义下恒 0 / 空数组，保留一版给旧客户端与审计读 */
   deleted: number;
   kept: { id: number; name: string; reason: string }[];
   /** 改名样例（最多 20 条）：首次同步要看「名字一批被改写」是否符合预期 */
@@ -55,6 +64,11 @@ export interface SyncSummary {
   unknownTeams: number[];
   /** 整体跳过时的原因（此时除 teams/desired 外所有计数为 0） */
   skipped?: string;
+}
+
+/** 同步结果（touchedPlayerIds 只给 cron/路由内部用，绝不写进 API 响应） */
+export interface SyncResult extends SyncSummary {
+  touchedPlayerIds: number[];
 }
 
 const SAMPLE_CAP = 20;
@@ -120,14 +134,15 @@ export async function fetchClubSquads(
   });
 }
 
-/** 把快照对账进本仓 player 表。dryRun=true 时只算不写，用来上线前核对预期。 */
+/** 把快照对账进本仓 player / player_team_history。dryRun=true 时只算不写，用来上线前核对预期。 */
 export async function syncRosters(
   db: D1Database,
   squads: ClubSquad[],
-  opts: { dryRun?: boolean } = {}
-): Promise<SyncSummary> {
+  opts: { dryRun?: boolean; force?: boolean } = {}
+): Promise<SyncResult> {
   const dryRun = opts.dryRun === true;
-  const out: SyncSummary = {
+  const force = opts.force === true;
+  const out: SyncResult = {
     dryRun,
     teams: squads.length,
     desired: 0,
@@ -136,10 +151,15 @@ export async function syncRosters(
     renamed: 0,
     renumbered: 0,
     stale: 0,
+    closed: 0,
+    opened: 0,
+    departed: 0,
+    skippedTeams: [],
     deleted: 0,
     kept: [],
     renamedSample: [],
     unknownTeams: [],
+    touchedPlayerIds: [],
   };
   if (squads.length === 0) {
     return { ...out, skipped: "俱乐部平台回了 0 支球队，按防御策略不动库" };
@@ -158,8 +178,11 @@ export async function syncRosters(
   }
 
   const desired = new Map<number, { teamId: number; name: string; number: string | null }>();
-  for (const s of scoped) {
+  const observedAnywhere = new Set<number>();
+  for (const s of squads) {
     for (const p of s.players) {
+      observedAnywhere.add(p.fcId);
+      if (!knownTeams.has(s.clubId)) continue; // 未知队只用于「这个人还在别处见过」
       if (desired.has(p.fcId)) {
         // 同一个人出现在两队里 ⇒ 快照本身矛盾，别拿它去改库
         throw new Error(`球员 ${p.fcId} 同时出现在多支球队里，名册快照不可信`);
@@ -171,18 +194,25 @@ export async function syncRosters(
   }
   out.desired = desired.size;
 
-  // 全表读：本仓 player 只有几百行（对账要覆盖「已换到别队的人」与「已离队的人」，
-  // 按 team_id 过滤会漏掉前者），一次读比按 id 分批 IN 更省也更简单
-  const rows = await db.prepare("SELECT id, team_id, name, number FROM player").all<{
+  // 全表读（player + 开放窗口）：对账要覆盖「已换到别队的人」与「已离队的人」，
+  // 按 open_team_id 过滤会漏掉前者，一次读比按 id 分批 IN 更省也更简单。
+  // 一人至多一条开放窗口（partial unique index），所以这里不会出现一行 player 变多行。
+  const rows = await db.prepare(
+    `SELECT p.id, p.name, p.number, h.team_id AS open_team_id
+     FROM player p
+     LEFT JOIN player_team_history h ON h.player_id = p.id AND h.left_at IS NULL`
+  ).all<{
     id: number;
-    team_id: number;
     name: string;
     number: string | null;
+    open_team_id: number | null;
   }>();
   const scopedTeamIds = new Set(scoped.map((s) => s.clubId));
   const byId = new Map(rows.results.map((r) => [r.id, r]));
 
+  const now = new Date().toISOString();
   const stmts: D1PreparedStatement[] = [];
+  const touched = new Set<number>();
   for (const [fcId, want] of desired) {
     const cur = byId.get(fcId);
     if (!cur) {
@@ -191,19 +221,45 @@ export async function syncRosters(
           .prepare("INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)")
           .bind(fcId, want.teamId, want.name, want.number)
       );
+      stmts.push(
+        db
+          .prepare(
+            "INSERT INTO player_team_history (player_id, team_id, joined_at, source) VALUES (?, ?, ?, 'sync')"
+          )
+          .bind(fcId, want.teamId, now)
+      );
       out.inserted += 1;
+      out.opened += 1;
+      touched.add(fcId);
       continue;
     }
-    const moved = cur.team_id !== want.teamId;
+    const moved = cur.open_team_id !== want.teamId;
     const renamed = cur.name !== want.name;
     const renumbered = numberText(cur.number) !== want.number;
     if (!moved && !renamed && !renumbered) continue;
+    touched.add(fcId);
+    if (moved) {
+      stmts.push(
+        db
+          .prepare("UPDATE player_team_history SET left_at = ? WHERE player_id = ? AND left_at IS NULL")
+          .bind(now, fcId)
+      );
+      stmts.push(
+        db
+          .prepare(
+            "INSERT INTO player_team_history (player_id, team_id, joined_at, source) VALUES (?, ?, ?, 'sync')"
+          )
+          .bind(fcId, want.teamId, now)
+      );
+      out.teamMoved += 1;
+      out.closed += 1;
+      out.opened += 1;
+    }
     stmts.push(
       db
-        .prepare("UPDATE player SET team_id = ?, name = ?, number = ? WHERE id = ?")
-        .bind(want.teamId, want.name, want.number, fcId)
+        .prepare("UPDATE player SET name = ?, number = ?, team_id = ? WHERE id = ?")
+        .bind(want.name, want.number, want.teamId, fcId)
     );
-    if (moved) out.teamMoved += 1;
     if (renamed) {
       out.renamed += 1;
       if (out.renamedSample.length < SAMPLE_CAP) {
@@ -213,51 +269,78 @@ export async function syncRosters(
     if (renumbered) out.renumbered += 1;
   }
 
-  // 对账范围内的队里，快照没提到的行 = 已经不在这个俱乐部了
-  const stale = rows.results.filter((r) => scopedTeamIds.has(r.team_id) && !desired.has(r.id));
+  // 对账范围内的队里，快照没提到的人 = 已经不在这个俱乐部了 → 关窗（不删人）。
+  // observedAnywhere 含未知队：人只是换到了还没建档的队，等那支队建过来再迁，先别关。
+  const stale = rows.results.filter(
+    (r) => r.open_team_id != null && scopedTeamIds.has(r.open_team_id) && !observedAnywhere.has(r.id)
+  );
   out.stale = stale.length;
+  const openCount = new Map<number, number>();
+  for (const r of rows.results) {
+    if (r.open_team_id != null && scopedTeamIds.has(r.open_team_id)) {
+      openCount.set(r.open_team_id, (openCount.get(r.open_team_id) ?? 0) + 1);
+    }
+  }
+  const absentByTeam = new Map<number, number>();
+  for (const r of stale) {
+    absentByTeam.set(r.open_team_id!, (absentByTeam.get(r.open_team_id!) ?? 0) + 1);
+  }
+  for (const [teamId, absent] of absentByTeam) {
+    const open = openCount.get(teamId) ?? 0;
+    // 骤降防护：一次消失过半且至少 5 人，多半是快照半截/配置指错队，宁可这轮不关
+    if (!force && absent >= 5 && awayRatio(absent, open) >= 0.5) {
+      out.skippedTeams.push({ teamId, absent, open });
+      continue;
+    }
+    for (const r of stale) {
+      if (r.open_team_id !== teamId) continue;
+      stmts.push(
+        db
+          .prepare("UPDATE player_team_history SET left_at = ? WHERE player_id = ? AND left_at IS NULL")
+          .bind(now, r.id)
+      );
+      out.closed += 1;
+      out.departed += 1;
+      touched.add(r.id);
+    }
+  }
 
-  if (dryRun) return out;
+  if (dryRun) return { ...out, touchedPlayerIds: [...touched] };
 
   for (let i = 0; i < stmts.length; i += BATCH_CHUNK) {
     await db.batch(stmts.slice(i, i + BATCH_CHUNK));
   }
+  // deleted/kept 保留为兼容字段：关窗语义下一个人都不删，历史事件与伤停登记原样保留
+  return { ...out, touchedPlayerIds: [...touched] };
+}
 
-  // 删除逐条执行（不能进 batch）：外键拦下一条不该把整批一起回滚，
-  // 而且逐条才拿得到「是哪一行被拦下的」这个信息。
-  //
-  // 能挡下删除的只有 match_event.player_id（无 ON DELETE ⇒ NO ACTION）。injury.player_id 是
-  // ON DELETE CASCADE（0021），它不挡删除 —— 只是伤停登记必须挂在一个记了该球员的伤病事件上，
-  // 所以实际上删不动；万一那个事件的球员后来被清空，伤停与缺阵记录会随球员一起消失。
-  for (const r of stale) {
-    try {
-      await db.prepare("DELETE FROM player WHERE id = ?").bind(r.id).run();
-      out.deleted += 1;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      out.kept.push({
-        id: r.id,
-        name: r.name,
-        reason: /FOREIGN KEY/i.test(msg) ? "有比赛事件引用，保留" : msg,
-      });
-    }
-  }
-  return out;
+/** 缺席占比（避免在被 0 除时返回 NaN） */
+function awayRatio(absent: number, open: number): number {
+  return open > 0 ? absent / open : 0;
+}
+
+/** 一轮名册同步的结果：ok=false 时调用方不得据此做履历回填（库可能没写成） */
+export interface RosterSyncRun {
+  ok: boolean;
+  summary: SyncResult | null;
+  touchedPlayerIds: number[];
 }
 
 /** 定时任务入口：配置缺失或拉取失败只记日志不抛，别把一次网络抖动记成 cron 失败 */
-export async function runRosterSync(env: Bindings): Promise<void> {
+export async function runRosterSync(env: Bindings): Promise<RosterSyncRun> {
   const base = env.CLUB_API_BASE;
   if (!base) {
     console.log("[sync-rosters] 未配置 CLUB_API_BASE，跳过");
-    return;
+    return { ok: false, summary: null, touchedPlayerIds: [] };
   }
   try {
     const squads = await fetchClubSquads(base);
     const s = await syncRosters(env.DB, squads);
     console.log(
       `[sync-rosters] 队 ${s.teams} / 快照 ${s.desired} 人：新增 ${s.inserted}、换队 ${s.teamMoved}、` +
-        `改名 ${s.renamed}、改号 ${s.renumbered}、删除 ${s.deleted}/${s.stale}、保留 ${s.kept.length}` +
+        `改名 ${s.renamed}、改号 ${s.renumbered}、关窗 ${s.closed}（离队 ${s.departed}）、` +
+        `开窗 ${s.opened}、计划关窗 ${s.stale}` +
+        (s.skippedTeams.length ? `、骤降跳过 ${s.skippedTeams.length} 队` : "") +
         (s.skipped ? `（跳过：${s.skipped}）` : "")
     );
     // 名册对账完再补球员元数据（FC26 属性 / 徽章 / 身高，见 clubMeta.ts）。
@@ -270,7 +353,9 @@ export async function runRosterSync(env: Bindings): Promise<void> {
         `[sync-player-meta] 意外失败：${e instanceof Error ? e.message : String(e)}`
       );
     }
+    return { ok: true, summary: s, touchedPlayerIds: s.touchedPlayerIds };
   } catch (e) {
     console.error(`[sync-rosters] 失败：${e instanceof Error ? e.message : String(e)}`);
+    return { ok: false, summary: null, touchedPlayerIds: [] };
   }
 }

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv, Bindings } from "./env";
 import { attachUser } from "./middleware/auth";
 import { runRosterSync } from "./lib/clubRoster";
+import { runHistoryBackfill } from "./lib/playerHistory";
 import { runAccountMirror } from "./lib/accountMirror";
 import { healPendingRebuilds } from "./lib/rebuild-guard";
 import { buildAutoFillStmts } from "./routes/admin/schedule";
@@ -62,8 +63,24 @@ app.onError((err, c) => {
 // 没跑完的欠账（rebuild_pending）在这里补跑，争取一小时之内自己收敛，不靠人工发现。
 export default Object.assign(app, {
   scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext) {
-    ctx.waitUntil(runRosterSync(env));
+    ctx.waitUntil(syncRosterThenBackfill(env));
     ctx.waitUntil(runAccountMirror(env));
     ctx.waitUntil(healPendingRebuilds(env, { autoFill: buildAutoFillStmts }));
   },
 });
+
+// 名册对账成功才回填履历：失败的那一轮库可能只写了一半，拿它当「已观察到的归属」会写错履历。
+// 回填的 skip 是本轮 syncRosters 动过的人，他们已经在同步路径里用 observed 重建过。
+async function syncRosterThenBackfill(env: Bindings): Promise<void> {
+  const sync = await runRosterSync(env);
+  if (!sync.ok) return;
+  try {
+    const r = await runHistoryBackfill(env, { skip: new Set(sync.touchedPlayerIds) });
+    console.log(
+      `[player-history] 回填 ${r.attempted} 人：成功 ${r.succeeded}、失败 ${r.failed}、跳过 ${r.skipped}`
+    );
+  } catch (e) {
+    // 回填是补齐历史，失败不影响本轮名册对账结果，下一轮 cron 会重试（标记仍为 NULL）
+    console.error(`[player-history] 回填失败：${e instanceof Error ? e.message : String(e)}`);
+  }
+}

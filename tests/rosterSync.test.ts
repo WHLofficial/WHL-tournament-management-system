@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
 import { hashPassword } from "../worker/lib/crypto";
 import { fetchClubSquads, syncRosters, type ClubSquad } from "../worker/lib/clubRoster";
-import { applyMigrations, createTestD1, createTestKV, sqlAll, sqlGet } from "./d1";
+import { applyMigrations, createTestD1, createTestKV, insertPlayer, sqlAll, sqlGet } from "./d1";
 
 let userHash = "";
 
@@ -79,10 +79,7 @@ function seedPlayer(
   name: string,
   number: string | null = null
 ) {
-  sqlite.prepare("INSERT INTO player (id, team_id, name, number) VALUES (?, ?, ?, ?)").run(id, teamId, name, number);
-  sqlite
-    .prepare("INSERT INTO player_team_history (player_id, team_id, joined_at, source) VALUES (?, ?, ?, 'seed')")
-    .run(id, teamId, "2026-01-01T00:00:00.000Z");
+  insertPlayer(sqlite, { id, teamId, name, number });
 }
 
 /** 给 player 100 挂一条进球事件：删这个球员会被 match_event 外键拦下 */
@@ -134,15 +131,25 @@ describe("名册同步对账（syncRosters）", () => {
       renamed: 0,
       renumbered: 0,
       stale: 0,
+      closed: 0,
+      opened: 2,
+      departed: 0,
       deleted: 0,
       kept: [],
       unknownTeams: [],
     });
     expect(s.skipped).toBeUndefined();
     // player.id 就是 fcId（两库早前一起 rekey 过）
-    expect(sqlAll(sqlite, "SELECT id, team_id, name, number FROM player ORDER BY id")).toEqual([
-      { id: 212602, team_id: 11, name: "Ederson", number: "31" },
-      { id: 239085, team_id: 10, name: "Erling Haaland", number: "9" },
+    expect(sqlAll(sqlite, "SELECT id, name, number FROM player ORDER BY id")).toEqual([
+      { id: 212602, name: "Ederson", number: "31" },
+      { id: 239085, name: "Erling Haaland", number: "9" },
+    ]);
+    // 名单读端只看履历：新插入的人必须同时有开放窗口
+    expect(
+      sqlAll(sqlite, "SELECT player_id, team_id, left_at, source FROM player_team_history ORDER BY player_id")
+    ).toEqual([
+      { player_id: 212602, team_id: 11, left_at: null, source: "sync" },
+      { player_id: 239085, team_id: 10, left_at: null, source: "sync" },
     ]);
   });
 
@@ -155,7 +162,18 @@ describe("名册同步对账（syncRosters）", () => {
       { clubId: 10, clubName: "阿森纳", players: [{ fcId: 239085, name: "Erling Haaland", number: "9" }] },
     ]);
 
-    expect(s).toMatchObject({ desired: 1, inserted: 0, teamMoved: 0, renamed: 0, renumbered: 0, stale: 0, deleted: 0 });
+    expect(s).toMatchObject({
+      desired: 1,
+      inserted: 0,
+      teamMoved: 0,
+      renamed: 0,
+      renumbered: 0,
+      stale: 0,
+      closed: 0,
+      opened: 0,
+      departed: 0,
+      deleted: 0,
+    });
     expect(writes).toEqual([]);
   });
 
@@ -168,16 +186,24 @@ describe("名册同步对账（syncRosters）", () => {
       { clubId: 11, clubName: "曼城", players: [{ fcId: 239085, name: "Erling Haaland", number: "17" }] },
     ]);
 
-    expect(s).toMatchObject({ teamMoved: 1, renamed: 1, renumbered: 1, inserted: 0, deleted: 0 });
+    expect(s).toMatchObject({ teamMoved: 1, renamed: 1, renumbered: 1, inserted: 0, closed: 1, opened: 1, departed: 0, deleted: 0 });
     expect(s.renamedSample).toEqual([{ id: 239085, from: "E. Haaland", to: "Erling Haaland" }]);
-    expect(sqlGet(sqlite, "SELECT team_id, name, number FROM player WHERE id = 239085")).toEqual({
-      team_id: 11,
+    expect(sqlGet(sqlite, "SELECT name, number FROM player WHERE id = 239085")).toEqual({
       name: "Erling Haaland",
       number: "17",
     });
+    // 换队 = 先关旧窗、再开新窗；任何时刻一人只有一条 left_at IS NULL
+    const windows = sqlAll<{ team_id: number; left_at: string | null; source: string }>(
+      sqlite,
+      "SELECT team_id, left_at, source FROM player_team_history WHERE player_id = 239085 ORDER BY id"
+    );
+    expect(windows).toHaveLength(2);
+    expect(windows[0]).toMatchObject({ team_id: 10, source: "seed" });
+    expect(windows[0].left_at).not.toBeNull();
+    expect(windows[1]).toMatchObject({ team_id: 11, left_at: null, source: "sync" });
   });
 
-  it("快照里没有的人 = 已离队 → 删除；快照之外的队一行不碰", async () => {
+  it("快照里没有的人 = 已离队 → 关窗，不删人；快照之外的队一行不碰", async () => {
     const { sqlite } = freshEnv();
     seedPlayer(sqlite, 1, 10, "已离队");
     seedPlayer(sqlite, 2, 11, "别队的人");
@@ -188,11 +214,24 @@ describe("名册同步对账（syncRosters）", () => {
       { clubId: 10, clubName: "阿森纳", players: [{ fcId: 3, name: "还在队里", number: "5" }] },
     ]);
 
-    expect(s).toMatchObject({ desired: 1, stale: 1, deleted: 1, inserted: 0 });
-    expect(sqlAll(sqlite, "SELECT id FROM player ORDER BY id")).toEqual([{ id: 2 }, { id: 3 }]);
+    expect(s).toMatchObject({ desired: 1, stale: 1, departed: 1, closed: 1, opened: 0, inserted: 0, deleted: 0 });
+    expect(s.kept).toEqual([]);
+    // 人还在（历史事件/伤停都挂在他身上），只是没了开放窗口 ⇒ 名单里看不到他
+    expect(sqlAll(sqlite, "SELECT id FROM player ORDER BY id")).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    const openIds = sqlAll<{ player_id: number }>(
+      sqlite,
+      "SELECT player_id FROM player_team_history WHERE left_at IS NULL ORDER BY player_id"
+    );
+    expect(openIds).toEqual([{ player_id: 2 }, { player_id: 3 }]);
+    // 快照之外的队（11）的那个人窗口原样不动
+    expect(
+      sqlGet(sqlite, "SELECT left_at FROM player_team_history WHERE player_id = 2 AND team_id = 11")
+    ).toEqual({ left_at: null });
+    // 人还在（名字仍可查），只是没有开放窗口
+    expect(sqlGet(sqlite, "SELECT name FROM player WHERE id = 1")).toEqual({ name: "已离队" });
   });
 
-  it("有比赛事件引用的行删不掉 → 保留并在 kept 里点名", async () => {
+  it("有比赛事件引用的人同样只关窗：历史比赛记录不受影响", async () => {
     const { sqlite } = freshEnv();
     seedPlayer(sqlite, 100, 10, "张三");
     seedEventOnPlayer100(sqlite);
@@ -203,10 +242,15 @@ describe("名册同步对账（syncRosters）", () => {
     ]);
 
     expect(s.stale).toBe(1);
+    expect(s.departed).toBe(1);
     expect(s.deleted).toBe(0);
-    expect(s.kept).toEqual([{ id: 100, name: "张三", reason: "有比赛事件引用，保留" }]);
-    // 历史比赛记录不能为了「同步干净」被删
+    expect(s.kept).toEqual([]);
+    // 历史比赛记录不能为了「同步干净」被删，球员行也必须留着给外键引用
     expect(sqlGet(sqlite, "SELECT id FROM player WHERE id = 100")).toEqual({ id: 100 });
+    expect(
+      sqlGet(sqlite, "SELECT left_at FROM player_team_history WHERE player_id = 100 AND team_id = 10")
+    ).not.toEqual({ left_at: null });
+    expect(sqlGet(sqlite, "SELECT player_id FROM match_event WHERE id = 900")).toEqual({ player_id: 100 });
   });
 
   it("空快照 → 整体跳过（对方挂了或配置写错时，绝不能当成「全员离队」）", async () => {
@@ -235,7 +279,7 @@ describe("名册同步对账（syncRosters）", () => {
     expect(unknown.skipped).toContain("一支都没有");
     expect(unknown).toMatchObject({ inserted: 0, stale: 0, deleted: 0 });
     expect(writes).toEqual([]);
-    expect(sqlAll(sqlite, "SELECT id, team_id, name FROM player")).toEqual([{ id: 100, team_id: 10, name: "张三" }]);
+    expect(sqlAll(sqlite, "SELECT id, name FROM player")).toEqual([{ id: 100, name: "张三" }]);
   });
 
   it("同一个人出现在两队 → 抛错且一行不写（快照自相矛盾）", async () => {
@@ -250,10 +294,7 @@ describe("名册同步对账（syncRosters）", () => {
       ])
     ).rejects.toThrow("同时出现在多支球队里");
 
-    expect(sqlGet(sqlite, "SELECT team_id, number FROM player WHERE id = 100")).toEqual({
-      team_id: 10,
-      number: null,
-    });
+    expect(sqlGet(sqlite, "SELECT number FROM player WHERE id = 100")).toEqual({ number: null });
   });
 
   it("dryRun：差异算得出来，但一行都不写", async () => {
@@ -268,12 +309,60 @@ describe("名册同步对账（syncRosters）", () => {
       { dryRun: true }
     );
 
-    expect(s).toMatchObject({ dryRun: true, renamed: 1, renumbered: 1, stale: 1, deleted: 0 });
+    // dryRun 下 closed/departed 是「计划关窗数」（同 stale），只是不执行；writes 仍为 0
+    expect(s).toMatchObject({ dryRun: true, renamed: 1, renumbered: 1, stale: 1, departed: 1, closed: 1, deleted: 0 });
     expect(writes).toEqual([]);
     expect(sqlAll(sqlite, "SELECT id, name, number FROM player ORDER BY id")).toEqual([
       { id: 1, name: "已离队", number: null },
       { id: 2, name: "E. Haaland", number: "9" },
     ]);
+  });
+
+  it("人只是被看到在还没建档的队里 → 不关旧窗（等那支队建过来再迁）", async () => {
+    const { sqlite } = freshEnv();
+    seedPlayer(sqlite, 100, 10, "张三");
+    const { db, writes } = instrument(sqlite);
+
+    const s = await syncRosters(db, [
+      { clubId: 10, clubName: "阿森纳", players: [] },
+      { clubId: 999, clubName: "还没建档的队", players: [{ fcId: 100, name: "张三", number: null }] },
+    ]);
+
+    // 未知队里的人算 observedAnywhere：他并没有离队，只是新队还没建
+    expect(s).toMatchObject({ desired: 0, stale: 0, departed: 0, closed: 0, unknownTeams: [999] });
+    expect(writes).toEqual([]);
+    expect(
+      sqlGet(sqlite, "SELECT left_at FROM player_team_history WHERE player_id = 100 AND team_id = 10")
+    ).toEqual({ left_at: null });
+  });
+
+  it("骤降防护：一队一次消失过半且 ≥5 人 → 跳过该队关窗，force=1 才执行", async () => {
+    const eleven = Array.from({ length: 10 }, (_, i) => ({ fcId: 100 + i, name: `P${i}`, number: null }));
+    const snapshot = (ids: number[]) =>
+      [{ clubId: 10, clubName: "阿森纳", players: eleven.filter((p) => ids.includes(p.fcId)) }];
+
+    const guarded = freshEnv();
+    for (const p of eleven) seedPlayer(guarded.sqlite, p.fcId, 10, p.name);
+    const g = await syncRosters(createTestD1(guarded.sqlite), snapshot([100, 101, 102, 103, 104]));
+
+    expect(g.stale).toBe(5);
+    expect(g.skippedTeams).toEqual([{ teamId: 10, absent: 5, open: 10 }]);
+    expect(g).toMatchObject({ departed: 0, closed: 0 });
+    expect(
+      sqlGet(guarded.sqlite, "SELECT COUNT(*) AS n FROM player_team_history WHERE left_at IS NULL")
+    ).toEqual({ n: 10 });
+
+    const forced = freshEnv();
+    for (const p of eleven) seedPlayer(forced.sqlite, p.fcId, 10, p.name);
+    const f = await syncRosters(createTestD1(forced.sqlite), snapshot([100, 101, 102, 103, 104]), {
+      force: true,
+    });
+
+    expect(f.skippedTeams).toEqual([]);
+    expect(f).toMatchObject({ stale: 5, departed: 5, closed: 5 });
+    expect(
+      sqlGet(forced.sqlite, "SELECT COUNT(*) AS n FROM player_team_history WHERE left_at IS NULL")
+    ).toEqual({ n: 5 });
   });
 
   it("号码为空串与 null 等价（不该被当成一次改号）", async () => {
