@@ -1,5 +1,6 @@
 import QRCode from "qrcode";
 import whlLogoUrl from "../assets/whl-logo.png";
+import { kickoffShort } from "./kickoff";
 import type { FormLetter } from "../../shared/types";
 
 // 分享卡片绘制库：800×N 竖版 canvas，V7 定稿浅色纸面风（样式以 style-v7-full.png A'' 列为准）。
@@ -52,6 +53,8 @@ export interface ShareMatch {
   status: "pending" | "live" | "finished";
   note?: string | null;
   events?: ShareEvent[];
+  /** 待开赛场的开球时刻（「W5 周六 17:30」），已开赛的场不画 */
+  kickoff?: string | null;
 }
 
 // MatchDTO 等兼容结构 → ShareMatch（待定队占位名）
@@ -67,6 +70,9 @@ export interface ShareMatchInput {
   status: "pending" | "live" | "finished";
   note?: string | null;
   events?: { type: string; side: "home" | "away"; playerName: string | null }[];
+  kickoffWeek?: number | null;
+  kickoffDay?: number | null;
+  kickoffTime?: string | null;
 }
 
 export function matchToShare(m: ShareMatchInput): ShareMatch {
@@ -80,6 +86,7 @@ export function matchToShare(m: ShareMatchInput): ShareMatch {
     status: m.status,
     note: m.note ?? null,
     events: m.events ?? [],
+    kickoff: kickoffShort(m.kickoffWeek, m.kickoffDay, m.kickoffTime),
   };
 }
 
@@ -616,6 +623,14 @@ async function drawMatchLine(
     ctx.fillText("vs", cx, y + 1);
   }
   const subY = y + pillH / 2 + 20; // 胶囊下方副注/摘要首行
+  // 待开赛的场：胶囊下画一行开球时刻（已开赛的场这行留给点球/事件摘要）
+  if (m.status === "pending" && m.kickoff) {
+    font(ctx, 400, 23);
+    ctx.fillStyle = ink(0.6);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(m.kickoff, cx, subY);
+  }
   if (m.status === "finished" && (m.penHome != null || m.penAway != null)) {
     font(ctx, 400, 23);
     ctx.fillStyle = ink(0.6);

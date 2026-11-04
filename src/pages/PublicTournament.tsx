@@ -15,6 +15,7 @@ import { Toplists } from "../components/Toplists";
 import { StatsDashboard } from "../components/StatsDashboard";
 import { ShareButton } from "../components/ShareButton";
 import { drawTournamentCard, drawRoundCard, matchToShare } from "../lib/share";
+import { kickoffText } from "../lib/kickoff";
 import type { AnnouncementDTO } from "../../shared/news";
 import type {
   EntryDTO,
@@ -473,6 +474,7 @@ export function PublicMatchRow({
 }) {
   const win = winnerId === undefined ? m.winnerEntryId : winnerId;
   const isWin = (entryId: number | null) => entryId != null && entryId === win;
+  const kickoff = kickoffText(m.kickoffWeek, m.kickoffDay, m.kickoffTime);
   return (
     <div className={`match-row mr-${m.status}`}>
       <Link to={`/t/${tid}/match/${m.id}`} className="mr-link">
@@ -490,6 +492,7 @@ export function PublicMatchRow({
           {m.walkoverSide && <span className="m-badge ms-wo">弃权</span>}
         </div>
       </Link>
+      {kickoff && <p className="mr-kickoff">{kickoff}</p>}
       <EventTimeline events={m.events ?? []} />
     </div>
   );

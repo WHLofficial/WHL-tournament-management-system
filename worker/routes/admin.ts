@@ -27,6 +27,7 @@ import announcementsRoutes from "./admin/announcements";
 import injuriesRoutes from "./admin/injuries";
 import proxyGrantsRoutes from "./admin/proxyGrants";
 import rostersRoutes from "./admin/rosters";
+import kickoffRoutes from "./admin/kickoff";
 
 const app = new Hono<AppEnv>();
 
@@ -40,6 +41,7 @@ app.use("*", requirePwChanged);
 app.route("/teams", teamsRoutes);
 app.route("/tournaments", tournamentsRoutes);
 app.route("/tournaments", scheduleRoutes);
+app.route("/tournaments", kickoffRoutes);
 app.route("/matches", scoringRoutes);
 app.route("/accounts", accountsRoutes);
 app.route("/audit", auditRoutes);

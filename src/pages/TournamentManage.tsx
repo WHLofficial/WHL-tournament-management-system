@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import ScheduleTab from "./ScheduleTab";
+import KickoffTab from "./KickoffTab";
 import MatchesTab from "./MatchesTab";
 import StandingsTab from "./StandingsTab";
 import { Toplists } from "../components/Toplists";
@@ -32,7 +33,7 @@ const TB_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "none", label: "不启用" },
 ];
 
-type Tab = "entries" | "schedule" | "matches" | "standings" | "toplists" | "stats" | "settings";
+type Tab = "entries" | "schedule" | "kickoff" | "matches" | "standings" | "toplists" | "stats" | "settings";
 
 // 积分榜体检（GET /:id/standings-health，v5.8.0）：
 //  - pending 是硬信号：某阶段的后续处理（榜重算/晋级填位/下一阶段生成）没跑完的欠账；
@@ -232,6 +233,7 @@ export function TournamentManage() {
           [
             ["entries", `报名 (${detail.entries.length})`],
             ["schedule", "编排"],
+            ["kickoff", "排期"],
             ["matches", "比赛"],
             ["standings", "积分榜"],
             ["toplists", "榜单"],
@@ -251,6 +253,7 @@ export function TournamentManage() {
 
       {tab === "entries" && <EntriesTab detail={detail} reload={reload} />}
       {tab === "schedule" && <ScheduleTab detail={detail} reload={reload} />}
+      {tab === "kickoff" && <KickoffTab detail={detail} reload={reload} />}
       {tab === "matches" && <MatchesTab detail={detail} reload={reload} />}
       {tab === "standings" && <StandingsTab tournamentId={detail.tournament.id} />}
       {tab === "toplists" && <Toplists tid={detail.tournament.id} base="/api/admin" />}

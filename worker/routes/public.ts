@@ -278,6 +278,7 @@ type PubMatchRow = {
   pen_home: number | null; pen_away: number | null;
   status: MatchDTO["status"]; winner_entry_id: number | null; note: string | null;
   walkover_side: string | null;
+  kickoff_week: number | null; kickoff_day: number | null; kickoff_time: string | null;
   stage_kind: MatchDTO["stageKind"];
   stage_name: string | null; stage_order: number;
 };
@@ -286,7 +287,8 @@ const MATCH_COLS = `SELECT m.id, m.stage_id, m.round, m.slot, m.leg,
    ht.name AS home_team_name, at.name AS away_team_name,
    ht.logo_key AS home_logo_key, at.logo_key AS away_logo_key,
    m.score_home, m.score_away, m.pen_home, m.pen_away,
-   m.status, m.winner_entry_id, m.note, m.walkover_side, s.kind AS stage_kind,
+   m.status, m.winner_entry_id, m.note, m.walkover_side,
+   m.kickoff_week, m.kickoff_day, m.kickoff_time, s.kind AS stage_kind,
    s.name AS stage_name, s.sort_order AS stage_order`;
 const MATCH_FROM = `FROM match m
    JOIN stage s ON s.id = m.stage_id
@@ -319,6 +321,9 @@ const toPubMatch = (
     winnerEntryId: r.winner_entry_id,
     note: r.note,
     walkoverSide: (r.walkover_side || null) as MatchDTO["walkoverSide"],
+    kickoffWeek: r.kickoff_week,
+    kickoffDay: r.kickoff_day,
+    kickoffTime: r.kickoff_time,
     events: eventsByMatch.get(r.id) ?? [],
     stageKind: r.stage_kind,
     stageName: r.stage_name,

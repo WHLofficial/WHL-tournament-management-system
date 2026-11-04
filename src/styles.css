@@ -741,6 +741,8 @@ button.btn-ghost:hover:not(:disabled) {
 .mr-line { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; }
 /* 赛程行徽标骑在行框右上，不挤占主客/比分 */
 .mr-line .m-badge { position: absolute; top: -9px; right: 8px; }
+/* 开球时刻：整行下方一行小字（虚拟时刻，只做标签） */
+.mr-kickoff { margin: 0; padding: 0 12px 8px; font-size: 12px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
 .mr-team { flex: 1; min-width: 90px; text-align: right; }
 .mr-team.mr-away { text-align: left; }
 .mr-win { font-weight: 700; }
@@ -4702,3 +4704,18 @@ button.add-stage {
   border-radius: 8px;
 }
 .draft-bar .error { margin-left: auto; }
+
+/* 排期页的单场改期行（P3-B）：周/天/时刻三个窄输入 + 理由 */
+.kickoff-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.kickoff-editor input {
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+.kickoff-editor .kickoff-num { width: 48px; }
+.kickoff-editor .kickoff-time { width: 72px; }

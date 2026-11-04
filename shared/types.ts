@@ -474,6 +474,10 @@ export interface MatchDTO {
   note: string | null;
   /** 弃权方：home / away / both；普通场为空 */
   walkoverSide?: "home" | "away" | "both" | null;
+  /** 开球时刻（虚拟时刻：赛季第几周 / 周几 / HH:MM，不换算真实日期与时区） */
+  kickoffWeek?: number | null;
+  kickoffDay?: number | null;
+  kickoffTime?: string | null;
   /** 比分曾改判过（公开单场页提示用，不给明细） */
   rescored?: boolean;
   /** 管理端赛程列表附带：双方是否已提交战术阵容（公开端不带） */
