@@ -48,7 +48,7 @@ const GK_META: PlayerMeta = {
   },
 };
 // 手算锚点：GK|GK = (90×3+84×3+81×2+78×2+72+66)/12 = 81.5；
-// GK|SK = (90×3+81×3+84×2+66×2+78+72)/12 = 80.25；GK|BPK = (66×3+60×3+57×2+90×2+84+78)/12 = 69.5。
+// GK|SK = (90×3+81×3+84×2+66×2+78+72)/12 = 80.25；GK|BPK = (66×3+60×2+57+90×3+81×2+84)/12 = 74.25。
 
 // 场上 fixture：ST 禁区之王画像 + PosID1=25（ST）+ 两枚同槽 RoleID（42 一档 / 142 ++ 档）
 // + 银徽 7 与金徽 101（=1+100）。
@@ -66,8 +66,8 @@ const ST_META = meta(
   },
   [7, 101],
 );
-// 手算锚点：ST|PO base = (90×3+84×3+72×2+72×2+60+60)/12 = 77.5；badge = 0.5+1 = 1.5；
-// rankRaw = 77.5 + 2(ST) + 5(++档) + 1.5 = 86。
+// 手算锚点：ST|PO base = (90×3+84×3+72×2+72×2+60)/11 = 870/11 = 79.09；badge = 0.5+1 = 1.5；
+// rankRaw = 870/11 + 2(ST) + 5(++档) + 1.5 = 87.59，rankShown = 88。
 
 /** fitTile 只读 score：手搭 profile 做百分位纯数学，不用绕完整引擎 */
 const profOf = (scores: Record<string, number>): FitProfile =>
@@ -80,7 +80,7 @@ describe("fitProfileAll：base 与 breakdown", () => {
     const p = fitProfileAll(GK_META)!;
     expect(p.get("GK|GK")!.base).toBeCloseTo(81.5, 10);
     expect(p.get("GK|SK")!.base).toBeCloseTo(80.25, 10);
-    expect(p.get("GK|BPK")!.base).toBeCloseTo(69.5, 10);
+    expect(p.get("GK|BPK")!.base).toBeCloseTo(74.25, 10);
     const bd = p.get("GK|GK")!.breakdown;
     expect(bd.attr).toHaveLength(6);
     expect(bd.attr[0]).toEqual(["gkreflexes", 90, 22.5]); // 90×3/12
@@ -93,9 +93,9 @@ describe("fitProfileAll：base 与 breakdown", () => {
     // GK|GK：(90×3 + 60×3) / 6 = 75，breakdown 只剩 2 行
     expect(p.get("GK|GK")!.base).toBeCloseTo(75, 10);
     expect(p.get("GK|GK")!.breakdown.attr).toHaveLength(2);
-    // ST|AF 只有 sprintspeed(3)/finishing(2)/positioning(2) 在场：(60×3+90×2+84×2)/7
+    // ST|AF 只有 finishing(3)/positioning(2)/shotpower(2) 在场：(90×3+84×2+72×2)/7
     const st = fitProfileAll(ST_META)!;
-    expect(st.get("ST|AF")!.base).toBeCloseTo(528 / 7, 10);
+    expect(st.get("ST|AF")!.base).toBeCloseTo(582 / 7, 10);
     expect(st.get("ST|AF")!.breakdown.attr).toHaveLength(3);
   });
 
@@ -162,8 +162,8 @@ describe("fitProfileAll：base 与 breakdown", () => {
 describe("加分与封顶（rankRaw 侧）", () => {
   it("PosID 命中 +2、RoleID 一档 +3；rankRaw = base + 加分 + 徽章（精确手算）", () => {
     const p = fitProfileAll(ST_META)!;
-    expect(p.get("ST|PO")!.rankRaw).toBeCloseTo(77.5 + 2 + 5 + 1.5, 10);
-    expect(p.get("ST|PO")!.rankShown).toBe(86);
+    expect(p.get("ST|PO")!.rankRaw).toBeCloseTo(870 / 11 + 2 + 5 + 1.5, 10);
+    expect(p.get("ST|PO")!.rankShown).toBe(88);
     // 只有一档 RoleID：+3 而非 +5
     const t1 = fitProfileAll(
       meta(
@@ -181,7 +181,7 @@ describe("加分与封顶（rankRaw 侧）", () => {
       ),
     )!;
     expect(t1.get("ST|PO")!.breakdown.roleHit).toBe(1);
-    expect(t1.get("ST|PO")!.rankRaw).toBeCloseTo(77.5 + 2 + 3 + 1.5, 10);
+    expect(t1.get("ST|PO")!.rankRaw).toBeCloseTo(870 / 11 + 2 + 3 + 1.5, 10);
   });
 
   it("徽章：银 +0.5 / 金 +1，超过 3 封顶 3；badgeHits 不因封顶截断", () => {

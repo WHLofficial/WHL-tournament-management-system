@@ -11,8 +11,8 @@ import {
   FC26_ROLE_BY_ID,
   FIT_ATTR_KEYS,
   ROLE_FIT,
-} from "../shared/roleFit";
-import { PTE26 } from "../shared/tactics";
+  type RoleFitProfile,
+} from "../shared/roleFit";import { PTE26 } from "../shared/tactics";
 
 // PTE26 的全部「位置×角色」去重（同一角色带多个重心，去重后恰 49 个）
 const slotKeys = [
@@ -87,6 +87,90 @@ describe("角色适配权重表", () => {
     expect(FIT_ATTR_KEYS).toEqual([...union].sort());
     expect(FIT_ATTR_KEYS).not.toContain("CA");
     expect(FIT_ATTR_KEYS).not.toContain("PA");
+  });
+});
+
+describe("2026-11-06 权重评审约束", () => {
+  const attrMap = (slot: string) =>
+    new Map(
+      (ROLE_FIT[slot] as RoleFitProfile).attrs.map(([key, weight]) => [
+        key,
+        weight,
+      ]),
+    );
+
+  it("门将反应必须为 3，站位/扑救必须进权重", () => {
+    const bpk = attrMap("GK|BPK");
+    expect(bpk.get("gkreflexes")).toBe(3);
+    expect(bpk.has("gkpositioning")).toBe(true);
+    expect(bpk.has("gkdiving")).toBe(true);
+  });
+
+  it("外场全部移除 stamina，FIT_ATTR_KEYS 不含 stamina", () => {
+    for (const slot of Object.keys(ROLE_FIT)) {
+      if (slot.startsWith("GK|")) continue;
+      expect(attrMap(slot).has("stamina"), slot).toBe(false);
+    }
+    expect(FIT_ATTR_KEYS).not.toContain("stamina");
+    expect(FIT_ATTR_KEYS).toHaveLength(29);
+  });
+
+  it("边路/前腰/非站桩前锋必须含 agility", () => {
+    for (const slot of [
+      "LM|WM",
+      "RM|WM",
+      "CAM|C10",
+      "CAM|PL",
+      "ST|AF",
+      "ST|F9",
+    ]) {
+      expect(attrMap(slot).has("agility"), slot).toBe(true);
+    }
+  });
+
+  it("边后卫按角色至少 2 项防守属性", () => {
+    const defense = new Set([
+      "defensiveawareness",
+      "standingtackle",
+      "interceptions",
+    ]);
+    for (const slot of [
+      "LB|FB",
+      "RB|FB",
+      "LB|FAB",
+      "RB|FAB",
+      "LB|WB",
+      "RB|WB",
+      "LB|AWB",
+      "RB|AWB",
+      "LB|IWB",
+      "RB|IWB",
+    ]) {
+      const count = [...attrMap(slot).keys()].filter((key) =>
+        defense.has(key),
+      ).length;
+      expect(count, slot).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("CDM|DLP 比 CM|DLP 偏防守，CAM|PL 比 CM|PL 偏进攻", () => {
+    const defense = ["defensiveawareness", "standingtackle", "interceptions"];
+    const sum = (slot: string) =>
+      defense.reduce((total, key) => total + (attrMap(slot).get(key) ?? 0), 0);
+
+    expect(sum("CDM|DLP")).toBeGreaterThan(sum("CM|DLP"));
+    expect(attrMap("CDM|DLP").has("interceptions")).toBe(true);
+
+    expect(attrMap("CAM|PL").has("longshots")).toBe(true);
+    expect(attrMap("CM|PL").has("longshots")).toBe(false);
+    expect(attrMap("CAM|PL").get("dribbling")).toBe(2);
+  });
+
+  it("ST|F9 保留跑位；ST|AF 的加速与冲刺速度只保留一项", () => {
+    expect(attrMap("ST|F9").has("positioning")).toBe(true);
+    const af = attrMap("ST|AF");
+    expect(af.has("acceleration") && af.has("sprintspeed")).toBe(false);
+    expect(af.get("finishing")).toBe(3);
   });
 });
 
