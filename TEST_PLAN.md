@@ -287,6 +287,9 @@
 25. **TC-SCH-025 自动回填** `P0` — 让上一阶段最后一场完赛；预期：下一阶段对阵列自动生成（淘汰/循环/取人三型）且不需手工点生成；**⚠ 若下一阶段配了取人规则，必须核对生成的种子位与积分榜实际名次一致（D1：当前会用旧积分榜快照算名次）**。
 26. **TC-SCH-026 阶段结构限制** `P1` — 在 `running` 赛事上增/删阶段；预期：409「赛事已开赛或已归档，不能再调整阶段结构」；`draft`/`registering` 下可增删。
 27. **TC-SCH-027 主客均衡退化提示** `P1` — 对 4 支队的循环赛阶段点「生成赛程」；预期：赛程正常生成（6 场/3 轮），同时页面提示「赛程已生成，但当前队数下无法做到每队前两场一主一客、后两场一主一客（如 4 队单循环），已尽量均衡。」；再对 5/6/8 队各生成一次，预期**无**此提示（`balanced` 不再为 false）。
+28. **TC-SCH-028 双循环模式与守卫** `P1` — round_robin / group 阶段 `loops=2` 时出现「第二循环」模式单选（默认非对称），`loops=1` 不出现；PATCH `config_json.secondLoopMode` 落到 stage 行并在设置处回显；group 双循环响应含 `balanced`（全组 hard=0 才 true）/`warnings`（按组名报违例），单组 unbalanced 照常写入。
+29. **TC-SCH-029 异步生成（202 + 轮询）** `P0` — round_robin 双循环点生成返回 `202 { jobId, status }`，页面显示「正在生成赛程…（后台运行）」并轮询至 done 刷新；同 mode 活跃任务再点生成 → 返回同一 jobId（复用）；不同 mode → 409「该阶段已有另一种模式的任务在跑」；活跃任务期间 complete-double / 单循环 / 小组生成 → 409；job 状态接口归属不符（错赛事/错阶段/不存在 id）与空阶段 latest → 404；失败任务展示「未能满足硬约束」+ 违例明细（队名映射，映射不到显示 entryId）并提供「改用另一模式重试」，旧赛程保持不变；超 10 分钟的 pending/running 任务由 cron 判死为 failed「任务超时，请重试」。
+30. **TC-SCH-030 补全双循环同步（order/seed/幂等）** `P1` — complete-double 返回 `{ ok, created, deleted, mode, order, seed, kickoffCleared, warnings }`；非对称（默认）：`order` 是 0..k-1 的排列且非 identity，同 seed（含不带 seed 时由第一循环哈希派生）重复提交行集合完全一致，换 seed 得到不同 order；镜像：`round = 原轮次 + k`、`order = [0..k-1]`、`seed = null`；两种模式均主客对调、slot 保留、第二循环已有开打 409；被删场次带开球标注时 `kickoffCleared` 计数正确并提示「已清空 N 场已排的开球时间，需重新排期」。
 
 ### E. 报分与比赛事件（TC-SCO）
 
