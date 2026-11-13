@@ -504,8 +504,8 @@ async function syncStageConfigs(
   // 多阶段混搭时改循环赛参数不会污染小组赛配置）
   const KEY_BY_KIND: Record<string, string[]> = {
     elim: ["legs", "final_legs", "third_place"],
-    round_robin: ["loops"],
-    group: ["group_count", "group_size", "loops", "qualify_per_group"],
+    round_robin: ["loops", "secondLoopMode"],
+    group: ["group_count", "group_size", "loops", "qualify_per_group", "secondLoopMode"],
   };
   const merge = (existing: string | null, keys: string[]): Record<string, unknown> => {
     const cur = (JSON.parse(existing || "{}") ?? {}) as Record<string, unknown>;

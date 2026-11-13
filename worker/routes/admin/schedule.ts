@@ -17,6 +17,17 @@ import {
 } from "../../lib/standings";
 import { runStageRebuildGuard, type RebuildSource } from "../../lib/rebuild-guard";
 import {
+  claimScheduleJob,
+  createOrReuseScheduleJob,
+  failScheduleJob,
+  findActiveScheduleJob,
+  latestScheduleJob,
+  readScheduleJob,
+  scheduleJobDoneStmt,
+  type ScheduleJobRow,
+} from "../../lib/schedule-jobs";
+import { completeDoubleOrder, hash32, mulberry32, type Violation } from "../../lib/doubleSchedule";
+import {
   loadQualifierContext,
   sortSourceStandings,
 } from "../../lib/qualifierSource";
@@ -370,6 +381,8 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
   const tid = Number(c.req.param("id"));
   const stageId = Number(c.req.param("stageId"));
   const env = c.env;
+  // body.mode 可覆盖阶段配置的模式（spec §4.2）；空 body 合法
+  const body = (await c.req.json().catch(() => ({}))) as { mode?: string };
   let stage: StageRow;
   let started: number;
   try {
@@ -405,8 +418,11 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
   if (stage.kind === "round_robin") {
     const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as {
       loops?: number;
+      secondLoopMode?: string;
       source?: { take?: number; from?: number; to?: number; fromStage?: number };
     };
+    // 模式解析（spec §4.2）：请求 body.mode > 阶段配置 secondLoopMode > asymmetric
+    const mode = normMode(body.mode) ?? normMode(cfg.secondLoopMode) ?? "asymmetric";
     let poolList = list;
     if (cfg.source?.take || cfg.source?.from != null) {
       try {
@@ -417,8 +433,49 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       }
     }
     if (poolList.length < 2) return fail(c, 400, "报名不足 2 支，无法生成赛程");
+
+    // 双循环（spec §6.2）：同步预检已过 → 活跃任务复用/冲突 409 → 建 job 异步执行
+    if (cfg.loops === 2) {
+      // 建任务（含并发窗口）：同 mode 活跃任务复用、异 mode 409；并发撞唯一索引时回读复用，
+      // 不让竞争请求漏成 500（设计 §6.2 同阶段单活跃任务）。
+      const created = await createOrReuseScheduleJob(env.DB, {
+        tournamentId: tid,
+        stageId,
+        mode,
+        seed: crypto.getRandomValues(new Uint32Array(1))[0],
+        budgetMs: GENERATE_BUDGET_MS,
+        createdBy: c.get("user")!.id,
+      });
+      if (!created.ok) return fail(c, 409, "该阶段已有另一种模式的任务在跑");
+      if (created.reused) {
+        // 复用：不重复创建，返回同一个 jobId 与当前状态
+        return c.json({ jobId: created.jobId, status: created.status }, 202);
+      }
+      const jobId = created.jobId;
+      // app.request(...) 没有 ExecutionContext，c.executionCtx 会抛错（spec §6.6）：
+      // 生产走 waitUntil；vitest 内联 await，POST 返回时任务已结束，便于断言 result。
+      const exec = (() => {
+        try {
+          return c.executionCtx;
+        } catch {
+          return null;
+        }
+      })();
+      if (exec) {
+        exec.waitUntil(runScheduleJob(env, jobId));
+        return c.json({ jobId, status: "pending" }, 202);
+      }
+      await runScheduleJob(env, jobId);
+      const job = await readScheduleJob(env.DB, tid, stageId, jobId);
+      return c.json({ jobId, status: job?.status ?? "pending" }, 202);
+    }
+
+    // 单循环：同步写入；活跃双循环任务期间拒绝，避免互相删写（spec §6.2）
+    if (await findActiveScheduleJob(env.DB, stageId)) {
+      return fail(c, 409, ACTIVE_JOB_GUARD);
+    }
     poolList = shuffle(poolList);
-    const sched = roundRobinSchedule(poolList.length, cfg.loops === 2 ? 2 : 1);
+    const sched = roundRobinSchedule(poolList.length, 1);
     balanced = sched.balanced;
     rounds = sched.matches.reduce((mx, m) => Math.max(mx, m.round), 0);
     const slotOf = new Map<number, number>(); // 轮内序号
@@ -440,14 +497,22 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       created++;
     }
   } else {
+    // 活跃双循环任务期间拒绝（spec §6.2）
+    if (await findActiveScheduleJob(env.DB, stageId)) {
+      return fail(c, 409, ACTIVE_JOB_GUARD);
+    }
     // group：每组独立循环；未抽签或某组不足 2 队时跳过该组
     const groups = await env.DB.prepare(
-      'SELECT id, name FROM "group" WHERE stage_id = ? ORDER BY sort_order'
+      'SELECT id, name, sort_order FROM "group" WHERE stage_id = ? ORDER BY sort_order'
     )
       .bind(stageId)
-      .all<{ id: number; name: string }>();
-    const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { loops?: number };
+      .all<{ id: number; name: string; sort_order: number }>();
+    const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as {
+      loops?: number;
+      secondLoopMode?: string;
+    };
     const loops = cfg.loops === 2 ? 2 : 1;
+    const mode = normMode(body.mode) ?? normMode(cfg.secondLoopMode) ?? "asymmetric";
     const byGroup = new Map<number, EntryRow[]>();
     for (const e of list) {
       if (e.group_id == null) continue;
@@ -456,6 +521,9 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       byGroup.set(e.group_id, arr);
     }
     const skipped: string[] = [];
+    // loops=2 才有（spec §7.3）：全组 hard=0 才 balanced=true；违例按组名拼中文
+    let groupsBalanced = true;
+    const groupWarnings: string[] = [];
     // 轮内序号计数器放在小组循环外：同阶段 (round, slot) 必须唯一——
     // byRS（standings.ts）与单回合 COUNT 判定（scoring.ts）都拿它当唯一键，
     // 且列表 ORDER BY round, slot 时重号会导致组间交错（缺陷 D5）。
@@ -467,7 +535,22 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
         skipped.push(g.name);
         continue;
       }
-      const sched = roundRobinSchedule(members.length, loops);
+      // 双循环（spec §5.8）：单组 hard>0 不阻塞整阶段，照常写入；小预算同步跑（§4.2/§5.8）
+      // 每组独立派生确定性 seed：stage + 组身份的稳定哈希
+      const sched =
+        loops === 2
+          ? roundRobinSchedule(members.length, 2, {
+              mode,
+              seed: hash32(stageId, [
+                { round: g.sort_order, slot: g.id, home: members.length, away: 0 },
+              ]),
+              budgetMs: GROUP_BUDGET_MS,
+            })
+          : roundRobinSchedule(members.length, 1);
+      if (!sched.balanced) groupsBalanced = false;
+      for (const v of [...(sched.violations?.hard ?? []), ...(sched.violations?.soft ?? [])]) {
+        groupWarnings.push(`${g.name} 组：${describeViolation(v, members)}`);
+      }
       rounds = Math.max(rounds, sched.matches.reduce((mx, m) => Math.max(mx, m.round), 0));
       for (const m of sched.matches) {
         const slot = (slotOf.get(m.round) ?? 0) + 1;
@@ -491,11 +574,258 @@ app.post("/:id/stages/:stageId/generate", async (c) => {
       return fail(c, 400, "先抽签分组（且每组至少 2 队）才能生成小组赛程");
     }
     await writeAndRebuild(env.DB, tid, stageId, "generate", stmts);
-    return c.json({ created, rounds, skippedGroups: skipped });
+    // loops=2 响应增加 balanced/warnings（spec §7.3）；loops=1 响应保持现状不新增字段
+    return loops === 2
+      ? c.json({ created, rounds, skippedGroups: skipped, balanced: groupsBalanced, warnings: groupWarnings })
+      : c.json({ created, rounds, skippedGroups: skipped });
   }
 
   await writeAndRebuild(env.DB, tid, stageId, "generate", stmts);
   return c.json({ created, rounds, balanced });
+});
+
+// ---------- 双循环异步任务（spec §6.2–§6.4、§7.1） ----------
+
+const GENERATE_BUDGET_MS = 15000; // §5.8：generate 异步预算
+const GROUP_BUDGET_MS = 4000; // §5.8：group 同步小预算
+const ACTIVE_JOB_GUARD = "该阶段已有双循环生成任务在跑，请等它结束";
+
+// group 循环赛违例的中文描述（§7.3）：team X 的 X 是 entryId
+function describeViolation(v: Violation, pool: EntryRow[]): string {
+  const side = v.side === "home" ? "主" : "客";
+  const team = `team ${pool[v.team]?.id ?? v.team}`;
+  if (v.kind === "streak") return `${team} 三连${side}`;
+  if (v.kind === "firstTwo") return `${team} 两${side}开始`;
+  return `${team} 两${side}结束`;
+}
+
+// body.mode / 阶段配置 secondLoopMode 的合法值收敛；缺省/非法返回 null 交给下一级（§4.2）
+function normMode(v: unknown): "mirror" | "asymmetric" | null {
+  return v === "mirror" || v === "asymmetric" ? v : null;
+}
+
+// 生成结果（spec §7.1）：存 schedule_job.result_json，状态查询原样回传。
+// violations 的 entryId 由 0-based 队号经洗牌后的名单映射得出。
+interface GenerateResult {
+  created: number;
+  rounds: number;
+  mode: "mirror" | "asymmetric";
+  balanced: boolean;
+  violations: {
+    hard: Array<{ entryId: number; kind: "streak" | "lastTwo"; side: "home" | "away"; rounds: number[] }>;
+    soft: Array<{ entryId: number; kind: "firstTwo"; side: "home" | "away"; rounds: number[] }>;
+  };
+  asymmetric: { nonMirrorRounds: number; swaps: number; ms: number };
+  kickoffCleared: number;
+  warnings: string[];
+}
+
+// 失败结果（job=failed，未写入）：旧赛程保留，违例明细留档供「改用对称模式重试」
+interface FailedGenerateResult {
+  mode: "mirror" | "asymmetric";
+  balanced: false;
+  violations: GenerateResult["violations"];
+  warnings: string[];
+}
+
+// 0-based 队号 → entryId（poolList 顺序与生成时的洗牌序一致）
+function mapViolations(
+  violations: { hard: Violation[]; soft: Violation[] },
+  poolList: EntryRow[]
+): GenerateResult["violations"] {
+  const mapOne = (v: Violation) => ({
+    entryId: poolList[v.team]?.id ?? v.team,
+    kind: v.kind,
+    side: v.side,
+    rounds: v.rounds,
+  });
+  return {
+    hard: violations.hard.map(mapOne) as GenerateResult["violations"]["hard"],
+    soft: violations.soft.map(mapOne) as GenerateResult["violations"]["soft"],
+  };
+}
+
+// 双循环生成的同步预检（runScheduleJob 的重检用，与路由侧预检同口径）：
+// 归属 / 未开打 / 循环赛 / 取人 / 人数。失败抛 HttpError，由执行器转 failScheduleJob。
+async function preflightGenerateDouble(
+  db: D1Database,
+  tid: number,
+  stageId: number
+): Promise<{ stage: StageRow; poolList: EntryRow[] }> {
+  const { stage, started } = await loadStage(db, tid, stageId);
+  if (started > 0) {
+    throw new HttpError(409, "该阶段已有开打或完赛的场次，不能重新生成");
+  }
+  if (stage.kind !== "round_robin") {
+    throw new HttpError(400, "自动生成只适用于循环赛阶段");
+  }
+  const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as {
+    source?: { take?: number; from?: number; to?: number; fromStage?: number };
+  };
+  const entries = await db
+    .prepare("SELECT id, seed, group_id FROM entry WHERE tournament_id = ? ORDER BY seed")
+    .bind(tid)
+    .all<EntryRow>();
+  let poolList = entries.results ?? [];
+  if (cfg.source?.take || cfg.source?.from != null) {
+    poolList = await takeRangePool({ DB: db }, tid, stageId, cfg.source);
+  }
+  if (poolList.length < 2) {
+    throw new HttpError(400, "报名不足 2 支，无法生成赛程");
+  }
+  return { stage, poolList };
+}
+
+// 任务执行器（spec §6.3）：claim → 重新预检 → 生成 → 失败只标记（旧赛程保留）/
+// 成功与场次写入同批提交完成标记。放在本文件以复用 loadStage/takeRangePool/writeAndRebuild，
+// 避免循环依赖。任何异常 failScheduleJob + 记日志，不抛出到请求链（waitUntil 无接收方）。
+async function runScheduleJob(env: { DB: D1Database }, jobId: number): Promise<void> {
+  try {
+    // 1) 抢任务：changes=0 说明已被别的执行器领走
+    if (!(await claimScheduleJob(env.DB, jobId))) return;
+
+    // 2) 重读任务行 + 重新预检（started/取人来源可能已变化；失败 → failScheduleJob）
+    const job = await env.DB.prepare(
+      `SELECT id, tournament_id AS tid, stage_id AS stageId, mode, seed, budget_ms AS budgetMs
+       FROM schedule_job WHERE id = ?`
+    )
+      .bind(jobId)
+      .first<{
+        tid: number;
+        stageId: number;
+        mode: "mirror" | "asymmetric";
+        seed: number;
+        budgetMs: number;
+      }>();
+    if (!job) return;
+    let poolList: EntryRow[];
+    try {
+      poolList = (await preflightGenerateDouble(env.DB, job.tid, job.stageId)).poolList;
+    } catch (e) {
+      await failScheduleJob(
+        env.DB,
+        jobId,
+        e instanceof HttpError ? e.message : `预检失败：${e instanceof Error ? e.message : String(e)}`
+      );
+      return;
+    }
+
+    // 3) 生成：洗牌与搜索同用 job.seed，同 seed 可复现（§5.8）
+    const shuffled = shuffle(poolList, mulberry32(job.seed));
+    const sched = roundRobinSchedule(shuffled.length, 2, {
+      mode: job.mode,
+      seed: job.seed,
+      budgetMs: job.budgetMs,
+    });
+
+    // 4) 未满足硬约束：不执行任何 DELETE/INSERT，旧赛程保留；违例明细留 result_json（第 5 步）
+    if (!sched.balanced) {
+      const failed: FailedGenerateResult = {
+        mode: job.mode,
+        balanced: false,
+        violations: mapViolations(sched.violations ?? { hard: [], soft: [] }, shuffled),
+        warnings: sched.warnings ?? [],
+      };
+      await failScheduleJob(env.DB, jobId, "未能满足硬约束", JSON.stringify(failed));
+      return;
+    }
+
+    // 5) 成功：统计将被清掉的开球标注（0031 的 kickoff_* 三列任一非空）
+    const oldMarked = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM match WHERE stage_id = ?
+         AND (kickoff_week IS NOT NULL OR kickoff_day IS NOT NULL OR kickoff_time IS NOT NULL)`
+    )
+      .bind(job.stageId)
+      .first<{ n: number }>();
+    const result: GenerateResult = {
+      created: sched.matches.length,
+      rounds: sched.matches.reduce((mx, m) => Math.max(mx, m.round), 0),
+      mode: job.mode,
+      balanced: true,
+      violations: mapViolations(sched.violations ?? { hard: [], soft: [] }, shuffled),
+      asymmetric: sched.asymmetric ?? { nonMirrorRounds: 0, swaps: 0, ms: 0 },
+      kickoffCleared: oldMarked?.n ?? 0,
+      warnings: sched.warnings ?? [],
+    };
+
+    // 6) 清空 + 逐场重建（slot 按轮内计数）+ 完成标记同批提交（第 6 步）；榜重算由守卫自愈兜底
+    const stmts: D1PreparedStatement[] = [
+      env.DB.prepare("DELETE FROM match WHERE stage_id = ?").bind(job.stageId),
+    ];
+    const insertMatch =
+      "INSERT INTO match (stage_id, round, slot, leg, home_entry_id, away_entry_id, status, winner_entry_id, note) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)";
+    const slotOf = new Map<number, number>(); // 轮内序号
+    for (const m of sched.matches) {
+      const slot = (slotOf.get(m.round) ?? 0) + 1;
+      slotOf.set(m.round, slot);
+      stmts.push(
+        env.DB.prepare(insertMatch).bind(
+          job.stageId,
+          m.round,
+          slot,
+          null,
+          shuffled[m.home].id,
+          shuffled[m.away].id,
+          null,
+          null
+        )
+      );
+    }
+    stmts.push(scheduleJobDoneStmt(env.DB, jobId, JSON.stringify(result)));
+    await writeAndRebuild(env.DB, job.tid, job.stageId, "generate", stmts);
+  } catch (e) {
+    // 7) 任何异常：任务标失败 + 记日志，不抛出
+    await failScheduleJob(
+      env.DB,
+      jobId,
+      `执行异常：${e instanceof Error ? e.message : String(e)}`
+    ).catch(() => {});
+    console.error(
+      `[schedule-job] 任务 ${jobId} 执行失败：${e instanceof Error ? e.stack ?? e.message : String(e)}`
+    );
+  }
+}
+
+// 任务状态查询响应（spec §6.4）：result 从 result_json 解析
+function jobResponse(job: ScheduleJobRow) {
+  return {
+    id: job.id,
+    kind: job.kind,
+    mode: job.mode,
+    status: job.status,
+    result: job.resultJson
+      ? (JSON.parse(job.resultJson) as GenerateResult | FailedGenerateResult)
+      : null,
+    error: job.error,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+  };
+}
+
+// GET …/schedule-jobs/latest：该阶段最近一条任务（含 done/failed）；先验阶段归属
+app.get("/:id/stages/:stageId/schedule-jobs/latest", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  try {
+    await loadStage(c.env.DB, tid, stageId);
+  } catch (e) {
+    if (e instanceof HttpError) return fail(c, e.status, e.message);
+    throw e;
+  }
+  const job = await latestScheduleJob(c.env.DB, stageId);
+  if (!job || job.tournamentId !== tid) return fail(c, 404, "该阶段还没有生成任务");
+  return c.json(jobResponse(job));
+});
+
+// GET …/schedule-jobs/:jobId：单条任务；tournament/stage/job 归属不符一律 404（表无外键，防跨赛事探测）
+app.get("/:id/stages/:stageId/schedule-jobs/:jobId", async (c) => {
+  const tid = Number(c.req.param("id"));
+  const stageId = Number(c.req.param("stageId"));
+  const jobId = Number(c.req.param("jobId"));
+  const job = await readScheduleJob(c.env.DB, tid, stageId, jobId);
+  if (!job) return fail(c, 404, "任务不存在");
+  return c.json(jobResponse(job));
 });
 
 // 重生成/删场次/改带入之后重算积分榜：必须等场次写入提交后再算（榜是从 match 现算的），
@@ -1540,7 +1870,13 @@ export async function buildAutoFillStmts(
       continue; // 区间越界等守卫未过：静默跳过
     }
     if (pool.length < 2) continue;
-    const sched = roundRobinSchedule(pool.length, cfg.loops === 2 ? 2 : 1);
+    // 自动回填跑在报分同步链路上：显式小预算 + 确定性 seed，不跑 15s 搜索；
+    // write-anyway 语义与现状一致（忽略 balanced，单组/整体 unbalanced 照常写入）
+    const sched = roundRobinSchedule(pool.length, cfg.loops === 2 ? 2 : 1, {
+      mode: "asymmetric",
+      seed: hash32(next.id, []),
+      budgetMs: GROUP_BUDGET_MS,
+    });
     const mixed = shuffle(pool);
     // roundRobinSchedule 的 home/away 是 0-based 队号，+1 对齐 pushPlan 的 1-based 种子位
     pushPlan(
@@ -1584,8 +1920,13 @@ app.post("/:id/stages/:stageId/complete-double", async (c) => {
     if (stage.kind !== "round_robin") {
       return fail(c, 400, "补全双循环只适用于循环赛阶段");
     }
+    // 活跃 generate job 期间拒绝补全：避免与任务互相删写（spec §6.2）
+    if (await findActiveScheduleJob(c.env.DB, stageId)) {
+      return fail(c, 409, ACTIVE_JOB_GUARD);
+    }
     const rows = await c.env.DB.prepare(
-      `SELECT id, round, slot, home_entry_id, away_entry_id, status
+      `SELECT id, round, slot, home_entry_id, away_entry_id, status,
+              kickoff_week, kickoff_day, kickoff_time
        FROM match WHERE stage_id = ? ORDER BY round, slot`
     )
       .bind(stage.id)
@@ -1596,6 +1937,9 @@ app.post("/:id/stages/:stageId/complete-double", async (c) => {
         home_entry_id: number | null;
         away_entry_id: number | null;
         status: string;
+        kickoff_week: number | null;
+        kickoff_day: number | null;
+        kickoff_time: string | null;
       }>();
     const all = rows.results ?? [];
 
@@ -1640,6 +1984,44 @@ app.post("/:id/stages/:stageId/complete-double", async (c) => {
       return fail(c, 409, "第二循环已有开打或完赛的场次，不能覆盖重排");
     }
 
+    // —— 双模式同步改写（spec §5.6/§5.7/§7.2）：不做三连/一主一客约束判定，不返回 balanced/violations
+    const body = (await c.req.json().catch(() => ({}))) as { mode?: string; seed?: number };
+    const cfg = (JSON.parse(stage.config_json || "{}") ?? {}) as { secondLoopMode?: string };
+    const mode = normMode(body.mode) ?? normMode(cfg.secondLoopMode) ?? "asymmetric";
+
+    let order: number[];
+    let seed: number | null;
+    if (mode === "mirror") {
+      // 正向镜像：第二循环 round = k + m.round，轮序恒等（spec §5.6）
+      order = Array.from({ length: k }, (_, i) => i);
+      seed = null;
+    } else {
+      // 不带 seed → 由第一循环场次序列派生稳定 seed：同批场次幂等，重提交同 order（spec §5.7 第 2 步）
+      seed =
+        typeof body.seed === "number"
+          ? body.seed >>> 0
+          : hash32(
+              stage.id,
+              first.map((m) => ({ round: m.round, slot: m.slot, home: m.home_entry_id!, away: m.away_entry_id! }))
+            );
+      order = completeDoubleOrder(k, { seed }).order;
+    }
+
+    // 被删第二循环里带开球标注（0031 的 kickoff_* 三列任一非空）的条数
+    const kickoffCleared = second.filter(
+      (m) => m.kickoff_week != null || m.kickoff_day != null || m.kickoff_time != null
+    ).length;
+    const warnings: string[] = [];
+    if (kickoffCleared > 0) {
+      warnings.push(`已清空 ${kickoffCleared} 场已排的开球时间，需重新排期`);
+    }
+    if (k <= 1) {
+      warnings.push("队数过少，无非对称空间");
+    }
+
+    const secondRoundOf = (m: { round: number }): number =>
+      mode === "mirror" ? m.round + k : k + order[m.round - 1] + 1;
+
     const stmts: D1PreparedStatement[] = second.map((m) =>
       c.env.DB.prepare("DELETE FROM match WHERE id = ?").bind(m.id)
     );
@@ -1649,7 +2031,7 @@ app.post("/:id/stages/:stageId/complete-double", async (c) => {
       stmts.push(
         c.env.DB.prepare(insertStmt).bind(
           stage.id,
-          m.round + k,
+          secondRoundOf(m),
           m.slot,
           m.away_entry_id,
           m.home_entry_id
@@ -1657,7 +2039,16 @@ app.post("/:id/stages/:stageId/complete-double", async (c) => {
       );
     }
     if (stmts.length > 0) await c.env.DB.batch(stmts);
-    return c.json({ ok: true, created: first.length, deleted: second.length });
+    return c.json({
+      ok: true,
+      created: first.length,
+      deleted: second.length,
+      mode,
+      order,
+      seed,
+      kickoffCleared,
+      warnings,
+    });
   } catch (e) {
     if (e instanceof HttpError) return fail(c, e.status, e.message);
     throw e;

@@ -7,7 +7,10 @@
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
-import { applyMigrations, createTestD1, createTestKV, sqlAll, sqlGet } from "./d1";
+import { completeDoubleOrder } from "../worker/lib/doubleSchedule";
+import { recoverScheduleJobs } from "../worker/lib/schedule-jobs";
+import type { Bindings } from "../worker/env";
+import { applyMigrations, createTestDb, createTestD1, createTestKV, sqlAll, sqlGet } from "./d1";
 
 const ISO = "2026-01-01T00:00:00Z";
 const AUTH = { Cookie: "whl_session=tok-admin", "Content-Type": "application/json" };
@@ -51,12 +54,15 @@ const post = (env: Env, path: string, body: unknown) =>
 const del = (env: Env, path: string) => app.request(path, { method: "DELETE", headers: AUTH }, env);
 const msg = async (res: Response) => ((await res.json()) as { message?: string }).message ?? "";
 
-const generate = (env: Env, tid: number, stageId: number) =>
-  post(env, `/api/admin/tournaments/${tid}/stages/${stageId}/generate`, {});
+const generate = (env: Env, tid: number, stageId: number, body: Record<string, unknown> = {}) =>
+  post(env, `/api/admin/tournaments/${tid}/stages/${stageId}/generate`, body);
+const get = (env: Env, path: string) => app.request(path, { headers: AUTH }, env);
+const jobUrl = (tid: number, stageId: number, jobId: number | string) =>
+  `/api/admin/tournaments/${tid}/stages/${stageId}/schedule-jobs/${jobId}`;
 const draw = (env: Env, tid: number, stageId: number) =>
   post(env, `/api/admin/tournaments/${tid}/stages/${stageId}/draw`, {});
-const completeDouble = (env: Env, tid: number, stageId: number) =>
-  post(env, `/api/admin/tournaments/${tid}/stages/${stageId}/complete-double`, {});
+const completeDouble = (env: Env, tid: number, stageId: number, body: Record<string, unknown> = {}) =>
+  post(env, `/api/admin/tournaments/${tid}/stages/${stageId}/complete-double`, body);
 const finish = (env: Env, matchId: number, body: Record<string, unknown>) =>
   post(env, `/api/admin/matches/${matchId}/finish`, body);
 
@@ -119,6 +125,44 @@ const pairsOf = (rows: MatchRow[]) =>
     .filter((r) => r.home_entry_id !== null && r.away_entry_id !== null)
     .map((r) => [r.home_entry_id!, r.away_entry_id!] as [number, number]);
 const keyOf = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+
+// 手工插一条 schedule_job（复用/409 守卫用例要的是「活跃中」状态；
+// 路由内联执行的任务到达不了断言时刻——POST 返回时已 done）
+function mkJob(
+  sqlite: DatabaseSync,
+  id: number,
+  tid: number,
+  stageId: number,
+  mode: "mirror" | "asymmetric",
+  status: "pending" | "running"
+) {
+  sqlite
+    .prepare(
+      "INSERT INTO schedule_job (id, tournament_id, stage_id, kind, mode, status, seed, budget_ms, created_at) VALUES (?, ?, ?, 'generate_double', ?, ?, 42, 15000, ?)"
+    )
+    .run(id, tid, stageId, mode, status, ISO);
+}
+
+type JobResponse = {
+  id: number;
+  kind: string;
+  mode: string;
+  status: string;
+  result: {
+    created?: number;
+    rounds?: number;
+    mode?: string;
+    balanced?: boolean;
+    violations?: { hard: unknown[]; soft: unknown[] };
+    asymmetric?: { nonMirrorRounds: number; swaps: number; ms: number };
+    kickoffCleared?: number;
+    warnings?: string[];
+  } | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
 
 describe("赛程生成：淘汰赛已改为手动落位", () => {
   it("淘汰赛阶段调用自动生成 → 400（不再自动生成对阵）", async () => {
@@ -200,24 +244,283 @@ describe("赛程生成：循环赛", () => {
     expect(rows.every((r) => r.home_entry_id !== null && r.away_entry_id !== null)).toBe(true);
   });
 
-  it("loops=2：每对主客各一场", async () => {
+  it("loops=2：202 + jobId，内联执行后 GET job 为 done 且 result 齐全", async () => {
     const { env, sqlite } = freshEnv();
     mkTournament(sqlite, 46);
     mkEntries(sqlite, 46, [460, 461, 462, 463]);
     mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
 
     const res = await generate(env, 46, 460);
-    const body = (await res.json()) as { created: number; rounds: number };
-    expect(body.created).toBe(12);
-    expect(body.rounds).toBe(6);
+    expect(res.status).toBe(202);
+    const { jobId, status } = (await res.json()) as { jobId: number; status: string };
+    expect(jobId).toBeGreaterThan(0);
+    expect(status).toBe("done"); // vitest 无 ExecutionContext，内联执行：POST 返回时任务已结束（spec §6.6）
+
+    const jobRes = await get(env, jobUrl(46, 460, jobId));
+    expect(jobRes.status).toBe(200);
+    const job = (await jobRes.json()) as JobResponse;
+    expect(job.id).toBe(jobId);
+    expect(job.kind).toBe("generate_double");
+    expect(job.mode).toBe("asymmetric"); // 请求/配置都未指定 → 默认 asymmetric（spec §4.1）
+    expect(job.status).toBe("done");
+    expect(job.error).toBeNull();
+    expect(job.startedAt).toBeTruthy();
+    expect(job.finishedAt).toBeTruthy();
+    expect(job.result?.created).toBe(12);
+    expect(job.result?.rounds).toBe(6);
+    expect(job.result?.mode).toBe("asymmetric");
+    expect(job.result?.balanced).toBe(true);
+    expect(job.result?.kickoffCleared).toBe(0);
+    expect(typeof job.result?.asymmetric?.nonMirrorRounds).toBe("number");
+    expect(job.result?.violations?.hard).toEqual([]);
 
     const rows = rowsOf(sqlite, 460);
+    expect(rows).toHaveLength(12);
     for (const [a, b] of [[460, 461], [460, 462], [460, 463], [461, 462], [461, 463], [462, 463]] as const) {
       const forward = rows.filter((r) => r.home_entry_id === a && r.away_entry_id === b);
       const backward = rows.filter((r) => r.home_entry_id === b && r.away_entry_id === a);
       expect(forward).toHaveLength(1);
       expect(backward).toHaveLength(1);
     }
+  });
+
+  it("loops=2 复用：活跃任务同 mode 再 POST 返回同一 jobId 与当前状态（202）", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+    mkJob(sqlite, 9001, 46, 460, "asymmetric", "pending");
+
+    const res = await generate(env, 46, 460);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ jobId: 9001, status: "pending" });
+
+    // running 同样复用，状态原样回显；不创建第二条任务
+    sqlite.prepare("UPDATE schedule_job SET status = 'running' WHERE id = 9001").run();
+    const res2 = await generate(env, 46, 460);
+    expect(res2.status).toBe(202);
+    expect(await res2.json()).toEqual({ jobId: 9001, status: "running" });
+    const jobs = sqlAll<{ id: number }>(sqlite, "SELECT id FROM schedule_job");
+    expect(jobs).toHaveLength(1);
+  });
+
+  it("复用（真实任务回拨）：POST 拿 jobId → 手工回拨 pending → 再 POST 返回同一 jobId 且不重跑", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+
+    const res1 = await generate(env, 46, 460);
+    const { jobId } = (await res1.json()) as { jobId: number };
+    expect(jobId).toBeGreaterThan(0);
+
+    // 模拟「任务卡在 pending」：路由自建的任务回拨状态
+    sqlite.prepare("UPDATE schedule_job SET status = 'pending' WHERE id = ?").run(jobId);
+
+    const res2 = await generate(env, 46, 460);
+    expect(res2.status).toBe(202);
+    // 复用分支只回显当前状态、不重复创建也不重跑（spec §6.2）
+    expect(await res2.json()).toEqual({ jobId, status: "pending" });
+    expect(sqlAll<{ id: number }>(sqlite, "SELECT id FROM schedule_job")).toHaveLength(1);
+    const job = (await (await get(env, jobUrl(46, 460, jobId))).json()) as JobResponse;
+    expect(job.status).toBe("pending"); // 复用路径不触发执行
+  });
+
+  it("loops=1 仍同步且不建 job：POST 200 同步响应、schedule_job 无行（spec §9.2）", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463, 464, 465, 466, 467]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 1 });
+
+    const res = await generate(env, 46, 460);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { created: number; rounds: number; balanced: boolean };
+    expect(body.created).toBe(28);
+    expect(body.rounds).toBe(7);
+    expect(body.balanced).toBe(true);
+    expect(sqlAll<{ id: number }>(sqlite, "SELECT id FROM schedule_job")).toHaveLength(0);
+  });
+
+  it("loops=2 冲突：活跃任务不同 mode → 409；同 mode 的显式请求复用 → 202", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+    mkJob(sqlite, 9001, 46, 460, "mirror", "pending");
+
+    const res = await generate(env, 46, 460); // 默认 asymmetric ≠ mirror
+    expect(res.status).toBe(409);
+    expect(await msg(res)).toBe("该阶段已有另一种模式的任务在跑");
+
+    const res2 = await generate(env, 46, 460, { mode: "mirror" });
+    expect(res2.status).toBe(202);
+    expect(await res2.json()).toEqual({ jobId: 9001, status: "pending" });
+  });
+
+  it("job 状态查询：错误赛事/阶段/jobId 一律 404；latest 空阶段 404、有任务 200、跨赛事 404", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+    mkStage(sqlite, 461, 46, "round_robin", 2, { loops: 1 });
+
+    // 460 还没有任务
+    const emptyLatest = await get(env, jobUrl(46, 460, "latest"));
+    expect(emptyLatest.status).toBe(404);
+
+    const res = await generate(env, 46, 460);
+    const { jobId } = (await res.json()) as { jobId: number };
+
+    expect((await get(env, jobUrl(47, 460, jobId))).status).toBe(404); // 错误赛事
+    expect((await get(env, jobUrl(46, 461, jobId))).status).toBe(404); // 错误阶段
+    expect((await get(env, jobUrl(46, 460, 99999))).status).toBe(404); // 不存在的 jobId
+
+    const latest = await get(env, jobUrl(46, 460, "latest"));
+    expect(latest.status).toBe(200);
+    expect(((await latest.json()) as JobResponse).id).toBe(jobId);
+  });
+
+  it("latest 返回最近任务的完整形状（done + result 概要）", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+
+    await generate(env, 46, 460);
+    const latest = await get(env, jobUrl(46, 460, "latest"));
+    expect(latest.status).toBe(200);
+    const job = (await latest.json()) as JobResponse;
+    expect(job.status).toBe("done");
+    expect(job.kind).toBe("generate_double");
+    expect(job.mode).toBe("asymmetric");
+    expect(job.result?.created).toBe(12);
+    expect(job.result?.rounds).toBe(6);
+    expect(job.result?.mode).toBe("asymmetric");
+  });
+
+  it("loops=2 失败不写入：n=4 mirror 结构性无解 → job=failed，旧赛程保留", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+
+    // 先用默认 asymmetric 生成成功（12 场）
+    await generate(env, 46, 460);
+    const before = rowsOf(sqlite, 460);
+    expect(before).toHaveLength(12);
+
+    // mirror 在 n=4 双循环下 hard>0 结构性无解（见 tests/doubleSchedule.test.ts）→ 失败
+    const res = await generate(env, 46, 460, { mode: "mirror" });
+    expect(res.status).toBe(202);
+    const { jobId, status } = (await res.json()) as { jobId: number; status: string };
+    expect(status).toBe("failed");
+
+    const job = (await (await get(env, jobUrl(46, 460, jobId))).json()) as JobResponse;
+    expect(job.status).toBe("failed");
+    expect(job.error).toBe("未能满足硬约束");
+    expect(job.finishedAt).toBeTruthy();
+    expect(job.result?.balanced).toBe(false);
+    expect(job.result?.violations?.hard?.length).toBeGreaterThan(0);
+
+    // 失败不写入：场次集合与失败前完全一致
+    expect(rowsOf(sqlite, 460)).toEqual(before);
+  });
+
+  it("loops=2 kickoffCleared：旧场次带 kickoff_* 标注 → 重建后清零且计数正确", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+    // 预置旧场次并打上开球标注（0031 的 kickoff_* 列）
+    sqlite
+      .prepare(
+        "INSERT INTO match (id, stage_id, round, slot, home_entry_id, away_entry_id, status, kickoff_week, kickoff_day, kickoff_time) VALUES (800, 460, 1, 1, 460, 461, 'pending', 3, 6, '21:00')"
+      )
+      .run();
+
+    const res = await generate(env, 46, 460);
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: number };
+    const job = (await (await get(env, jobUrl(46, 460, jobId))).json()) as JobResponse;
+    expect(job.status).toBe("done");
+    expect(job.result?.kickoffCleared).toBe(1);
+    expect(job.result?.created).toBe(12);
+
+    // 重建后：旧标注随 DELETE 清空，全部场次 kickoff_* 为空
+    const marked = sqlGet<{ n: number }>(
+      sqlite,
+      "SELECT COUNT(*) AS n FROM match WHERE stage_id = 460 AND (kickoff_week IS NOT NULL OR kickoff_day IS NOT NULL OR kickoff_time IS NOT NULL)"
+    );
+    expect(marked?.n).toBe(0);
+  });
+
+  it("预检失败不建 job：取人来源未完赛 → 400，schedule_job 无行", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 450, 46, "round_robin", 1, { loops: 1, source: { take: 2 } });
+    mkStage(sqlite, 460, 46, "round_robin", 2, { loops: 2, source: { take: 2, fromStage: 450 } });
+    mkEntries(sqlite, 46, [450, 451, 452, 453], undefined, 44);
+
+    const res = await generate(env, 46, 460); // 来源阶段还没完赛 → takeRangePool 抛 400
+    expect(res.status).toBe(400);
+    expect(await msg(res)).toBe("取人来源阶段尚未全部完赛，还不能按名次取人生成");
+    // 预检失败发生在建 job 之前：schedule_job 无任何行
+    expect(sqlAll<{ id: number }>(sqlite, "SELECT id FROM schedule_job")).toHaveLength(0);
+  });
+
+  it("阶段已开打 → 409 不建 job；已有 done 任务行原样保留", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+    await generate(env, 46, 460); // done 任务一行
+    setStatus(
+      sqlite,
+      sqlGet<{ id: number }>(sqlite, "SELECT id FROM match WHERE stage_id = 460 LIMIT 1")!.id,
+      "live"
+    );
+
+    const res = await generate(env, 46, 460);
+    expect(res.status).toBe(409);
+    expect(await msg(res)).toBe("该阶段已有开打或完赛的场次，不能重新生成");
+    // 路由预检在建 job 之前拒绝：不新增 job 行
+    expect(sqlAll<{ id: number }>(sqlite, "SELECT id FROM schedule_job")).toHaveLength(1);
+  });
+
+  it("活跃 job 期间：loops=1 与 group 的 generate、complete-double 都 409", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 1 });
+    mkStage(sqlite, 470, 46, "group", 2, { group_count: 2, group_size: 2, loops: 1 });
+    mkGroups(sqlite, 470, ["A", "B"]);
+    setGroup(sqlite, 460, 900);
+    setGroup(sqlite, 461, 900);
+    setGroup(sqlite, 462, 901);
+    setGroup(sqlite, 463, 901);
+
+    // loops=1：活跃 job → 409
+    mkJob(sqlite, 9001, 46, 460, "asymmetric", "pending");
+    const res = await generate(env, 46, 460);
+    expect(res.status).toBe(409);
+    expect(await msg(res)).toBe("该阶段已有双循环生成任务在跑，请等它结束");
+
+    // group：活跃 job → 409
+    mkJob(sqlite, 9002, 46, 470, "asymmetric", "pending");
+    const resGroup = await generate(env, 46, 470);
+    expect(resGroup.status).toBe(409);
+    expect(await msg(resGroup)).toBe("该阶段已有双循环生成任务在跑，请等它结束");
+
+    // complete-double：独立 stage 先同步生成第一循环（无活跃 job），再插活跃 job → 409
+    mkStage(sqlite, 480, 46, "round_robin", 3, { loops: 1 });
+    mkEntries(sqlite, 46, [480, 481, 482, 483], undefined, 44);
+    const first = await generate(env, 46, 480);
+    expect(first.status).toBe(200);
+    mkJob(sqlite, 9003, 46, 480, "asymmetric", "pending");
+    const resCd = await completeDouble(env, 46, 480);
+    expect(resCd.status).toBe(409);
+    expect(await msg(resCd)).toBe("该阶段已有双循环生成任务在跑，请等它结束");
   });
 
   it("4 队单循环：场次集合与轮数固定（主客健康约束的实际收敛结果）", async () => {
@@ -281,6 +584,64 @@ describe("赛程生成：小组赛", () => {
     const inA = pairsOf(rows).every(([h, a]) => [470, 471, 472].includes(h) === [470, 471, 472].includes(a));
     expect(inA).toBe(true); // 不会跨组配对
     expect(rows.every((r) => r.leg === null && r.winner_entry_id === null)).toBe(true);
+  });
+
+  it("group loops=2（默认 asymmetric）：balanced=true，每组双循环（软约束告警允许）", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 47);
+    mkEntries(sqlite, 47, [470, 471, 472, 473, 474, 475, 476, 477]);
+    mkStage(sqlite, 470, 47, "group", 1, {
+      group_count: 2,
+      group_size: 4,
+      loops: 2,
+      qualify_per_group: 2,
+    });
+    mkGroups(sqlite, 470, ["A", "B"]);
+    for (const e of [470, 471, 472, 473]) setGroup(sqlite, e, 900);
+    for (const e of [474, 475, 476, 477]) setGroup(sqlite, e, 901);
+
+    const res = await generate(env, 47, 470);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      created: number;
+      rounds: number;
+      skippedGroups: string[];
+      balanced: boolean;
+      warnings: string[];
+    };
+    expect(body.balanced).toBe(true); // 两组 hard=0
+    // 软约束（前两场同侧）是 best-effort（§5.2/§5.5）：为最大化 nonMirrorRounds 允许保留，
+    // 因此告警只断言「不含硬违例（三连/末两场）」，而不是要求空数组。
+    for (const w of body.warnings) expect(w).toMatch(/两主开始|两客开始/);
+    expect(body.created).toBe(24); // 2 组 × 4 队双循环各 12 场
+    expect(body.rounds).toBe(6);
+  });
+
+  it("group loops=2 单组 unbalanced（mirror n=4 结构性无解）：不阻塞写入，warnings 按组名报违例", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 47);
+    mkEntries(sqlite, 47, [470, 471, 472, 473, 474, 475, 476, 477]);
+    mkStage(sqlite, 470, 47, "group", 1, {
+      group_count: 2,
+      group_size: 4,
+      loops: 2,
+      qualify_per_group: 2,
+    });
+    mkGroups(sqlite, 470, ["A", "B"]);
+    for (const e of [470, 471, 472, 473]) setGroup(sqlite, e, 900);
+    for (const e of [474, 475, 476, 477]) setGroup(sqlite, e, 901);
+
+    const res = await generate(env, 47, 470, { mode: "mirror" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { created: number; balanced: boolean; warnings: string[] };
+    expect(body.balanced).toBe(false); // 两组都是 n=4 mirror → hard>0
+    // mirror 失败态每组有多条违例（streak/lastTwo/firstTwo 各按队计），按组名前缀归组
+    expect(body.warnings.filter((w) => w.startsWith("A 组：")).length).toBeGreaterThan(0);
+    expect(body.warnings.filter((w) => w.startsWith("B 组：")).length).toBeGreaterThan(0);
+    expect(body.warnings.every((w) => /^(A|B) 组：team \d+ (三连|两)(主|客)/.test(w))).toBe(true);
+    // 单组 unbalanced 不阻塞：照常写入
+    expect(body.created).toBe(24);
+    expect(countOf(sqlite, 470)).toBe(24);
   });
 
   it("同批多个小组共用阶段级 (round, slot) 编号：同轮 slot 不再重号（缺陷 D5）", async () => {
@@ -556,7 +917,7 @@ describe("清空场次、补全双循环与阶段结构", () => {
     expect(await msg(notFound)).toBe("比赛不存在");
   });
 
-  it("complete-double：镜像第一循环，主客对调且轮次对称翻转", async () => {
+  it("complete-double asymmetric（默认）：200 同步、order 是排列、同对主客对调 slot 相同、轮次映射是双射", async () => {
     const { env, sqlite } = freshEnv();
     mkTournament(sqlite, 50);
     mkEntries(sqlite, 50, [500, 501, 502, 503]);
@@ -567,7 +928,66 @@ describe("清空场次、补全双循环与阶段结构", () => {
 
     const res = await completeDouble(env, 50, 500);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, created: 6, deleted: 0 });
+    const body = (await res.json()) as {
+      ok: boolean;
+      created: number;
+      deleted: number;
+      mode: string;
+      order: number[];
+      seed: number | null;
+      kickoffCleared: number;
+      warnings: string[];
+    };
+    expect(body.ok).toBe(true);
+    expect(body.created).toBe(6);
+    expect(body.deleted).toBe(0);
+    expect(body.mode).toBe("asymmetric"); // 未指定 mode → 默认 asymmetric（spec §4.1）
+    expect([...body.order].sort((a, b) => a - b)).toEqual([0, 1, 2]); // 0..k-1 的排列
+    expect(body.order.some((v, i) => v !== i)).toBe(true); // k>1 保证非 identity
+    expect(typeof body.seed).toBe("number");
+    expect(body.kickoffCleared).toBe(0);
+    expect(body.warnings).toEqual([]);
+
+    const rows = rowsOf(sqlite, 500);
+    expect(rows).toHaveLength(12);
+    // 第一循环 m.round → 第二循环 k + order[m.round-1] + 1（spec §5.7 第 6 步）；主客对调、slot 保留
+    for (const m of firstLoop) {
+      const mirror = rows.find(
+        (r) => r.home_entry_id === m.away_entry_id && r.away_entry_id === m.home_entry_id && r.slot === m.slot
+      );
+      expect(mirror).toBeDefined();
+      expect(mirror!.round).toBe(3 + body.order[m.round - 1] + 1);
+    }
+    // 轮次映射是双射：第二循环轮次恰为 4..6
+    const secondRounds = new Set(rows.filter((r) => r.round > 3).map((r) => r.round));
+    expect(secondRounds).toEqual(new Set([4, 5, 6]));
+  });
+
+  it("complete-double mirror：order=[0..k-1]、seed=null、round=m.round+k", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 50);
+    mkEntries(sqlite, 50, [500, 501, 502, 503]);
+    mkStage(sqlite, 500, 50, "round_robin", 1, { loops: 1 });
+    await generate(env, 50, 500);
+    const firstLoop = rowsOf(sqlite, 500);
+
+    const res = await completeDouble(env, 50, 500, { mode: "mirror" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      created: number;
+      deleted: number;
+      mode: string;
+      order: number[];
+      seed: number | null;
+      kickoffCleared: number;
+      warnings: string[];
+    };
+    expect(body.ok).toBe(true);
+    expect(body.mode).toBe("mirror");
+    expect(body.order).toEqual([0, 1, 2]); // 正向镜像恒等序（spec §5.6）
+    expect(body.seed).toBeNull(); // mirror 不用 seed
+    expect(body.warnings).toEqual([]);
 
     const rows = rowsOf(sqlite, 500);
     expect(rows).toHaveLength(12);
@@ -581,19 +1001,79 @@ describe("清空场次、补全双循环与阶段结构", () => {
     }
   });
 
-  it("complete-double 幂等：已有第二循环时清掉重建，场次数不变", async () => {
+  it("complete-double 换 seed：order 变化（k>=3）；不带 seed 幂等（行集合与 seed 一致）", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 50);
+    mkEntries(sqlite, 50, [500, 501, 502, 503]);
+    mkStage(sqlite, 500, 50, "round_robin", 1, { loops: 1 });
+    await generate(env, 50, 500);
+
+    const first = (await (await completeDouble(env, 50, 500)).json()) as {
+      order: number[];
+      seed: number;
+    };
+    const before = rowsOf(sqlite, 500).map((r) => [r.round, r.slot, r.home_entry_id, r.away_entry_id]);
+
+    // 换 seed → order 变化：确定性构造——在候选序列（0,1,2,…）中找一个经本地复算
+    // completeDoubleOrder(k,{seed}) 产生不同 order 的显式 seed，既测「显式 seed 生效」又保证非相等
+    const k = 3;
+    let pickedSeed: number | null = null;
+    let expectedOrder: number[] = [];
+    for (let s = 0; s < 64; s++) {
+      const candidate = completeDoubleOrder(k, { seed: s }).order;
+      if (candidate.some((v, i) => v !== first.order[i])) {
+        pickedSeed = s;
+        expectedOrder = candidate;
+        break;
+      }
+    }
+    expect(pickedSeed).not.toBeNull();
+
+    const reseeded = (await (await completeDouble(env, 50, 500, { seed: pickedSeed! })).json()) as {
+      order: number[];
+      seed: number;
+    };
+    expect(reseeded.seed).toBe(pickedSeed);
+    expect(reseeded.order).toEqual(expectedOrder); // 显式 seed 原样生效，且与本地复算一致
+    expect(reseeded.order).not.toEqual(first.order);
+
+    // 不带 seed：默认 seed 由第一循环哈希决定 → 与第一次完全一致（幂等，行集合一致）
+    setStatus(
+      sqlite,
+      sqlGet<{ id: number }>(sqlite, "SELECT id FROM match WHERE stage_id = 500 AND round > 3 ORDER BY id LIMIT 1")!.id,
+      "pending"
+    );
+    const res = await completeDouble(env, 50, 500);
+    const body = (await res.json()) as { seed: number; order: number[]; created: number; deleted: number };
+    expect(body.seed).toBe(first.seed);
+    expect(body.order).toEqual(first.order);
+    expect(body.created).toBe(6);
+    expect(body.deleted).toBe(6);
+    expect(rowsOf(sqlite, 500).map((r) => [r.round, r.slot, r.home_entry_id, r.away_entry_id])).toEqual(before);
+  });
+
+  it("complete-double kickoffCleared：被删第二循环带 kickoff 标注 → 计数并入 warnings", async () => {
     const { env, sqlite } = freshEnv();
     mkTournament(sqlite, 50);
     mkEntries(sqlite, 50, [500, 501, 502, 503]);
     mkStage(sqlite, 500, 50, "round_robin", 1, { loops: 1 });
     await generate(env, 50, 500);
     await completeDouble(env, 50, 500);
-    const before = rowsOf(sqlite, 500).map((r) => [r.round, r.slot, r.home_entry_id, r.away_entry_id]);
+    // 给第二循环的一场打上开球标注
+    const secondMatch = sqlGet<{ id: number }>(
+      sqlite,
+      "SELECT id FROM match WHERE stage_id = 500 AND round > 3 LIMIT 1"
+    )!;
+    sqlite
+      .prepare("UPDATE match SET kickoff_week = 3, kickoff_day = 6, kickoff_time = '21:00' WHERE id = ?")
+      .run(secondMatch.id);
 
-    setStatus(sqlite, sqlGet<{ id: number }>(sqlite, "SELECT id FROM match WHERE stage_id = 500 AND round = 4")!.id, "pending");
     const res = await completeDouble(env, 50, 500);
-    expect(await res.json()).toEqual({ ok: true, created: 6, deleted: 6 });
-    expect(rowsOf(sqlite, 500).map((r) => [r.round, r.slot, r.home_entry_id, r.away_entry_id])).toEqual(before);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { deleted: number; kickoffCleared: number; warnings: string[] };
+    expect(body.deleted).toBe(6);
+    expect(body.kickoffCleared).toBe(1);
+    expect(body.warnings).toEqual(["已清空 1 场已排的开球时间，需重新排期"]);
   });
 
   it("complete-double 守卫：非循环赛 / 空阶段 / 第一循环不完整 / 重复交手 / 第二循环已开打", async () => {
@@ -651,6 +1131,13 @@ describe("清空场次、补全双循环与阶段结构", () => {
     expect(started.status).toBe(409);
     expect(await msg(started)).toBe("第二循环已有开打或完赛的场次，不能覆盖重排");
     expect(countOf(sqlite, 500)).toBe(12); // 拒了就不删
+
+    // 有活跃 generate job → 409 且不创建新 job
+    mkJob(sqlite, 9100, 50, 500, "asymmetric", "pending");
+    const blockedByJob = await completeDouble(env, 50, 500);
+    expect(blockedByJob.status).toBe(409);
+    expect(await msg(blockedByJob)).toBe("该阶段已有双循环生成任务在跑，请等它结束");
+    expect(sqlAll<{ id: number }>(sqlite, "SELECT id FROM schedule_job")).toHaveLength(1);
   });
 
   it("阶段结构调整：draft/registering 可增删，running 一律拒绝", async () => {
@@ -679,5 +1166,146 @@ describe("清空场次、补全双循环与阶段结构", () => {
     const firstIsGroup = await post(draft.env, "/api/admin/tournaments/52/stages", { kind: "group" });
     expect(firstIsGroup.status).toBe(400);
     expect(await msg(firstIsGroup)).toBe("分组赛只能作为第一阶段");
+  });
+});
+
+describe("secondLoopMode 配置通道（PATCH → stage.config_json，spec §4.2）", () => {
+  it("PATCH config_json.secondLoopMode 落到 round_robin 与 group 阶段行", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 53, "draft"); // 无场次 → 赛制参数可改
+    mkStage(sqlite, 530, 53, "round_robin", 1, { loops: 2 });
+    mkStage(sqlite, 531, 53, "group", 2, { group_count: 2, loops: 1 });
+
+    const res = await app.request(
+      "/api/admin/tournaments/53",
+      { method: "PATCH", headers: AUTH, body: JSON.stringify({ config_json: { secondLoopMode: "mirror" } }) },
+      env
+    );
+    expect(res.status).toBe(200);
+
+    const rr = sqlGet<{ config_json: string }>(sqlite, "SELECT config_json FROM stage WHERE id = 530")!;
+    expect(JSON.parse(rr.config_json)).toEqual({ loops: 2, secondLoopMode: "mirror" });
+    const gp = sqlGet<{ config_json: string }>(sqlite, "SELECT config_json FROM stage WHERE id = 531")!;
+    expect(JSON.parse(gp.config_json)).toEqual({ group_count: 2, loops: 1, secondLoopMode: "mirror" });
+
+    // 显式传 asymmetric 也应照写覆盖
+    const res2 = await app.request(
+      "/api/admin/tournaments/53",
+      { method: "PATCH", headers: AUTH, body: JSON.stringify({ config_json: { secondLoopMode: "asymmetric" } }) },
+      env
+    );
+    expect(res2.status).toBe(200);
+    const rr2 = sqlGet<{ config_json: string }>(sqlite, "SELECT config_json FROM stage WHERE id = 530")!;
+    expect(JSON.parse(rr2.config_json).secondLoopMode).toBe("asymmetric");
+  });
+});
+
+describe("recoverScheduleJobs（cron 判死，spec §6.5/§9.2）", () => {
+  const MIN = 60 * 1000;
+
+  function bindingsOf(db: D1Database): Bindings {
+    return { DB: db, KV: createTestKV(), ASSETS: {}, MEDIA: {} } as unknown as Bindings;
+  }
+
+  // 直接插一条指定状态/创建时间的 schedule_job 行（无外键，不用造赛事/阶段）
+  function insertStaleJob(
+    sqlite: DatabaseSync,
+    o: { id: number; stageId: number; status: string; createdMinAgo: number; startedMinAgo?: number; error?: string }
+  ): void {
+    const now = Date.now();
+    sqlite
+      .prepare(
+        `INSERT INTO schedule_job
+           (id, tournament_id, stage_id, kind, mode, status, seed, budget_ms,
+            result_json, error, created_by, created_at, started_at, finished_at)
+         VALUES (?, 46, ?, 'generate_double', 'asymmetric', ?, 42, 15000,
+            NULL, ?, 1, ?, ?, ?)`
+      )
+      .run(
+        o.id,
+        o.stageId,
+        o.status,
+        o.error ?? null,
+        new Date(now - o.createdMinAgo * MIN).toISOString(),
+        o.startedMinAgo === undefined ? null : new Date(now - o.startedMinAgo * MIN).toISOString(),
+        o.status === "done" ? new Date(now - (o.createdMinAgo - 1) * MIN).toISOString() : null
+      );
+  }
+
+  it("created_at 超 10 分钟的 pending 判死：error 固定文案、finished_at 写入", async () => {
+    const { sqlite, db } = createTestDb();
+    insertStaleJob(sqlite, { id: 1, stageId: 70, status: "pending", createdMinAgo: 11 });
+
+    await recoverScheduleJobs(bindingsOf(db));
+
+    const row = sqlGet<{ status: string; error: string; finished_at: string }>(
+      sqlite,
+      "SELECT status, error, finished_at FROM schedule_job WHERE id = 1"
+    );
+    expect(row).toMatchObject({ status: "failed", error: "任务超时，请重试" });
+    expect(row?.finished_at).toBeTruthy();
+  });
+
+  it("11 分钟前的 running 也判死——按 created_at 而非 started_at（started 仅 10 分钟前）", async () => {
+    const { sqlite, db } = createTestDb();
+    insertStaleJob(sqlite, { id: 2, stageId: 71, status: "running", createdMinAgo: 11, startedMinAgo: 10 });
+
+    await recoverScheduleJobs(bindingsOf(db));
+
+    expect(
+      sqlGet<{ status: string; error: string }>(sqlite, "SELECT status, error FROM schedule_job WHERE id = 2")
+    ).toMatchObject({ status: "failed", error: "任务超时，请重试" });
+  });
+
+  it("5 分钟前的 pending/running 不动；done/failed 终态不重判（failed 保留原 error）", async () => {
+    const { sqlite, db } = createTestDb();
+    insertStaleJob(sqlite, { id: 3, stageId: 72, status: "pending", createdMinAgo: 5 });
+    insertStaleJob(sqlite, { id: 4, stageId: 73, status: "running", createdMinAgo: 5, startedMinAgo: 4 });
+    insertStaleJob(sqlite, { id: 5, stageId: 74, status: "done", createdMinAgo: 30 });
+    insertStaleJob(sqlite, { id: 6, stageId: 75, status: "failed", createdMinAgo: 30, error: "原先的失败原因" });
+
+    await recoverScheduleJobs(bindingsOf(db));
+
+    const rows = sqlAll<{ id: number; status: string; error: string | null; finished_at: string | null }>(
+      sqlite,
+      "SELECT id, status, error, finished_at FROM schedule_job WHERE id >= 3 ORDER BY id"
+    );
+    expect(rows).toEqual([
+      { id: 3, status: "pending", error: null, finished_at: null },
+      { id: 4, status: "running", error: null, finished_at: null },
+      { id: 5, status: "done", error: null, finished_at: expect.any(String) },
+      { id: 6, status: "failed", error: "原先的失败原因", finished_at: null },
+    ]);
+  });
+
+  it("整体吞异常：扫描失败不抛出（cron 无重试，一次抖动不炸调度）", async () => {
+    const badDb = {
+      prepare() {
+        throw new Error("db down");
+      },
+    } as unknown as D1Database;
+    await expect(recoverScheduleJobs(bindingsOf(badDb))).resolves.toBeUndefined();
+  });
+
+  it("判死后同阶段可立即重新生成：走路由 POST 返回新 jobId", async () => {
+    const { env, sqlite } = freshEnv();
+    mkTournament(sqlite, 46);
+    mkEntries(sqlite, 46, [460, 461, 462, 463]);
+    mkStage(sqlite, 460, 46, "round_robin", 1, { loops: 2 });
+    mkJob(sqlite, 9001, 46, 460, "asymmetric", "pending");
+    sqlite
+      .prepare("UPDATE schedule_job SET created_at = ? WHERE id = 9001")
+      .run(new Date(Date.now() - 11 * MIN).toISOString());
+
+    await recoverScheduleJobs(env as unknown as Bindings);
+    expect(
+      sqlGet<{ status: string; error: string }>(sqlite, "SELECT status, error FROM schedule_job WHERE id = 9001")
+    ).toMatchObject({ status: "failed", error: "任务超时，请重试" });
+
+    const res = await generate(env, 46, 460);
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: number };
+    expect(jobId).not.toBe(9001); // 活跃索引不再拦：判死后可立即建新任务
+    expect(jobId).toBeGreaterThan(9001);
   });
 });

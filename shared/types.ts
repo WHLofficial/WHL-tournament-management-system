@@ -283,6 +283,8 @@ export interface ElimStageConfig {
 
 export interface RoundRobinStageConfig {
   loops?: 1 | 2;
+  /** 双循环模式（spec §4.2）：缺省/非法值 → asymmetric；单循环忽略 */
+  secondLoopMode?: "mirror" | "asymmetric";
   source?: StageSource;
   carry?: CarryConfig;
 }
@@ -301,6 +303,8 @@ export type CarryMode = "points" | "record";
 export interface GroupStageConfig {
   group_count?: number;
   loops?: 1 | 2;
+  /** 双循环模式（spec §4.2）：缺省/非法值 → asymmetric；单循环忽略 */
+  secondLoopMode?: "mirror" | "asymmetric";
   qualify_per_group?: number;
   cross?: string[]; // 出线映射模板
   source?: StageSource;
