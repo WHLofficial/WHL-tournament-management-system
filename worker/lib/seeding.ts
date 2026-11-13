@@ -3,6 +3,9 @@
 // > entryCount 为补幂用的虚拟位）；循环赛函数直接输出队号（0-based）。
 
 import { BYE_NOTE } from "../../shared/matchNotes";
+// 双循环委托 doubleSchedule.ts 的 generateDouble（spec §11 步骤 3）。两文件互为依赖但都只在
+// 运行期调用对方（全是函数声明 + 类型），ESM 循环依赖安全；若未来一方出现顶层求值依赖须先解环。
+import { generateDouble, type Violation } from "./doubleSchedule";
 
 export interface SeedEntry {
   id: number;
@@ -11,10 +14,11 @@ export interface SeedEntry {
 
 // Fisher-Yates 洗牌：循环赛编排前打散队序，让轮次安排与主客分布每次不同。
 // 只影响"谁第几轮碰谁/谁主场"，不影响交手集合（单循环每对恰好一场）。
-export function shuffle<T>(arr: readonly T[]): T[] {
+// rng 可注入（异步任务/测试要可复现时传 mulberry32(seed)），缺省 Math.random 保持旧行为。
+export function shuffle<T>(arr: readonly T[], rng: () => number = Math.random): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
@@ -195,6 +199,20 @@ export interface RrMatch {
 export interface RrSchedule {
   matches: RrMatch[];
   balanced: boolean; // false = 自动修复未收敛，提示改手动
+  // 以下字段仅 loops=2（委托 doubleSchedule.ts 的 generateDouble）才有值；
+  // loops=1 不新增字段，现有响应与测试不动（spec §10 兼容）。
+  mode?: "mirror" | "asymmetric";
+  violations?: { hard: Violation[]; soft: Violation[] }; // team 是 0-based 队号，路由映射成 entryId
+  asymmetric?: { nonMirrorRounds: number; swaps: number; ms: number };
+  warnings?: string[];
+}
+
+// 双循环调度选项（spec §4.1/§5.8）：mode 缺省 asymmetric；seed 缺省 0（完全确定、可复现）；
+// budgetMs 缺省 15000（§5.8 的 generate 预算）。路由改造后由路由显式传入。
+export interface RrScheduleOptions {
+  mode?: "mirror" | "asymmetric";
+  seed?: number;
+  budgetMs?: number;
 }
 
 // 主客健康约束：任何队不连续三场同侧。
@@ -304,50 +322,6 @@ function annealFix(matches: RrMatch[], teamCount: number): RrMatch[] | null {
     if (bad === 0) return cur;
   }
   return null;
-}
-
-// 双循环整体退火：只翻第一循环的场，第二循环镜像（对调+反向）联动，天然保持每对主客互换。
-function annealDouble(
-  first: RrMatch[],
-  k: number,
-  teamCount: number
-): { matches: RrMatch[]; balanced: boolean } | null {
-  const mergedOf = (f: RrMatch[]): RrMatch[] => {
-    const second = f.map((m) => ({
-      round: k + (k - m.round) + 1,
-      home: m.away,
-      away: m.home,
-    }));
-    return [...f, ...second];
-  };
-  const rng = lcg((teamCount * 77 + k * 13) >>> 0);
-  let cur = first.map((m) => ({ ...m }));
-  let curMerged = mergedOf(cur);
-  let bad = totalViolations(curMerged, teamCount);
-  if (bad === 0) return { matches: curMerged, balanced: true };
-  let T = 2.0;
-  let bestMerged = curMerged;
-  let bestBad = bad;
-  for (let s = 0; s < 30000; s++) {
-    if (bad === 0) return { matches: curMerged, balanced: true };
-    const j = Math.floor(rng() * cur.length);
-    const cand = cur.map((m, i) => (i === j ? { ...m, home: m.away, away: m.home } : { ...m }));
-    const candMerged = mergedOf(cand);
-    const nb = totalViolations(candMerged, teamCount);
-    if (nb < bad || rng() < Math.exp((bad - nb) / T)) {
-      cur = cand;
-      curMerged = candMerged;
-      bad = nb;
-      if (nb < bestBad) {
-        bestBad = nb;
-        bestMerged = candMerged;
-      }
-    }
-    T = Math.max(0.05, T * 0.999);
-  }
-  return bestBad === 0
-    ? { matches: bestMerged, balanced: true }
-    : { matches: bestMerged, balanced: false };
 }
 
 // 修复手段：单场翻转 + 整轮翻转，贪心接受违例数下降的一步，最多 60 轮。
@@ -469,7 +443,8 @@ export function balanceHomeAway(matches: RrMatch[], teamCount: number): RrSchedu
 
 export function roundRobinSchedule(
   teamCount: number,
-  loops: 1 | 2
+  loops: 1 | 2,
+  opts: RrScheduleOptions = {}
 ): RrSchedule {
   const base = roundRobinPairs(teamCount);
   const first: RrMatch[] = [];
@@ -479,24 +454,21 @@ export function roundRobinSchedule(
     });
   });
   if (loops === 1) return balanceHomeAway(first, teamCount);
-  // 双循环：第一循环先修到近健康作为好起点，再用整体退火微调——第二循环主客对调 + 轮序反向拼接，
-  // 每对必然主客互换；拼接可证无三连且首末一主一客，但 n=4 等小规模第一循环无法独立满足
-  // "前两场/后两场异侧"，需以拼接后整体为目标调整（只翻第一循环场，镜像联动）。
-  const { matches: balancedFirst } = balanceHomeAway(first, teamCount);
-  const k = base.length;
-  const hol = annealDouble(balancedFirst, k, teamCount);
-  if (hol) return hol;
-  // 退火兜底失败：退回固定镜像拼接，balanced 按实际检查计算
-  const second = balancedFirst.map((m) => ({
-    round: k + (k - m.round) + 1, // 轮序反向：第 1 轮的对调场排到最后
-    home: m.away,
-    away: m.home,
-  }));
-  const merged = [...balancedFirst, ...second];
-  const balanced =
-    checkHomeStreaks(merged, teamCount).length === 0 &&
-    checkEdgeHomeAway(merged, teamCount).length === 0;
-  return { matches: merged, balanced };
+  // 双循环（spec §5）：委托 doubleSchedule.ts 的双模式搜索。反向镜像已淘汰，
+  // mirror 只表示正向镜像（orders[0] = identity）；旧调用不传 opts 也能工作（§10 兼容）。
+  const r = generateDouble(teamCount, {
+    mode: opts.mode ?? "asymmetric",
+    seed: opts.seed ?? 0,
+    budgetMs: opts.budgetMs ?? 15000,
+  });
+  return {
+    matches: r.matches,
+    balanced: r.balanced,
+    mode: r.mode,
+    violations: r.violations,
+    asymmetric: { nonMirrorRounds: r.nonMirrorRounds, swaps: r.swaps, ms: r.ms },
+    warnings: r.warnings,
+  };
 }
 
 // ---------- 小组抽签 ----------
