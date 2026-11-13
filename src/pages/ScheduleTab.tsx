@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type {
   CarryConfig,
@@ -53,6 +53,43 @@ const stageTitle: Record<StageDTO["kind"], string> = {
   group: "小组赛",
 };
 
+type LoopMode = "mirror" | "asymmetric";
+
+// 阶段配置里的第二循环模式：缺省/非法 → asymmetric（spec §4.2）
+const secondLoopModeOf = (stage: StageDTO): LoopMode =>
+  (stage.config as { secondLoopMode?: string }).secondLoopMode === "mirror" ? "mirror" : "asymmetric";
+
+// 生成响应（spec §7.1）：round_robin+loops=2 返回 { jobId }（异步任务，需轮询）；
+// 其余分支返回同步结果（loops=1 / group）。用 'jobId' in res 判别，不固定形状。
+type GenerateAsyncResult = { jobId: number; status: string };
+type GenerateSyncResult = {
+  created: number;
+  rounds: number;
+  balanced?: boolean;
+  skippedGroups?: string[];
+  warnings?: string[];
+};
+type GenerateResponse = GenerateAsyncResult | GenerateSyncResult;
+
+// job 状态查询响应（spec §6.4）
+type ScheduleJobState = {
+  id: number;
+  kind: string;
+  mode: LoopMode;
+  status: "pending" | "running" | "done" | "failed";
+  result: {
+    balanced?: boolean;
+    violations?: {
+      hard: Array<{ entryId: number; kind: "streak" | "lastTwo"; side: "home" | "away"; rounds: number[] }>;
+      soft: Array<{ entryId: number; kind: "firstTwo"; side: "home" | "away"; rounds: number[] }>;
+    };
+    asymmetric?: { nonMirrorRounds: number; swaps: number; ms: number };
+    kickoffCleared?: number;
+    warnings?: string[];
+  } | null;
+  error: string | null;
+};
+
 export default function ScheduleTab({
   detail,
   reload,
@@ -64,6 +101,38 @@ export default function ScheduleTab({
   const [qualifiers, setQualifiers] = useState<Record<string, number[]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // 双循环异步生成的轮询基建：定时器登记 + 卸载标记，卸载时清定时器、停 setState（spec §8.2）
+  const pollTimersRef = useRef<number[]>([]);
+  const pollAbortedRef = useRef(false);
+  const [retryGenerate, setRetryGenerate] = useState<{ stage: StageDTO; mode: LoopMode } | null>(null);
+  const [reshuffleComplete, setReshuffleComplete] = useState<StageDTO | null>(null);
+
+  useEffect(
+    () => () => {
+      pollAbortedRef.current = true;
+      for (const t of pollTimersRef.current) window.clearTimeout(t);
+    },
+    []
+  );
+
+  const entryName = useMemo(() => {
+    const byId = new Map<number, string>();
+    for (const e of detail.entries) byId.set(e.id, e.teamName);
+    return (entryId: number) => byId.get(entryId) ?? `#${entryId}`;
+  }, [detail.entries]);
+
+  const violationText = useCallback(
+    (v: { entryId: number; kind: string; side: string; rounds: number[] }): string => {
+      const side = v.side === "home" ? "主" : "客";
+      const team = entryName(v.entryId);
+      const span =
+        v.rounds.length > 1 ? `${v.rounds[0]}–${v.rounds[v.rounds.length - 1]}` : `${v.rounds[0]}`;
+      if (v.kind === "streak") return `${team} 第 ${span} 轮三连${side}`;
+      if (v.kind === "firstTwo") return `${team} 第 ${span} 轮两${side}开始`;
+      return `${team} 第 ${span} 轮两${side}结束`;
+    },
+    [entryName]
+  );
 
   const refetch = useCallback(async () => {
     try {
@@ -98,20 +167,88 @@ export default function ScheduleTab({
 
   const needEntries = detail.entries.length < 2;
 
-  const generate = (stage: StageDTO) =>
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const t = window.setTimeout(resolve, ms);
+      pollTimersRef.current.push(t);
+    });
+
+  // 轮询双循环生成任务（spec §6.6/§8.2）：1.5s 间隔、最多 60s；期间 busy=true（act 未返回）。
+  // done → 展示警告并交由 act 收尾刷新；failed → 展示 error + 硬违例明细并挂「改用另一模式重试」；
+  // 组件卸载（pollAbortedRef）即停止轮询与 setState。
+  const pollScheduleJob = async (stage: StageDTO, jobId: number, mode: LoopMode) => {
+    setMessage("正在生成赛程…（后台运行）");
+    const url = `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/schedule-jobs/${jobId}`;
+    const deadline = Date.now() + 60000;
+    for (;;) {
+      if (Date.now() >= deadline) {
+        throw new Error("生成超时：任务仍在后台运行，稍后刷新页面或重新生成查看结果");
+      }
+      await sleep(1500);
+      if (pollAbortedRef.current) return;
+      const job = await api<ScheduleJobState>(url);
+      if (pollAbortedRef.current) return;
+      if (job.status === "done") {
+        const result = job.result ?? {};
+        const parts: string[] = [];
+        if ((result.kickoffCleared ?? 0) > 0) {
+          parts.push(`已清空 ${result.kickoffCleared} 场已排的开球时间，需重新排期。`);
+        }
+        if (result.asymmetric && result.asymmetric.nonMirrorRounds === 0) {
+          parts.push("赛程已生成，但未能做出不对称（第二循环仍为镜像）。");
+        }
+        const soft = result.violations?.soft ?? [];
+        if (soft.length > 0) {
+          parts.push(
+            `赛程已生成；硬约束已满足，以下球队前两场同侧（可接受）：${soft.map(violationText).join("；")}。`
+          );
+        }
+        setMessage(parts.length > 0 ? parts.join("") : null);
+        return; // act 收尾统一 refetch + reload
+      }
+      if (job.status === "failed") {
+        setRetryGenerate({ stage, mode: mode === "asymmetric" ? "mirror" : "asymmetric" });
+        const hard = job.result?.violations?.hard ?? [];
+        const detailText =
+          hard.length > 0 ? hard.map(violationText).join("；") : (job.error ?? "未知原因");
+        setMessage(`赛程未生成：仍有硬约束违例：${detailText}。旧赛程保持不变。`);
+        return;
+      }
+    }
+  };
+
+  const generate = (stage: StageDTO, mode?: LoopMode, confirm = true) =>
     act(
       async () => {
-        const res = await api<{ balanced?: boolean }>(
+        const isDouble =
+          stage.kind === "round_robin" && (stage.config as { loops?: number }).loops === 2;
+        const res = await api<GenerateResponse>(
           `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/generate`,
-          { method: "POST" }
+          isDouble
+            ? { method: "POST", body: { mode: mode ?? secondLoopModeOf(stage) } }
+            : { method: "POST" }
         );
-        if (res && res.balanced === false) {
+        // 双循环：异步任务，轮询 job 直到 done/failed（spec §6.6）
+        if ("jobId" in res) {
+          await pollScheduleJob(stage, res.jobId, mode ?? secondLoopModeOf(stage));
+          return;
+        }
+        // 同步结果：group 展示 balanced/warnings（spec §7.3）；单循环展示均衡降级提示
+        if (stage.kind === "group") {
+          if (res.balanced === false) {
+            setMessage(`赛程已生成，但部分组未满足硬约束：${(res.warnings ?? []).join("；")}`);
+          } else if ((res.warnings ?? []).length > 0) {
+            setMessage((res.warnings ?? []).join("；"));
+          }
+          return;
+        }
+        if (res.balanced === false) {
           setMessage(
             "赛程已生成，但当前队数下无法做到每队前两场一主一客、后两场一主一客（如 4 队单循环），已尽量均衡。"
           );
         }
       },
-      "将清空该阶段全部未开打的场次并重新生成，确认？"
+      confirm ? "将清空该阶段全部未开打的场次并重新生成，确认？" : undefined
     );
 
   const draw = (stage: StageDTO) =>
@@ -143,19 +280,59 @@ export default function ScheduleTab({
       "将清除该阶段全部未开打的场次，确认？"
     );
 
-  const completeDouble = (stage: StageDTO) =>
-    act(
-      () =>
-        api(
+  const completeDouble = (stage: StageDTO, seed?: number) => {
+    const mode = secondLoopModeOf(stage);
+    return act(
+      async () => {
+        const res = await api<{ ok: boolean; mode: string; kickoffCleared?: number }>(
           `/api/admin/tournaments/${detail.tournament.id}/stages/${stage.id}/complete-double`,
-          { method: "POST" }
-        ),
-      "将以第一循环为镜像生成第二循环（主客对调），并覆盖第二循环未开打的场次，确认？"
+          { method: "POST", body: seed === undefined ? { mode } : { mode, seed } }
+        );
+        // 非对称成功后提供「换一种排法」：新 seed 重发得到不同 order（spec §8.1）
+        setReshuffleComplete(res.mode === "asymmetric" ? stage : null);
+        if ((res.kickoffCleared ?? 0) > 0) {
+          setMessage(`已清空 ${res.kickoffCleared} 场已排的开球时间，需重新排期。`);
+        }
+      },
+      `将按${mode === "mirror" ? "对称" : "非对称"}模式重排第二循环轮次、主客对调，并覆盖第二循环未开打的场次；已排的开球时间会被清空。确认？`
     );
+  };
 
   return (
     <div className="schedule-tab">
-      {message && <p className="error">{message}</p>}
+      {message && (
+        <p className="error">
+          {message}
+          {retryGenerate && !busy && (
+            <>
+              {" "}
+              <button
+                onClick={() => {
+                  const r = retryGenerate;
+                  setRetryGenerate(null);
+                  generate(r.stage, r.mode, false);
+                }}
+              >
+                改用{retryGenerate.mode === "mirror" ? "对称" : "非对称"}模式重试
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {reshuffleComplete && !busy && (
+        <p className="muted">
+          想换一种排法？
+          <button
+            onClick={() => {
+              const s = reshuffleComplete;
+              setReshuffleComplete(null);
+              completeDouble(s, Math.floor(Math.random() * 4294967296));
+            }}
+          >
+            换一种排法
+          </button>
+        </p>
+      )}
       {detail.stages.length === 0 && (
         <p className="muted card">
           {needEntries
@@ -892,6 +1069,7 @@ function StageConfigEditor({
 }) {
   const cfg = stage.config as {
     loops?: number;
+    secondLoopMode?: string;
     legs?: number;
     final_legs?: number;
     third_place?: boolean;
@@ -961,6 +1139,7 @@ function StageConfigEditor({
       group_count?: number;
       group_size?: number;
       loops?: number;
+      secondLoopMode?: string;
     };
     return (
       <span className="cfg-editor">
@@ -1015,6 +1194,18 @@ function StageConfigEditor({
             <option value="2">双循环</option>
           </select>
         </label>
+        {gcfg.loops === 2 && (
+          <label>
+            第二循环
+            <select
+              value={gcfg.secondLoopMode === "mirror" ? "mirror" : "asymmetric"}
+              onChange={(e) => patch({ secondLoopMode: e.target.value })}
+            >
+              <option value="asymmetric">非对称</option>
+              <option value="mirror">对称</option>
+            </select>
+          </label>
+        )}
       </span>
     );
   }
@@ -1031,6 +1222,18 @@ function StageConfigEditor({
           <option value="2">双循环</option>
         </select>
       </label>
+      {cfg.loops === 2 && (
+        <label>
+          第二循环
+          <select
+            value={cfg.secondLoopMode === "mirror" ? "mirror" : "asymmetric"}
+            onChange={(e) => patch({ secondLoopMode: e.target.value })}
+          >
+            <option value="asymmetric">非对称</option>
+            <option value="mirror">对称</option>
+          </select>
+        </label>
+      )}
       <CarryEditor detail={detail} stage={stage} onSaved={onSaved} />
     </span>
   );
