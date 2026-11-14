@@ -274,23 +274,26 @@ export interface TimeSlot {
 }
 
 const eachSlot = (...times: string[]): TimeSlot[] => times.map((time) => ({ time, cap: 1 }));
+/** 一格容两场：同一时刻允许两场同时开球（8/23 那次排期就有同刻开球）。 */
+const doubleSlot = (...times: string[]): TimeSlot[] => times.map((time) => ({ time, cap: 2 }));
 const cupDay = (): TimeSlot[] => [
   { time: "18:30", cap: 3 },
   { time: "21:00", cap: 2 },
 ];
 
 // 从 2026-08-23 那次排期的产物反推（见 docs/design-kickoff-scheduler.md §3.4）。
-// 冬春沿用秋季池（Q9）。杯赛只有 day 2/3（小组赛、淘汰赛前两轮）与 day 6（决赛）。
+// 冬春沿用秋季池，例外：冬季周末只排下午场（天冷、天黑早），三档各容两场（允许同刻开球）。
+// 杯赛只有 day 2/3（小组赛、淘汰赛前两轮）与 day 6（决赛）。
 const POOLS: Record<Competition, Partial<Record<Phase, Record<number, TimeSlot[]>>>> = {
   top: {
-    summer: { 5: eachSlot("20:00", "20:30"), 6: eachSlot("17:30", "19:30", "20:30"), 7: eachSlot("18:00", "20:00") },
+    summer: { 5: eachSlot("20:00", "20:30"), 6: eachSlot("17:30", "19:30", "20:30"), 7: doubleSlot("18:00", "20:00") },
     autumn: {
       5: eachSlot("19:30", "20:30"),
       6: eachSlot("12:30", "15:00", "17:30", "20:00"),
       7: eachSlot("14:00", "16:30", "20:00"),
     },
-    // 冬季：周末改下午场（天冷、天黑早），工作日仍晚间
-    winter: { 5: eachSlot("19:30", "20:30"), 6: eachSlot("14:00", "16:30"), 7: eachSlot("14:00", "16:30") },
+    // 冬季：周末改下午场（天冷、天黑早），工作日仍晚间；一轮 6 场，三档 × cap2 够放且有同刻开球余量
+    winter: { 5: eachSlot("19:30", "20:30"), 6: doubleSlot("12:30", "14:30", "16:30"), 7: doubleSlot("12:30", "14:30", "16:30") },
   },
   sub: {
     summer: { 5: eachSlot("19:30", "20:00"), 6: eachSlot("17:30", "19:00"), 7: eachSlot("18:00", "19:30") },
@@ -305,7 +308,7 @@ const POOLS: Record<Competition, Partial<Record<Phase, Record<number, TimeSlot[]
   },
 };
 
-/** 取某季某赛事的整张池子；冬季有独立池，春季回落到秋季（Q9）。 */
+/** 取某季某赛事的整张池子；冬季有独立池，春季回落到秋季。 */
 export function timePool(phase: Phase, competition: Competition): Record<number, TimeSlot[]> {
   const key: Phase = phase === "spring" ? "autumn" : phase;
   return POOLS[competition][key] ?? {};

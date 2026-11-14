@@ -104,15 +104,17 @@ S9,7,6,7,顶级联赛1,顶级联赛
 });
 
 describe("timePool", () => {
-  it("春季回落秋季池，冬季有独立池", () => {
+  it("春季回落秋季池，冬季独立（周末下午场，三档各容两场）", () => {
     expect(timePool("spring", "top")).toEqual(timePool("autumn", "top"));
     expect(timePool("spring", "sub")).toEqual(timePool("autumn", "sub"));
-    expect(timePool("winter", "top")[6]!.map((s) => s.time)).toEqual(["14:00", "16:30"]);
+    expect(timePool("winter", "top")[6]!.map((s) => s.time)).toEqual(["12:30", "14:30", "16:30"]);
+    expect(timePool("winter", "top")[6]!.every((s) => s.cap === 2)).toBe(true);
+    expect(timePool("winter", "top")[7]!.map((s) => s.time)).toEqual(["12:30", "14:30", "16:30"]);
     expect(timePool("winter", "sub")[7]!.map((s) => s.time)).toEqual(["14:00", "16:00"]);
     expect(timePool("winter", "cup")).toEqual(timePool("autumn", "cup"));
   });
 
-  it("杯赛按容量给批次，联赛每档 1 场", () => {
+  it("杯赛按容量给批次，联赛默认每档 1 场、实测同刻开球的档位容 2 场", () => {
     const cup = timePool("autumn", "cup")[2];
     expect(cup).toEqual([
       { time: "18:30", cap: 3 },
@@ -120,6 +122,8 @@ describe("timePool", () => {
     ]);
     const top = timePool("autumn", "top")[6];
     expect(top.every((s) => s.cap === 1)).toBe(true);
+    const summerSunday = timePool("summer", "top")[7];
+    expect(summerSunday.every((s) => s.cap === 2)).toBe(true);
   });
 });
 
