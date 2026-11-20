@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import ScheduleTab from "./ScheduleTab";
+import ScheduleSeasonTab from "./ScheduleSeasonTab";
 import KickoffTab from "./KickoffTab";
 import MatchesTab from "./MatchesTab";
 import StandingsTab from "./StandingsTab";
@@ -33,7 +34,7 @@ const TB_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "none", label: "不启用" },
 ];
 
-type Tab = "entries" | "schedule" | "kickoff" | "matches" | "standings" | "toplists" | "stats" | "settings";
+type Tab = "entries" | "season" | "schedule" | "kickoff" | "matches" | "standings" | "toplists" | "stats" | "settings";
 
 // 积分榜体检（GET /:id/standings-health，v5.8.0）：
 //  - pending 是硬信号：某阶段的后续处理（榜重算/晋级填位/下一阶段生成）没跑完的欠账；
@@ -81,12 +82,28 @@ export function TournamentManage() {
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [health, setHealth] = useState<StandingsHealth | null>(null);
+  // S4：赛季排期总览 → 点矩阵格下钻到单段 KickoffTab 的目标段（round_window.id）。
+  // 段可能属于别的赛事（全赛季矩阵跨赛事），下钻要把段属赛事带上，
+  // 不然 KickoffTab 还按当前赛事的 tid 拉窗口，跨赛事段永远 404。
+  const [drill, setDrill] = useState<{
+    segmentId: number;
+    tournamentId: number;
+    tournamentName: string;
+  } | null>(null);
   const [rebuildBusy, setRebuildBusy] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
+
+  // Low-8：下钻目标是「从赛季总览带进来的一次跳转」，不是永久选中态。
+  // 切赛事时旧 drill 一定失效（tid 变了，窗口清单换成另一个赛事的），
+  // 手动点回排期页也当作“重新进页”，不该继续沿用上一次的跨赛事段。
+  useEffect(() => {
+    setDrill(null);
+  }, [tournamentId]);
 
   async function reload() {
     try {
       setDetail(await api<TournamentDetailDTO>(`/api/admin/tournaments/${tournamentId}`));
+      setMissing(false);
     } catch {
       setMissing(true);
     }
@@ -232,6 +249,7 @@ export function TournamentManage() {
         {(
           [
             ["entries", `报名 (${detail.entries.length})`],
+            ["season", "赛季排期"],
             ["schedule", "编排"],
             ["kickoff", "排期"],
             ["matches", "比赛"],
@@ -244,7 +262,12 @@ export function TournamentManage() {
           <button
             key={key}
             className={`tab${tab === key ? " tab-active" : ""}`}
-            onClick={() => setTab(key)}
+            onClick={() => {
+              // Low-8：从赛季总览点“排期”是带 drill 的合法下钻；
+              // 从别的 tab 点回来则是手动进页，清掉旧 drill，回到默认第一个窗口。
+              if (key !== "kickoff") setDrill(null);
+              setTab(key);
+            }}
           >
             {label}
           </button>
@@ -252,8 +275,25 @@ export function TournamentManage() {
       </nav>
 
       {tab === "entries" && <EntriesTab detail={detail} reload={reload} />}
+      {tab === "season" && (
+        <ScheduleSeasonTab
+          key={detail.tournament.id}
+          detail={detail}
+          reload={reload}
+          onDrilldown={(segment) => {
+            setDrill({
+              segmentId: segment.id,
+              tournamentId: segment.tournamentId,
+              tournamentName: segment.tournamentName,
+            });
+            setTab("kickoff");
+          }}
+        />
+      )}
       {tab === "schedule" && <ScheduleTab detail={detail} reload={reload} />}
-      {tab === "kickoff" && <KickoffTab detail={detail} reload={reload} />}
+      {tab === "kickoff" && (
+        <KickoffTab key={detail.tournament.id} detail={detail} reload={reload} drill={drill} />
+      )}
       {tab === "matches" && <MatchesTab detail={detail} reload={reload} />}
       {tab === "standings" && <StandingsTab tournamentId={detail.tournament.id} />}
       {tab === "toplists" && <Toplists tid={detail.tournament.id} base="/api/admin" />}

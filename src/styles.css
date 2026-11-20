@@ -433,6 +433,13 @@ button.btn-ghost:hover:not(:disabled) {
 .page-head h2 {
   margin: 4px 0;
 }
+.btn-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .btn-col {
   display: flex;
   flex-direction: column;
@@ -4719,3 +4726,44 @@ button.add-stage {
 }
 .kickoff-editor .kickoff-num { width: 48px; }
 .kickoff-editor .kickoff-time { width: 72px; }
+
+/* ---------- 赛季排期总览页（S4）：状态灯 + 段格 + 三栏方案对比 ---------- */
+.season-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+.season-dot-green { background: #2f9e5f; }
+.season-dot-yellow { background: #d9a520; }
+.season-dot-red { background: #c0392b; }
+.season-dot-gray { background: #98a29b; }
+.seg-cell {
+  cursor: pointer;
+  padding: 4px 8px;
+  border: 1px solid var(--line, #2a3a2f);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+.seg-cell:hover:not(:disabled) { border-color: var(--pitch, #0e7a46); }
+.seg-cell:disabled { opacity: 0.55; cursor: not-allowed; }
+.season-cols { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.season-col {
+  flex: 1 1 230px;
+  min-width: 230px;
+  border: 1px solid var(--line, #2a3a2f);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.season-col h4 { margin: 0 0 8px; }
+.season-metric { display: flex; justify-content: space-between; font-size: 13px; margin: 3px 0; }
+.season-metric .v { font-family: var(--mono, monospace); }
+.season-metric .v.season-bad { color: #c0392b; font-weight: 700; }
+.season-viol { margin-top: 10px; }
+.season-viol summary { cursor: pointer; font-size: 13px; }
