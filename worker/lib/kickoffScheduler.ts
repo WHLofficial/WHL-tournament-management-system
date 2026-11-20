@@ -81,6 +81,20 @@ export function formatTime(minutes: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+/**
+ * 确定性伪随机（mulberry32）：赛季排期的段内局部搜索用。
+ * 固定 seed → 固定随机序列，同一份库态重复求解结果一致（可复现验收靠它）。
+ */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** 拆天：前半放 day_start，后半放 day_end；窗口只有一天就全放 day_start */
 export function splitByDay<T extends { slot: number }>(
   matches: T[],

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv, Bindings } from "./env";
+import { SeasonRevisionError } from "./lib/kickoffSeason";
 import { attachUser } from "./middleware/auth";
 import { runRosterSync } from "./lib/clubRoster";
 import { runHistoryBackfill } from "./lib/playerHistory";
@@ -50,6 +51,9 @@ app.notFound((c) => c.json({ error: "not_found" }, 404));
 // 用户报过来也查不出是哪一步炸的（2026-09-23 那次只能靠反查 D1 才定位到外键）。
 // 这里统一成与业务错误同形（error 机器码 + message 中文），并把方法/路径/堆栈写进日志。
 app.onError((err, c) => {
+  if (err instanceof SeasonRevisionError) {
+    return c.json({ error: err.code, message: err.message }, 409);
+  }
   console.error(
     `[error] ${c.req.method} ${c.req.path}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
   );

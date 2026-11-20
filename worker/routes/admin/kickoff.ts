@@ -1,6 +1,8 @@
 // 排期器管理端接口（P3-B）：窗口粒度的预览 / 提交 / 公布 / 解锁 / 回滚，以及单场改期。
 // 排期算法在 worker/lib/kickoffScheduler.ts（纯函数），这里只负责取数、校验、落库与留痕。
 // 口径：时刻是虚拟标签（周/天/HH:MM），不换算真实日期；一场比赛的「有赛果」= 不允许再排。
+// S3：窗口体检入口（下钻 / 预览 / 提交 / 单场改期）内部改走赛季级校验器 validateSeason，
+// 下钻视图与提交门槛能看见跨窗口、跨赛事的相邻场冲突；窗口级 scheduleWindow 冲突照旧随快照留档。
 import { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { auditStmt } from "../../lib/audit";
@@ -10,11 +12,20 @@ import {
   absHours,
   parseTime,
   scheduleWindow,
-  validatePlacement,
   type History,
   type SchedMatch,
   type Slot,
 } from "../../lib/kickoffScheduler";
+import {
+  getSeasonRevisionBase,
+  loadSeasonData,
+  loadSeasonRules,
+  runSeasonRevisionBatch,
+  validateSeason,
+  type SeasonData,
+  type SeasonPlacement,
+  type SeasonViolation,
+} from "../../lib/kickoffSeason";
 
 const app = new Hono<AppEnv>();
 
@@ -76,10 +87,6 @@ function competitionOf(name: string): Competition {
   return "top";
 }
 
-function placeholders(n: number): string {
-  return Array.from({ length: n }, () => "?").join(", ");
-}
-
 async function loadWindow(
   db: D1Database,
   tournamentId: number,
@@ -137,12 +144,12 @@ async function loadWindowMatches(
   if (stageIds.length === 0) return [];
   const matchRound = comp === "sub" && window.stream === "playoff" && window.round === 0 ? 1 : window.round;
   const legSql = window.leg == null ? "m.leg IS NULL" : "m.leg = ?";
-  const args: unknown[] = [...stageIds, matchRound];
+  const args: unknown[] = [JSON.stringify(stageIds), matchRound];
   if (window.leg != null) args.push(window.leg);
   const { results } = await db
     .prepare(
       `${MATCH_SELECT}
-        WHERE m.stage_id IN (${placeholders(stageIds.length)}) AND m.round = ? AND ${legSql}
+        WHERE m.stage_id IN (SELECT value FROM json_each(?)) AND m.round = ? AND ${legSql}
         ORDER BY m.slot, m.id`
     )
     .bind(...args)
@@ -260,10 +267,10 @@ async function loadHistory(
          JOIN stage s ON s.id = m.stage_id
          LEFT JOIN entry he ON he.id = m.home_entry_id
          LEFT JOIN entry ae ON ae.id = m.away_entry_id
-        WHERE s.tournament_id IN (${placeholders(tids.length)})
+        WHERE s.tournament_id IN (SELECT value FROM json_each(?))
           AND m.kickoff_week IS NOT NULL AND m.kickoff_day IS NOT NULL AND m.kickoff_time IS NOT NULL`
     )
-    .bind(...tids)
+    .bind(JSON.stringify(tids))
     .all<{ week: number; day: number; time: string; home_id: number | null; away_id: number | null }>();
   const history: History = new Map();
   for (const row of rows) {
@@ -363,6 +370,111 @@ function lockReason(matches: MatchRow[]): string | null {
   return null;
 }
 
+// ---------- 赛季级校验（S3） ----------
+
+/** 「假想落库后」的单场时刻，用于整季 prospective 体检。 */
+type SeasonOverride = {
+  matchId: number;
+  /** null = 把该场的时刻清掉（PATCH 清空路径）；week/day/time 一起给才排得上 */
+  week: number | null;
+  day: number | null;
+  time: string | null;
+  override: boolean;
+  reason?: string | null;
+};
+
+/** 整季 placements 换上 overrides（不动库）：null 时刻的 override 表示「清空该场」。 */
+function applySeasonOverrides(data: SeasonData, overrides: SeasonOverride[]): SeasonPlacement[] {
+  if (overrides.length === 0) return data.placements;
+  const byId = new Map(overrides.map((o) => [o.matchId, o]));
+  const matchById = new Map(data.matches.map((m) => [m.id, m]));
+  const placements: SeasonPlacement[] = data.placements.filter((p) => !byId.has(p.matchId));
+  for (const o of overrides) {
+    if (o.week == null || o.day == null || o.time == null) continue; // 清空：上面 filter 已经摘掉它
+    const m = matchById.get(o.matchId);
+    if (!m) continue;
+    placements.push({
+      matchId: o.matchId,
+      segmentId: m.segmentId,
+      week: o.week,
+      day: o.day,
+      time: o.time,
+      override: o.override,
+      reason: o.reason ?? null,
+      homeTeamId: m.homeTeamId,
+      awayTeamId: m.awayTeamId,
+    });
+  }
+  placements.sort((a, b) => a.matchId - b.matchId);
+  return placements;
+}
+
+/** 换上 overrides 后的整季状态：写路径（commit / PATCH）落 revision 用的就是这个。 */
+async function seasonAuditState(
+  db: D1Database,
+  seasonId: number,
+  overrides: SeasonOverride[]
+): Promise<{
+  data: SeasonData;
+  placements: SeasonPlacement[];
+  violations: SeasonViolation[];
+  baseRevision: number;
+} | null> {
+  // 先记版本基线，再读全季状态：后面写库时如果别人插了 revision，乐观锁会整批回滚。
+  const baseRevision = await getSeasonRevisionBase(db, seasonId);
+  const data = await loadSeasonData(db, seasonId);
+  if (!data.season) return null;
+  const rules = await loadSeasonRules(db, seasonId);
+  const placements = applySeasonOverrides(data, overrides);
+  const violations = validateSeason(
+    { segments: data.segments, placements, pools: data.pools, season: data.season },
+    rules
+  );
+  return { data, placements, violations, baseRevision };
+}
+
+/** 整季 prospective 体检：全季 placements 换上 overrides 再跑 validateSeason。 */
+async function prospectiveSeasonViolations(
+  db: D1Database,
+  seasonId: number,
+  overrides: SeasonOverride[]
+): Promise<SeasonViolation[]> {
+  const state = await seasonAuditState(db, seasonId, overrides);
+  return state ? state.violations : [];
+}
+
+/**
+ * 从整季违规里挑与本窗口相关的：
+ *   - 直接挂在本窗口场次上的（matchId 在窗口内）；
+ *   - 本段容量超限（matchId=0 + segmentId）；
+ *   - 同队间隔类的另一条腿在本窗口（relatedMatchId）——挪本窗口那场能解开，该卡。
+ * 其余的（两边都不在本窗口的预存硬冲突，比如 PATCH 带理由改出去的场次与历史脏数据）
+ * 本窗口重排修不了，不卡在这里；真解不开的用 commit 的 reason 通道放行。
+ */
+function windowRelatedViolations(
+  violations: SeasonViolation[],
+  window: WindowRow,
+  matches: Array<{ id: number }>
+): SeasonViolation[] {
+  const matchIds = new Set(matches.map((m) => m.id));
+  return violations.filter((v) => {
+    if (v.matchId > 0 && matchIds.has(v.matchId)) return true;
+    if (v.matchId === 0 && v.segmentId === window.id) return true;
+    return v.matchId > 0 && v.relatedMatchId != null && matchIds.has(v.relatedMatchId);
+  });
+}
+
+/** 把本窗口提案换算成整季 overrides（引擎排出的场一律非 override）。 */
+function placesAsOverrides(places: Placed[]): SeasonOverride[] {
+  return places.map((p) => ({
+    matchId: p.matchId,
+    week: p.week,
+    day: p.day,
+    time: p.time,
+    override: false,
+  }));
+}
+
 // ---------- 路由 ----------
 
 // GET /tournaments/:id/windows —— 赛历窗口清单（排期页的左侧列表）
@@ -382,6 +494,7 @@ app.get("/:id/windows", async (c) => {
     const matches = await loadWindowMatches(c.env.DB, w, competitionOf(w.tournament_name));
     windows.push({
       id: w.id,
+      seasonId: w.season_id, // S4：赛季总览页靠它从赛事跳到赛季（round_window.season_id）
       stream: w.stream,
       round: w.round,
       leg: w.leg,
@@ -405,19 +518,11 @@ app.get("/:id/windows/:wid/schedule", async (c) => {
   const window = await loadWindow(c.env.DB, tid, wid);
   if (!window) return c.json({ message: "窗口不存在" }, 404);
   const plan = await buildPlan(c.env.DB, window);
-  const violations = validatePlacement(
+  // S3：下钻视图内部改走赛季级校验器——能看见跨窗口/跨赛事的相邻场冲突
+  const violations = windowRelatedViolations(
+    await prospectiveSeasonViolations(c.env.DB, window.season_id, []),
+    window,
     plan.matches
-      .filter((m) => m.kickoff_week != null && m.kickoff_day != null && m.kickoff_time != null)
-      .map((m) => ({
-        id: m.id,
-        slot: m.slot,
-        homeTeamId: m.home_team_id,
-        awayTeamId: m.away_team_id,
-        week: m.kickoff_week!,
-        day: m.kickoff_day!,
-        time: m.kickoff_time!,
-      })),
-    { week: window.week, dayStart: plan.poolView.dayStart, dayEnd: plan.poolView.dayEnd, pool: plan.poolView.pool }
   );
   return c.json({
     window: {
@@ -453,21 +558,39 @@ app.post("/:id/windows/:wid/schedule/preview", async (c) => {
   const solved = solve(plan);
   const places = toPlaced(plan, solved.assignments);
   const conflicts = solved.conflicts;
-  const hard = conflicts.filter((x) => x.level === "hard");
+  // S3：提交门槛改看整季体检（只看与本窗口相关的违规，别的段的烂账不卡这里）
+  const seasonViolations = windowRelatedViolations(
+    await prospectiveSeasonViolations(c.env.DB, window.season_id, placesAsOverrides(places)),
+    window,
+    plan.matches
+  );
+  const placedIds = new Set(places.map((p) => p.matchId));
+  const unplaced = plan.schedMatches.filter((m) => !placedIds.has(m.id)).map((m) => m.id);
+  // 窗口级 hard（档位已满/无可用档）和整季 hard 都必须拦；否则会把半排窗口
+  // 当成功提交，revision 里也只看得到已落档的场次。
+  const hard = [
+    ...seasonViolations.filter((x) => x.level === "hard"),
+    ...conflicts.filter((x) => x.level === "hard"),
+  ];
   return c.json({
     proposalHash: await hashProposal(places),
     matches: toDto(plan.matches, places),
     conflicts,
-    canCommit: hard.length === 0,
+    seasonViolations,
+    unplaced,
+    canCommit: hard.length === 0 && unplaced.length === 0,
     unscheduled: plan.matches.filter((m) => m.home_team_id == null || m.away_team_id == null).map((m) => m.id),
   });
 });
 
 // POST /tournaments/:id/windows/:wid/schedule/commit —— 按预览指纹落库
+// body: { proposalHash, reason? }。reason 是硬冲突的放行通道：与本窗口相关的硬冲突
+// 无解时（比如对面那场是带理由改出去的 override、或者历史脏数据），写了 reason 照常提交，
+// 冲突清单与理由进审计和版本流——不写就 422，别把人锁死在旧窗口上。
 app.post("/:id/windows/:wid/schedule/commit", async (c) => {
   const tid = Number(c.req.param("id"));
   const wid = Number(c.req.param("wid"));
-  const body = (await c.req.json().catch(() => null)) as { proposalHash?: string } | null;
+  const body = (await c.req.json().catch(() => null)) as { proposalHash?: string; reason?: string } | null;
   if (!body?.proposalHash) return c.json({ message: "缺少 proposalHash" }, 400);
   const window = await loadWindow(c.env.DB, tid, wid);
   if (!window) return c.json({ message: "窗口不存在" }, 404);
@@ -482,18 +605,52 @@ app.post("/:id/windows/:wid/schedule/commit", async (c) => {
     return c.json({ message: "预览已过期（窗口数据或历史变了），请重新预览" }, 409);
 
   const conflicts = solved.conflicts;
-  const hard = conflicts.filter((x) => x.level === "hard");
-  if (hard.length > 0)
-    return c.json({ message: "存在硬冲突，不能提交", conflicts: hard }, 422);
+  // S3：提交门槛改看整季体检（同 preview 口径）；窗口级 conflicts 照旧随快照留档
+  const state = await seasonAuditState(c.env.DB, window.season_id, placesAsOverrides(places));
+  if (!state) return c.json({ message: "赛季不存在" }, 404);
+  const seasonViolations = windowRelatedViolations(state.violations, window, plan.matches);
+  const placedIds = new Set(places.map((p) => p.matchId));
+  const unplaced = plan.schedMatches.filter((m) => !placedIds.has(m.id)).map((m) => m.id);
+  if (unplaced.length > 0)
+    return c.json(
+      { message: `窗口内还有 ${unplaced.length} 场无法落档，不能提交半排窗口`, unplaced },
+      409
+    );
+  const hard = [
+    ...seasonViolations.filter((x) => x.level === "hard"),
+    ...conflicts.filter((x) => x.level === "hard"),
+  ];
+  const bypassReason = typeof body.reason === "string" ? body.reason.trim() : "";
+  if (hard.length > 0 && !bypassReason)
+    return c.json({ message: "存在硬冲突，不能提交（确认无解可带 reason 放行）", conflicts: hard }, 422);
 
   const user = c.get("user")!;
-  const stmts = places.map((p) =>
-    c.env.DB.prepare(
-      `UPDATE match SET kickoff_week = ?, kickoff_day = ?, kickoff_time = ?,
-              kickoff_override = 0, kickoff_reason = NULL
-        WHERE id = ?`
-    ).bind(p.week, p.day, p.time, p.matchId)
+  // High-2：整窗几十上百场逐条 UPDATE 会撞 D1 batch 上限。改成一次 json_each 批量 UPDATE。
+  const updateJson = JSON.stringify(
+    places.map((p) => ({
+      matchId: p.matchId,
+      week: p.week,
+      day: p.day,
+      time: p.time,
+    }))
   );
+  const stmts: D1PreparedStatement[] = [
+    c.env.DB
+      .prepare(
+        `UPDATE match AS m
+            SET kickoff_week = CAST(json_extract(j.value, '$.week') AS INTEGER),
+                kickoff_day = CAST(json_extract(j.value, '$.day') AS INTEGER),
+                kickoff_time = json_extract(j.value, '$.time'),
+                kickoff_override = 0,
+                kickoff_reason = NULL
+           FROM json_each(?) AS j
+          WHERE m.id = CAST(json_extract(j.value, '$.matchId') AS INTEGER)
+            AND m.status = 'pending'
+            AND m.score_home IS NULL
+            AND m.score_away IS NULL`
+      )
+      .bind(updateJson),
+  ];
   stmts.push(
     c.env.DB.prepare(
       `INSERT INTO schedule_snapshot (window_id, payload, created_by) VALUES (?, ?, ?)`
@@ -505,12 +662,43 @@ app.post("/:id/windows/:wid/schedule/commit", async (c) => {
       user.id,
       "kickoff_commit",
       window.id,
-      { tournamentId: tid, week: window.week, count: places.length, conflicts: conflicts.length },
+      {
+        tournamentId: tid,
+        week: window.week,
+        count: places.length,
+        conflicts: conflicts.length,
+        ...(bypassReason ? { reason: bypassReason, bypassedHard: hard.length } : {}),
+      },
       "round_window"
     )
   );
-  await c.env.DB.batch(stmts);
-  return c.json({ ok: true, count: places.length, conflicts });
+  // 设计 §4.4 / 计划第 12 行：commit / publish / restore / PATCH 都记 revision。
+  // 版本语句与场次写库同一个 db.batch，落库即落账，不会出现「场次提交了、版本流断档」。
+  const legText = window.leg == null ? "" : ` 第${window.leg}回合`;
+  const { revision, businessResults } = await runSeasonRevisionBatch(
+    c.env.DB,
+    window.season_id,
+    state.placements,
+    {
+      createdBy: user.name,
+      actorUserId: user.id,
+      status: "committed",
+      note: `旧窗口提交：第 ${window.week} 周 ${window.stream} 第${window.round}轮${legText}`,
+      violations: state.violations,
+      totalMatches: state.data.matches.length,
+      unmatchedMatchIds: state.placements
+        .filter((p) => p.segmentId == null)
+        .map((p) => p.matchId),
+    },
+    stmts,
+    1,
+    [places.length],
+    state.baseRevision
+  );
+  if ((businessResults[0]?.meta?.changes ?? 0) !== places.length) {
+    return c.json({ message: "窗口内场次已被并发修改，请重新预览" }, 409);
+  }
+  return c.json({ ok: true, count: places.length, conflicts, revision });
 });
 
 // DELETE /tournaments/:id/windows/:wid/schedule —— 清空该窗口的时刻（未公布、未开赛）
@@ -525,38 +713,141 @@ app.delete("/:id/windows/:wid/schedule", async (c) => {
   if (blocked) return c.json({ message: blocked }, 409);
   const user = c.get("user")!;
   const ids = plan.matches.map((m) => m.id);
-  const stmts = ids.map((id) =>
-    c.env.DB.prepare(
-      `UPDATE match SET kickoff_week = NULL, kickoff_day = NULL, kickoff_time = NULL,
-              kickoff_override = 0, kickoff_reason = NULL
-        WHERE id = ?`
-    ).bind(id)
+  const idsJson = JSON.stringify(ids.map((id) => ({ matchId: id })));
+  const stmts: D1PreparedStatement[] = [
+    c.env.DB
+      .prepare(
+        `UPDATE match AS m
+            SET kickoff_week = NULL,
+                kickoff_day = NULL,
+                kickoff_time = NULL,
+                kickoff_override = 0,
+                kickoff_reason = NULL
+           FROM json_each(?) AS j
+          WHERE m.id = CAST(json_extract(j.value, '$.matchId') AS INTEGER)
+            AND m.status = 'pending'
+            AND m.score_home IS NULL
+            AND m.score_away IS NULL`
+      )
+      .bind(idsJson),
+    auditStmt(c.env.DB, user.id, "kickoff_clear", window.id, { tournamentId: tid, count: ids.length }, "round_window"),
+  ];
+
+  // Medium-3：清空也是一次写路径，版本流同样要记；Placement 用「清空后的全季剩余场次」。
+  const state = await seasonAuditState(c.env.DB, window.season_id, []);
+  if (!state) return c.json({ message: "赛季不存在" }, 404);
+  const idsSet = new Set(ids);
+  const placementsAfterClear = state.placements.filter((p) => !idsSet.has(p.matchId));
+  const rules = await loadSeasonRules(c.env.DB, window.season_id);
+  // Important-11：版本里记的必须是清空后的真实体检，不是清空前的旧 conflict 快照。
+  const violationsAfterClear = validateSeason(
+    {
+      segments: state.data.segments,
+      placements: placementsAfterClear,
+      pools: state.data.pools,
+      season: state.data.season,
+    },
+    rules
   );
-  stmts.push(
-    auditStmt(c.env.DB, user.id, "kickoff_clear", window.id, { tournamentId: tid, count: ids.length }, "round_window")
+  const { revision, businessResults } = await runSeasonRevisionBatch(
+    c.env.DB,
+    window.season_id,
+    placementsAfterClear,
+    {
+      createdBy: user.name,
+      actorUserId: user.id,
+      status: "committed",
+      note: `旧窗口清空：第 ${window.week} 周 ${window.stream} 第${window.round}轮`,
+      violations: violationsAfterClear,
+      totalMatches: state.data.matches.length,
+      unmatchedMatchIds: placementsAfterClear.filter((p) => p.segmentId == null).map((p) => p.matchId),
+    },
+    stmts,
+    1,
+    [ids.length],
+    state.baseRevision
   );
-  await c.env.DB.batch(stmts);
-  return c.json({ ok: true, cleared: ids.length });
+  if ((businessResults[0]?.meta?.changes ?? 0) !== ids.length) {
+    return c.json({ message: "窗口内场次已被并发修改，请重新预览" }, 409);
+  }
+  return c.json({ ok: true, cleared: ids.length, revision });
 });
 
 // POST /tournaments/:id/windows/:wid/publish —— 公布即锁定
 app.post("/:id/windows/:wid/publish", async (c) => {
   const tid = Number(c.req.param("id"));
   const wid = Number(c.req.param("wid"));
+  const body = (await c.req.json().catch(() => null)) as { reason?: string } | null;
+  const bypassReason = typeof body?.reason === "string" ? body.reason.trim() : "";
   const window = await loadWindow(c.env.DB, tid, wid);
   if (!window) return c.json({ message: "窗口不存在" }, 404);
   if (window.locked_at) return c.json({ ok: true, lockedAt: window.locked_at });
-  const plan = await buildPlan(c.env.DB, window);
-  const missing = plan.matches.filter((m) => m.kickoff_week == null || m.kickoff_time == null);
-  if (missing.length > 0)
-    return c.json({ message: `还有 ${missing.length} 场没有时刻`, matchIds: missing.map((m) => m.id) }, 409);
   const now = new Date().toISOString();
   const user = c.get("user")!;
-  await c.env.DB.batch([
-    c.env.DB.prepare(`UPDATE round_window SET locked_at = ? WHERE id = ?`).bind(now, window.id),
-    auditStmt(c.env.DB, user.id, "kickoff_publish", window.id, { tournamentId: tid, week: window.week }, "round_window"),
-  ]);
-  return c.json({ ok: true, lockedAt: now });
+  // R4：旧窗口 publish 只读一次全季状态，缺时刻/可排场次/硬冲突都从 state.data 派生。
+  // 不能先用 buildPlan 读一次、再用 seasonAuditState 读一次，否则两次读之间被 PATCH/clear
+  // 改掉时，plan 的场次元数据会和 state 的 violations 混用。
+  const state = await seasonAuditState(c.env.DB, window.season_id, []);
+  if (!state) return c.json({ message: "赛季不存在" }, 404);
+  const windowMatches = state.data.matches.filter((m) => m.segmentId === window.id);
+  const playable = windowMatches.filter((m) => m.homeTeamId != null && m.awayTeamId != null);
+  if (playable.length === 0)
+    return c.json({ message: "窗口内没有可排的场次（对手未定）" }, 409);
+  const stateMissing = playable.filter(
+    (m) => m.kickoffWeek == null || m.kickoffDay == null || m.kickoffTime == null
+  );
+  if (stateMissing.length > 0) {
+    return c.json(
+      { message: `还有 ${stateMissing.length} 场没有时刻`, matchIds: stateMissing.map((m) => m.id) },
+      409
+    );
+  }
+  // Important-10：旧窗口公布同样不能绕过整季硬冲突；确有无解时用 reason 放行并留痕。
+  const seasonViolations = windowRelatedViolations(state.violations, window, windowMatches);
+  const hard = seasonViolations.filter((v) => v.level === "hard");
+  if (hard.length > 0 && !bypassReason) {
+    return c.json(
+      { message: "存在硬冲突，不能公布（确认无解可带 reason 放行）", violations: hard },
+      422
+    );
+  }
+  const { revision, businessResults } = await runSeasonRevisionBatch(
+    c.env.DB,
+    window.season_id,
+    state.placements,
+    {
+      createdBy: user.name,
+      actorUserId: user.id,
+      status: "published",
+      lockedAt: now,
+      note: `旧窗口公布：第 ${window.week} 周 ${window.stream} 第${window.round}轮`,
+      violations: state.violations,
+      totalMatches: state.data.matches.length,
+      unmatchedMatchIds: state.placements.filter((p) => p.segmentId == null).map((p) => p.matchId),
+    },
+    [
+      c.env.DB.prepare(`UPDATE round_window SET locked_at = ? WHERE id = ? AND locked_at IS NULL`).bind(now, window.id),
+      auditStmt(
+        c.env.DB,
+        user.id,
+        "kickoff_publish",
+        window.id,
+        {
+          tournamentId: tid,
+          week: window.week,
+          ...(bypassReason ? { reason: bypassReason, bypassedHard: hard.length } : {}),
+        },
+        "round_window"
+      ),
+    ],
+    1,
+    [1],
+    state.baseRevision
+  );
+  if ((businessResults[0]?.meta?.changes ?? 0) !== 1) {
+    return c.json({ message: "窗口状态已被并发修改，请刷新后重试" }, 409);
+  }
+  return c.json({ ok: true, lockedAt: now, revision });
 });
 
 // POST /tournaments/:id/windows/:wid/unlock —— 解锁（必须给理由）
@@ -564,7 +855,7 @@ app.post("/:id/windows/:wid/unlock", async (c) => {
   const tid = Number(c.req.param("id"));
   const wid = Number(c.req.param("wid"));
   const body = (await c.req.json().catch(() => null)) as { reason?: string } | null;
-  const reason = body?.reason?.trim();
+  const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
   if (!reason) return c.json({ message: "解锁要写理由" }, 400);
   const window = await loadWindow(c.env.DB, tid, wid);
   if (!window) return c.json({ message: "窗口不存在" }, 404);
@@ -597,16 +888,56 @@ app.post("/:id/windows/:wid/restore/:snapshotId", async (c) => {
   const blocked = lockReason(plan.matches);
   if (blocked) return c.json({ message: blocked }, 409);
   const user = c.get("user")!;
-  const stmts = places.map((p) =>
-    c.env.DB.prepare(
-      `UPDATE match SET kickoff_week = ?, kickoff_day = ?, kickoff_time = ? WHERE id = ?`
-    ).bind(p.week, p.day, p.time, p.matchId)
+  // High-2 + Medium-3：回滚也是整窗写路径，改成 json_each 一条 UPDATE，并补 revision。
+  // Important-12：旧快照没有 override/reason；回滚写库统一归零，和 revision 里的
+  // placesAsOverrides 口径一致，避免「DB 还留着 override、版本里却没有」。
+  const updateJson = JSON.stringify(
+    places.map((p) => ({ matchId: p.matchId, week: p.week, day: p.day, time: p.time }))
   );
-  stmts.push(
-    auditStmt(c.env.DB, user.id, "kickoff_restore", window.id, { tournamentId: tid, snapshotId: sid }, "round_window")
+  const stmts: D1PreparedStatement[] = [
+    c.env.DB
+      .prepare(
+        `UPDATE match AS m
+            SET kickoff_week = CAST(json_extract(j.value, '$.week') AS INTEGER),
+                kickoff_day = CAST(json_extract(j.value, '$.day') AS INTEGER),
+                kickoff_time = json_extract(j.value, '$.time'),
+                kickoff_override = 0,
+                kickoff_reason = NULL
+           FROM json_each(?) AS j
+          WHERE m.id = CAST(json_extract(j.value, '$.matchId') AS INTEGER)
+            AND m.status = 'pending'
+            AND m.score_home IS NULL
+            AND m.score_away IS NULL`
+      )
+      .bind(updateJson),
+    auditStmt(c.env.DB, user.id, "kickoff_restore", window.id, { tournamentId: tid, snapshotId: sid }, "round_window"),
+  ];
+
+  // 版本流按「回滚后的整季 placements」落成 restored，和业务写库同一 batch。
+  const state = await seasonAuditState(c.env.DB, window.season_id, placesAsOverrides(places));
+  if (!state) return c.json({ message: "赛季不存在" }, 404);
+  const { revision, businessResults } = await runSeasonRevisionBatch(
+    c.env.DB,
+    window.season_id,
+    state.placements,
+    {
+      createdBy: user.name,
+      actorUserId: user.id,
+      status: "restored",
+      note: `旧窗口回滚：快照 #${sid}`,
+      violations: state.violations,
+      totalMatches: state.data.matches.length,
+      unmatchedMatchIds: state.placements.filter((p) => p.segmentId == null).map((p) => p.matchId),
+    },
+    stmts,
+    1,
+    [places.length],
+    state.baseRevision
   );
-  await c.env.DB.batch(stmts);
-  return c.json({ ok: true, restored: places.length, snapshotAt: snap.created_at });
+  if ((businessResults[0]?.meta?.changes ?? 0) !== places.length) {
+    return c.json({ message: "快照内场次已被并发修改，请重新回滚" }, 409);
+  }
+  return c.json({ ok: true, restored: places.length, snapshotAt: snap.created_at, revision });
 });
 
 // PATCH /tournaments/:id/matches/:matchId/kickoff —— 单场改期（补赛/转播调整）
@@ -653,21 +984,70 @@ app.patch("/:id/matches/:matchId/kickoff", async (c) => {
 
   const user = c.get("user")!;
   if (clearing) {
-    await c.env.DB.batch([
+    // 清空也是一次改期事件：照样记 revision（设计 §6：单场改期也记录到 revision 事件流），
+    // 版本里的 placements 直接摘掉该场。
+    const clearState = await seasonAuditState(c.env.DB, window.season_id, [
+      { matchId, week: null, day: null, time: null, override: false, reason: null },
+    ]);
+    const clearStmts: D1PreparedStatement[] = [
       c.env.DB.prepare(
         `UPDATE match SET kickoff_week = NULL, kickoff_day = NULL, kickoff_time = NULL,
-                kickoff_override = 0, kickoff_reason = NULL WHERE id = ?`
+                kickoff_override = 0, kickoff_reason = NULL
+          WHERE id = ? AND status = 'pending' AND score_home IS NULL AND score_away IS NULL`
       ).bind(matchId),
       auditStmt(c.env.DB, user.id, "kickoff_patch_clear", matchId, { tournamentId: tid }, "round_window"),
-    ]);
-    return c.json({ ok: true, cleared: true, warnings: [] });
+    ];
+    let clearedRevision: number | null = null;
+    if (clearState) {
+      const { revision, businessResults } = await runSeasonRevisionBatch(
+        c.env.DB,
+        window.season_id,
+        clearState.placements,
+        {
+          createdBy: user.name,
+          actorUserId: user.id,
+          status: "committed",
+          note: `单场改期清除：match ${matchId}`,
+          violations: clearState.violations,
+          totalMatches: clearState.data.matches.length,
+          unmatchedMatchIds: clearState.placements
+            .filter((p) => p.segmentId == null)
+            .map((p) => p.matchId),
+        },
+        clearStmts,
+        1,
+        [1],
+        clearState.baseRevision
+      );
+      if ((businessResults[0]?.meta?.changes ?? 0) !== 1) {
+        return c.json({ message: "场次已开赛或已被并发修改，请刷新后重试" }, 409);
+      }
+      clearedRevision = revision;
+    } else {
+      await c.env.DB.batch(clearStmts);
+    }
+    return c.json({ ok: true, cleared: true, warnings: [], revision: clearedRevision });
   }
 
   const { week, day, time } = body as { week?: number; day?: number; time?: string };
   if (!Number.isInteger(week) || !Number.isInteger(day) || typeof time !== "string")
     return c.json({ message: "week / day / time 要一起给" }, 400);
   if (!/^\d{2}:\d{2}$/.test(time)) return c.json({ message: "time 用 HH:MM" }, 400);
+  try {
+    parseTime(time);
+  } catch {
+    return c.json({ message: "time 越界，应在 00:00–23:59" }, 400);
+  }
   if (day! < 1 || day! > 7) return c.json({ message: "day 只能是 1–7" }, 400);
+  if (body.reason != null && typeof body.reason !== "string")
+    return c.json({ message: "reason 要是字符串" }, 400);
+  const reason = typeof body.reason === "string" ? body.reason.trim() : null;
+  const season = await c.env.DB.prepare(`SELECT weeks FROM season WHERE id = ?`)
+    .bind(window.season_id)
+    .first<{ weeks: number }>();
+  if (!season) return c.json({ message: "赛季不存在" }, 404);
+  if (week! < 1 || week! > season.weeks)
+    return c.json({ message: `week 应在 1–${season.weeks}` }, 400);
 
   const comp = competitionOf(window.tournament_name);
   const poolView = await poolFor(c.env.DB, window, comp);
@@ -678,24 +1058,82 @@ app.patch("/:id/matches/:matchId/kickoff", async (c) => {
   const slots = poolView.pool[day!] ?? [];
   const slot = slots.find((s) => s.time === time);
   if (!slot) warnings.push(`时刻不在池子里（第 ${day} 天可选：${slots.map((s) => s.time).join(" / ") || "无"}）`);
-  if (warnings.length > 0 && !body.reason?.trim())
-    return c.json({ message: "越窗改期要写理由", warnings }, 400);
+  // 越窗（周次/天数/池子）要不要理由，按旧规矩；下面的整季体检单独算
+  const poolWarningCount = warnings.length;
 
-  await c.env.DB.batch([
+  // S3：整季体检——改这场会牵动跨窗口/跨赛事的相邻场。
+  // 口径对齐 commit gate：只有 hard 才强制写理由，soft / report 只是警告；
+  // 越窗照旧要理由（不受此影响）。seasonAuditState 顺便带回改期后的整季 placements，
+  // 落 revision 用（设计 §4.4：PATCH 也记 revision）。
+  const state = await seasonAuditState(c.env.DB, window.season_id, [
+    { matchId, week: week!, day: day!, time, override: true, reason },
+  ]);
+  const seasonViolations = state ? state.violations : [];
+  const teamIds = new Set<number>();
+  if (row.home_team_id != null) teamIds.add(row.home_team_id);
+  if (row.away_team_id != null) teamIds.add(row.away_team_id);
+  const involved = seasonViolations.filter(
+    (v) =>
+      (v.matchId > 0 && (v.matchId === matchId || (v.teamId != null && teamIds.has(v.teamId)))) ||
+      (v.matchId === 0 && v.segmentId === window.id)
+  );
+  for (const v of involved) {
+    warnings.push(
+      v.level === "hard"
+        ? `硬冲突：${v.reason}`
+        : v.level === "soft"
+          ? `软冲突：${v.reason}`
+          : `提示：${v.reason}`
+    );
+  }
+  if ((poolWarningCount > 0 || involved.some((v) => v.level === "hard")) && !reason)
+    return c.json({ message: "越窗或整季冲突的改期要写理由", warnings }, 400);
+
+  const patchStmts: D1PreparedStatement[] = [
     c.env.DB.prepare(
       `UPDATE match SET kickoff_week = ?, kickoff_day = ?, kickoff_time = ?,
-              kickoff_override = 1, kickoff_reason = ? WHERE id = ?`
-    ).bind(week, day, time, body.reason?.trim() ?? null, matchId),
+              kickoff_override = 1, kickoff_reason = ?
+        WHERE id = ? AND status = 'pending' AND score_home IS NULL AND score_away IS NULL`
+    ).bind(week, day, time, reason, matchId),
     auditStmt(
       c.env.DB,
       user.id,
       "kickoff_patch",
       matchId,
-      { tournamentId: tid, week, day, time, reason: body.reason ?? null, warnings },
+      { tournamentId: tid, week, day, time, reason, warnings },
       "round_window"
     ),
-  ]);
-  return c.json({ ok: true, warnings });
+  ];
+  let patchedRevision: number | null = null;
+  if (state) {
+    const { revision, businessResults } = await runSeasonRevisionBatch(
+      c.env.DB,
+      window.season_id,
+      state.placements,
+      {
+        createdBy: user.name,
+        actorUserId: user.id,
+        status: "committed",
+        note: `单场改期：match ${matchId} → 第 ${week} 周第 ${day} 天 ${time}`,
+        violations: state.violations,
+        totalMatches: state.data.matches.length,
+        unmatchedMatchIds: state.placements
+          .filter((p) => p.segmentId == null)
+          .map((p) => p.matchId),
+      },
+      patchStmts,
+      1,
+      [1],
+      state.baseRevision
+    );
+    if ((businessResults[0]?.meta?.changes ?? 0) !== 1) {
+      return c.json({ message: "场次已开赛或已被并发改期，请刷新后重试" }, 409);
+    }
+    patchedRevision = revision;
+  } else {
+    await c.env.DB.batch(patchStmts);
+  }
+  return c.json({ ok: true, warnings, revision: patchedRevision });
 });
 
 export default app;

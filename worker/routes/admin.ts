@@ -28,6 +28,7 @@ import injuriesRoutes from "./admin/injuries";
 import proxyGrantsRoutes from "./admin/proxyGrants";
 import rostersRoutes from "./admin/rosters";
 import kickoffRoutes from "./admin/kickoff";
+import kickoffSeasonRoutes from "./admin/kickoffSeason";
 
 const app = new Hono<AppEnv>();
 
@@ -42,6 +43,8 @@ app.route("/teams", teamsRoutes);
 app.route("/tournaments", tournamentsRoutes);
 app.route("/tournaments", scheduleRoutes);
 app.route("/tournaments", kickoffRoutes);
+// 赛季级排期（S1）：总览 / 版本列表 / 基线归档；旧窗口接口仍挂在 /tournaments 下
+app.route("/seasons", kickoffSeasonRoutes);
 app.route("/matches", scoringRoutes);
 app.route("/accounts", accountsRoutes);
 app.route("/audit", auditRoutes);
