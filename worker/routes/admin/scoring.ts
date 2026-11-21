@@ -13,6 +13,13 @@ import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig } from "../../lib/suspension";
 import { fetchMatchLineup, LineupError } from "../../lib/lineup";
 import { auditStmt } from "../../lib/audit";
+import {
+  ASSIST_METHODS,
+  GOAL_METHODS,
+  METHOD_LABEL,
+  type AssistMethod,
+  type GoalMethod,
+} from "../../../shared/methods";
 import type { MatchEventDTO, MatchEventType, MatchLineupDTO } from "../../../shared/types";
 import { BYE_NOTE } from "../../../shared/matchNotes";
 
@@ -377,6 +384,8 @@ app.post("/:id/events", async (c) => {
     entryId?: number;
     playerId?: number | null;
     assistPlayerId?: number | null;
+    method?: string | null;
+    assist_method?: string | null;
     minute?: number | null;
   } | null;
   if (!body?.type || !EVENT_TYPES.includes(body.type as (typeof EVENT_TYPES)[number]))
@@ -432,6 +441,27 @@ app.post("/:id/events", async (c) => {
     if (wantsAssist && body.assistPlayerId === body.playerId)
       return fail(c, 400, "助攻球员不能和进球球员是同一人");
 
+    // 进球方式 / 助攻方式（词表真源 shared/methods.ts，与迁移 0038 的列 CHECK 一致）：
+    // 两列仅运动战进球（goal）可带值；solo 与 free_kick（直接打门）不记助攻；
+    // assist_method 仅在选了助攻人时允许；取值只能命中词表枚举，禁自由文本
+    const method = body.method ?? null;
+    const assistMethod = body.assist_method ?? null;
+    if (method != null && body.type !== "goal")
+      return fail(c, 400, "只有进球可以记进球方式");
+    if (assistMethod != null && body.type !== "goal")
+      return fail(c, 400, "只有进球可以记助攻方式");
+    if (
+      (method === "solo" || method === "free_kick") &&
+      (wantsAssist || assistMethod != null)
+    )
+      return fail(c, 400, `${METHOD_LABEL.solo}与${METHOD_LABEL.free_kick}不记助攻`);
+    if (assistMethod != null && !wantsAssist)
+      return fail(c, 400, "记助攻方式需要先选择助攻球员");
+    if (method != null && !(GOAL_METHODS as readonly string[]).includes(method))
+      return fail(c, 400, `进球方式必须是 ${GOAL_METHODS.join(" / ")}`);
+    if (assistMethod != null && !(ASSIST_METHODS as readonly string[]).includes(assistMethod))
+      return fail(c, 400, `助攻方式必须是 ${ASSIST_METHODS.join(" / ")}`);
+
     // 纪律记录：已被罚下的球员本场不能再吃牌（更正请先删红牌事件）；
     // 第二张黄牌自动转存为两黄变一红（red_2y 只由系统生成，不在录入白名单）。
     // 停赛提醒不在这里做——那需要全量重放整届赛事，前端事件表单已用已拉取的停赛数据做提交前警告。
@@ -453,14 +483,16 @@ app.post("/:id/events", async (c) => {
     const live = m.status === "live";
     const batch: D1PreparedStatement[] = [
       c.env.DB.prepare(
-        `INSERT INTO match_event (match_id, entry_id, player_id, assist_player_id, type, minute, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO match_event (match_id, entry_id, player_id, assist_player_id, type, method, assist_method, minute, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         id,
         body.entryId,
         body.playerId ?? null,
         body.assistPlayerId ?? null,
         eventType,
+        method,
+        assistMethod,
         body.minute ?? null,
         c.get("user")!.id,
       ),
@@ -469,6 +501,8 @@ app.post("/:id/events", async (c) => {
         entryId: body.entryId,
         playerId: body.playerId ?? null,
         assistPlayerId: body.assistPlayerId ?? null,
+        method,
+        assist_method: assistMethod,
         minute: body.minute ?? null,
         ...(eventType !== body.type ? { red2y: true } : {}),
       }),
@@ -566,6 +600,8 @@ app.put("/:id/events/:eventId", async (c) => {
     entryId?: number;
     playerId?: number | null;
     assistPlayerId?: number | null;
+    method?: string | null;
+    assist_method?: string | null;
     minute?: number | null;
   } | null;
   if (!body?.type || !EVENT_TYPES.includes(body.type as (typeof EVENT_TYPES)[number]))
@@ -582,7 +618,7 @@ app.put("/:id/events/:eventId", async (c) => {
     const [ctx, ev, owned, card] = await Promise.all([
       loadMatchCtx(c.env.DB, id),
       c.env.DB.prepare(
-        "SELECT id, entry_id, player_id, assist_player_id, type, minute FROM match_event WHERE id = ? AND match_id = ?"
+        "SELECT id, entry_id, player_id, assist_player_id, type, method, assist_method, minute FROM match_event WHERE id = ? AND match_id = ?"
       )
         .bind(eventId, id)
         .first<{
@@ -591,6 +627,8 @@ app.put("/:id/events/:eventId", async (c) => {
           player_id: number | null;
           assist_player_id: number | null;
           type: string;
+          method: string | null;
+          assist_method: string | null;
           minute: number | null;
         }>(),
       pids.length
@@ -642,6 +680,25 @@ app.put("/:id/events/:eventId", async (c) => {
     if (wantsAssist && body.assistPlayerId === body.playerId)
       return fail(c, 400, "助攻球员不能和进球球员是同一人");
 
+    // 与 POST 相同的进球方式 / 助攻方式校验（规则与词表见 POST；编辑是补录方式的主路径）
+    const method = body.method ?? null;
+    const assistMethod = body.assist_method ?? null;
+    if (method != null && body.type !== "goal")
+      return fail(c, 400, "只有进球可以记进球方式");
+    if (assistMethod != null && body.type !== "goal")
+      return fail(c, 400, "只有进球可以记助攻方式");
+    if (
+      (method === "solo" || method === "free_kick") &&
+      (wantsAssist || assistMethod != null)
+    )
+      return fail(c, 400, `${METHOD_LABEL.solo}与${METHOD_LABEL.free_kick}不记助攻`);
+    if (assistMethod != null && !wantsAssist)
+      return fail(c, 400, "记助攻方式需要先选择助攻球员");
+    if (method != null && !(GOAL_METHODS as readonly string[]).includes(method))
+      return fail(c, 400, `进球方式必须是 ${GOAL_METHODS.join(" / ")}`);
+    if (assistMethod != null && !(ASSIST_METHODS as readonly string[]).includes(assistMethod))
+      return fail(c, 400, `助攻方式必须是 ${ASSIST_METHODS.join(" / ")}`);
+
     // 与 POST 相同的纪律裁决，但计数已排除自身行
     let eventType: MatchEventType = body.type as MatchEventType;
     let notice: string | null = null;
@@ -660,13 +717,15 @@ app.put("/:id/events/:eventId", async (c) => {
     const batch: D1PreparedStatement[] = [
       c.env.DB.prepare(
         `UPDATE match_event
-         SET entry_id = ?, player_id = ?, assist_player_id = ?, type = ?, minute = ?
+         SET entry_id = ?, player_id = ?, assist_player_id = ?, type = ?, method = ?, assist_method = ?, minute = ?
          WHERE id = ?`
       ).bind(
         body.entryId,
         body.playerId ?? null,
         body.assistPlayerId ?? null,
         eventType,
+        method,
+        assistMethod,
         body.minute ?? null,
         eventId,
       ),
@@ -677,6 +736,8 @@ app.put("/:id/events/:eventId", async (c) => {
           entryId: ev.entry_id,
           playerId: ev.player_id,
           assistPlayerId: ev.assist_player_id,
+          method: ev.method,
+          assist_method: ev.assist_method,
           minute: ev.minute,
         },
         after: {
@@ -684,6 +745,8 @@ app.put("/:id/events/:eventId", async (c) => {
           entryId: body.entryId,
           playerId: body.playerId ?? null,
           assistPlayerId: body.assistPlayerId ?? null,
+          method,
+          assist_method: assistMethod,
           minute: body.minute ?? null,
           ...(eventType !== body.type ? { red2y: true } : {}),
         },
@@ -713,7 +776,7 @@ app.put("/:id/events/:eventId", async (c) => {
 app.get("/:id/events", async (c) => {
   const id = Number(c.req.param("id"));
   const res = await c.env.DB.prepare(
-    `SELECT e.id, e.entry_id, e.player_id, e.assist_player_id, e.type, e.minute, e.created_at
+    `SELECT e.id, e.entry_id, e.player_id, e.assist_player_id, e.type, e.method, e.assist_method, e.minute, e.created_at
      FROM match_event e WHERE e.match_id = ? ORDER BY e.id`
   )
     .bind(id)
@@ -724,6 +787,8 @@ app.get("/:id/events", async (c) => {
     player_id: number | null;
     assist_player_id: number | null;
     type: MatchEventType;
+    method: GoalMethod | null;
+    assist_method: AssistMethod | null;
     minute: number | null;
     created_at: string;
   }>;
@@ -734,6 +799,8 @@ app.get("/:id/events", async (c) => {
     playerId: r.player_id,
     assistPlayerId: r.assist_player_id,
     type: r.type,
+    method: r.method,
+    assistMethod: r.assist_method,
     minute: r.minute,
     createdAt: r.created_at,
   }));

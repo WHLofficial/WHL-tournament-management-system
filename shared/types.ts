@@ -1,4 +1,5 @@
 // 前后端共享的类型与常量。
+import type { AssistMethod, GoalMethod } from "./methods";
 import type { InjurySeverity } from "./injuries";
 import type { AssignKey } from "./tactics";
 
@@ -920,6 +921,10 @@ export interface MatchEventDTO {
   entryId: number;
   playerId: number | null;
   assistPlayerId: number | null;
+  // 进球方式 / 助攻方式（迁移 0038，词表真源 shared/methods.ts）：
+  // 仅 goal 类事件可带值；pen_goal / own_goal 两列拒绝，solo 与 free_kick（直接）无助攻，旧行为 NULL
+  method: GoalMethod | null;
+  assistMethod: AssistMethod | null;
   minute: number | null;
   createdAt: string;
 }
