@@ -423,6 +423,20 @@
 21. **TC-GEN-021 分享卡字体（v5.8.2）** `P2` — 分别打开单场卡、赛事总览卡、积分榜卡、头条卡分享弹窗；预期：生成前 `document.fonts` 已加载 Noto Serif SC 600 / Inter / JetBrains Mono 三族（`ensureShareFonts`），卡名与大标题是宋体、榜单数字列是等宽，卡片宽度恒 890。
 22. **TC-GEN-022 分享卡比分回正文栈（v5.8.3）** `P2` — 生成单场卡、赛事总览卡、头条卡；预期：比分（胶囊 `2 : 4`、单场 72px、头条 110px）与点球注为比例字（Inter），胶囊内不再左右发空；两位数比分仍不压队名（`sideGap` 保留）；积分榜卡数字列仍为 JetBrains Mono。
 
+### L. 新闻引擎 2.0 增量验收点（v5.13.0；以下各点均已由 vitest 自动化覆盖，标 ⚠ 的另需手工抽查）
+
+自动化覆盖：`tests/report.test.ts`（C5 全量回归）、`tests/methodCopy.test.ts`（词库结构与红线）、`tests/scoring.finish.routes.test.ts`（方式校验路由）、`tests/news.assist / news.narrative / injury.news`（快讯口径与门槛；#4 归属由 news.assist 的「第 M 分钟，{T} 的 …」断言与语序正则共同钉住）。
+
+1. **TC-NEWS-001 词库红线** `P1` — `RED_LINE_RE` 对进球 14 池 + 助攻 13 池 + 19 组合表全量扫描零命中（不编造门将扑救与防守失败动作）。
+2. **TC-NEWS-002 锁定胜局门槛** `P1` — 末球分差 ≥3 或 80' 后继续扩大分差 → 不写「锁定胜局」（扩大类动词保留）；分差 ≤2 → 锁定（`tests/report.test.ts` 四分支）。
+3. **TC-NEWS-003 主客归属** `P1` — 快讯进球从句统一「第 M 分钟，{T} 的 …」；乌龙句保持受益方表述（`tests/news.assist.test.ts` 语序正则）。
+4. **TC-NEWS-004 里程碑砍档** `P2` — 本届进球达 5 的奇数倍（5/15/25）不再出快讯里程碑条（折进战报「本届第 N 球」尾注）；登顶射手榜分支不受影响（`tests/news.narrative.test.ts`）。
+5. **TC-NEWS-005 伤情成条门槛** `P2` — 该轮无人挂缺阵且无重伤不出伤情条；标题口径统一「受伤/伤情通报」；周报伤情分句同门槛（`tests/injury.news.test.ts`）。
+6. **TC-NEWS-006 近况角色门控与殿后** `P1` — 胜方近 5 输三场不出丧气句；胜方正句殿后；近况段预算 3 句；平局取更正面一方收尾；T3 排名走势升降位（`tests/report.test.ts` 近况 2.0 组）。
+7. **TC-NEWS-007 MatchesTab 方式联动** `P1` — goal 类型显示「进球方式」下拉（14 词）；选了助攻人显示「助攻方式」（13 词）；方式选个人一条龙/任意球直接时隐藏助攻框并清空；pen_goal/own_goal 两下拉不显示且提交不带（手工抽查 + 后续 MatchesTab ui 用例钉）。
+8. **TC-NEWS-008 表态失败重试** `P2` — 断网触发 POST 失败；预期：不落「已点」标记、计数回滚、按钮可重试；成功后标记才写入（`Home.tsx`/`NewsPage.tsx` 同口径）。
+9. **TC-NEWS-009 迁移 0038 枚举约束** `P1` — method/assist_method 白名单 CHECK：非法值入库失败；录入端未知方式词返回 400「进球方式必须是 …」；pen_goal/own_goal 带方式 400（`tests/scoring.finish.routes.test.ts` 事件路由组）。
+
 ---
 
 ## 10. 覆盖矩阵与缺口清单
