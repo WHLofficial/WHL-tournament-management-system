@@ -190,14 +190,24 @@ export const BREATH = {
     "开局进球早，后面的人都得跟着调整。",
     "有人还没坐进看台，场上已经进球了。",
   ],
-  // 闷战/哑火期/上半场沉闷
-  dull: [
-    "中间很长一段时间，两边都没能进球。",
-    "进球来得晚，中间的部分比较熬人。",
-    "有一阵子，场上唯一的事就是等一个进球。",
-    "长时间不进球的比赛，比的其实是耐心。",
+  // 首球来得晚（首球 ≥60' 或全场零进球）：等进球等得久——audit §4.1 之② 拆池，
+  // 与「中途哑火」（drought，缺口可在任意位置）各挂各的事实，不再混装
+  lateFirstGoal: [
     "等进球等得久，来了就格外响。",
     "比赛一直缺一个进球，直到缺到最后。",
+    "进球来得晚，中间的部分比较熬人。",
+    "第一个进球等了很久才来。",
+    "开场后的一个小时里，比分牌一直没有动。",
+    "第一个进球迟迟不来，把悬念一直留着。",
+  ],
+  // 中途哑火（≥60' 无进球时段，位置不限）：比的其实是耐心
+  drought: [
+    "中间很长一段时间，两边都没能进球。",
+    "长时间不进球的比赛，比的其实是耐心。",
+    "有一阵子，场上唯一的事就是等一个进球。",
+    "比分有一阵子纹丝不动。",
+    "僵持的那段时间里，谁都没能改写比分。",
+    "无进球的那段时间，比赛的节奏停了下来。",
   ],
 } as const;
 
@@ -230,7 +240,9 @@ export function pickBreath(seed: string, facts: MatchFacts, budget: number, rate
   tryKind("st", BREATH.streak, facts.streakBroken != null);
   tryKind("ss", BREATH.seeSaw, facts.bothLed || facts.leadChanges >= 2);
   tryKind("bo", BREATH.bolt, facts.openingBolt);
-  tryKind("du", BREATH.dull, facts.shape === "dull" || facts.drought != null);
+  // 闷战拆两池（audit §4.1 之②）：首球来得晚挂 lateFirstGoal，中途哑火挂 drought，各选各的池
+  tryKind("lf", BREATH.lateFirstGoal, facts.lateFirstGoal);
+  tryKind("du", BREATH.drought, facts.drought != null);
   return out;
 }
 
@@ -306,8 +318,17 @@ export const MATCH_DATA_PARA: ((c: MatchDataCtx) => string)[] = [
       : `${c.totalGoals} 球，比分 ${c.scoreHome}:${c.scoreAway}。`,
 ];
 
+// 合计类变体（下标 0/1/5）在 1≤totalGoals≤2 时走「两队合计打进 N 球 / 共 N 粒进球 / N 球，比分…」
+// 分支——1:0/1:1 读「合计 1 球」是同义反复（audit 数据段 #6），从候选剔除；
+// 0 球时这三条走各自的白卷分支（没能取得进球/进球数为零/互交白卷），保留
+const AGGREGATE_VARIANTS = new Set([0, 1, 5]);
+
 export function matchDataPara(seed: string, c: MatchDataCtx): string {
-  const base = pickText(seed, MATCH_DATA_PARA)(c);
+  const pool =
+    c.totalGoals > 0 && c.totalGoals <= 2
+      ? MATCH_DATA_PARA.filter((_, i) => !AGGREGATE_VARIANTS.has(i))
+      : MATCH_DATA_PARA;
+  const base = pickText(seed, pool)(c);
   return c.penLine ? `${base}${c.penLine}。` : base;
 }
 
@@ -439,6 +460,225 @@ export function matchNewsTitle(seed: string, c: MatchTitleBase, facts: MatchFact
   return fit(seed, cands);
 }
 
+// ---------- 标题六档池（copybank §5，批次二 C3：resultPhrases 扩档） ----------
+// 按净胜球与剧情分档：档位判定不骰（吃 facts 的 margin/lateWinner/comeback/upset/penShootout，
+// 优先级 点球 > 绝杀 > 翻盘 > 爆冷），档内变体才 pickText；主语视角唯一——胜方开题为默认，
+// 败方开题（{L} 起头）是独立变体，两种视角不拼接。旧 MATCH_TITLE_BASE/matchNewsTitle 保留。
+// 令牌：{W}/{L} 胜负方，{H}/{A} 主客，{s} 胜方视角比分（平局档为主队视角），{s'} 败方视角比分，
+// {X} 功臣，{N} 连胜场数/追回球数，{score} 主队视角比分，{pen} 点球大战比分。
+export const RESULT_TITLE = {
+  // 横扫（净胜 ≥3）；「客场」变体仅客队取胜时入候选
+  sweep: [
+    "{W} {s} 横扫 {L}",
+    "{W} 客场 {s} 大胜 {L}",
+    "{L} {s'} 惨败，{W} 全场压制",
+    "{W} {s} 带走一场大胜",
+    "{W} 打出 {s} 的横扫",
+    "{L} 没能招架，{W} {s} 兵不血刃",
+  ],
+  // 力克（净胜 1）
+  edge: [
+    "{W} {s} 小胜 {L}",
+    "{W} 险胜 {L} {s}",
+    "{W} {s} 力克 {L}",
+    "{L} {s'} 憾负 {W}",
+    "{W} 拿下 {L}，比分 {s}",
+  ],
+  // 常规取胜（净胜 2）
+  win: [
+    "{W} {s} 击败 {L}",
+    "{W} 完胜 {L} {s}",
+    "{W} {s} 战胜 {L}",
+    "{L} {s'} 不敌 {W}",
+    "{W} 顺利拿下 {L}",
+  ],
+  // 平局（末条 0:0 专用；「焦点是 {X}」需有功臣）
+  draw: [
+    "{H} {s} 战平 {A}",
+    "{s}，{H} 与 {A} 平分秋色",
+    "{H} {s} {A}，双方各取一分",
+    "{H} {s} {A}，焦点是 {X}",
+    "{H} 与 {A} 互交白卷",
+  ],
+  // 剧情档叠加（命中即替换核心动词）；「补时」变体需末球 ≥90' 才入候选
+  lateWinner: [
+    "{W} {s} 绝杀 {L}",
+    "{L} 到最后都没守住，{W} {s} 绝杀",
+    "{W} 补时 {s} 绝杀 {L}",
+  ],
+  comeback: [
+    "{W} {s} 翻盘 {L}",
+    "{L} 领先过，最终 {W} {s} 逆转",
+    "{W} 连追 {N} 球 {s} 逆转 {L}",
+  ],
+  upset: [
+    "爆冷！{W} {s} 掀翻 {L}",
+    "{W} {s} 客场爆冷击败 {L}",
+  ],
+  // 点球淘汰档（沿用现有点球文案，见 matchNewsTitle rec 段）
+  pen: ["点球大战 {pen} 分胜负，{W} 过关", "{score} 后点球决胜，{W} 笑到最后"],
+  // 功臣/钩子后缀池（一段制：「{主句}，{钩子}」；钩子从 aftermath 取事实，不用位置修辞）
+  hooks: ["{X} 梅开二度", "{X} 帽子戏法", "{X} 双响救主", "终结 {L} 的 {N} 连胜", "报了首回合的一箭之仇"],
+} as const;
+
+export interface ResultTitleCtx {
+  home: string;
+  away: string;
+  scoreHome: number;
+  scoreAway: number;
+  heroName: string | null; // 焦点功臣（平局档「焦点是 {X}」/钩子 {X} 的缺省来源）
+  comebackDeficit?: number; // 翻盘方最深落后球数（aftermath 有据才传，供「连追 N 球」变体）
+  revenge?: boolean; // 复仇事实（aftermath 有据才传，供「报了首回合的一箭之仇」钩子）
+}
+
+interface ResultSlots {
+  W: string;
+  L: string;
+  H: string;
+  A: string;
+  s: string;
+  ls: string;
+  X: string;
+  N: string;
+  score: string;
+  pen: string;
+}
+
+function resultSlots(facts: MatchFacts, ctx: ResultTitleCtx, xName?: string): ResultSlots {
+  const p = facts.penShootout;
+  const penWinner = p ? (p.home > p.away ? ctx.home : ctx.away) : null;
+  const winner =
+    facts.winnerSide === "home"
+      ? ctx.home
+      : facts.winnerSide === "away"
+        ? ctx.away
+        : (penWinner ?? "");
+  const loser = winner === ctx.home ? ctx.away : ctx.home;
+  const s =
+    facts.winnerSide === "away"
+      ? `${ctx.scoreAway}:${ctx.scoreHome}`
+      : `${ctx.scoreHome}:${ctx.scoreAway}`;
+  const ls =
+    facts.winnerSide === "away"
+      ? `${ctx.scoreHome}:${ctx.scoreAway}`
+      : `${ctx.scoreAway}:${ctx.scoreHome}`;
+  return {
+    W: winner,
+    L: loser,
+    H: ctx.home,
+    A: ctx.away,
+    s,
+    ls,
+    X: xName ?? ctx.heroName ?? "",
+    N: String(ctx.comebackDeficit ?? 0),
+    score: `${ctx.scoreHome}:${ctx.scoreAway}`,
+    pen: p ? `${p.home}:${p.away}` : "",
+  };
+}
+
+function fillResultTitle(tpl: string, v: ResultSlots): string {
+  return tpl
+    .replaceAll("{W}", v.W)
+    .replaceAll("{L}", v.L)
+    .replaceAll("{H}", v.H)
+    .replaceAll("{A}", v.A)
+    .replaceAll("{s'}", v.ls)
+    .replaceAll("{s}", v.s)
+    .replaceAll("{X}", v.X)
+    .replaceAll("{N}", v.N)
+    .replaceAll("{score}", v.score)
+    .replaceAll("{pen}", v.pen);
+}
+
+// 模板尾词（剔除令牌后最后一段字面）：跨篇去重的「同尾词」判定（copybank §5 新规则）
+function titleTail(tpl: string): string {
+  const segs = tpl
+    .split(/\{[^}]+\}/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return segs.length ? segs[segs.length - 1] : tpl;
+}
+
+export function pickResultTitle(
+  seed: string,
+  facts: MatchFacts,
+  ctx: ResultTitleCtx,
+  seenTails?: Set<string>,
+): string {
+  const slots = resultSlots(facts, ctx);
+  const lastMin = facts.lastGoal?.minute ?? null;
+  let cands: readonly string[];
+  if (facts.penShootout && slots.W) {
+    cands = RESULT_TITLE.pen;
+  } else if (facts.lateWinner) {
+    // 「补时」只在末球真到 90+ 时成立（lateWinner 是 ≥80'）
+    cands =
+      lastMin != null && lastMin >= 90
+        ? RESULT_TITLE.lateWinner
+        : RESULT_TITLE.lateWinner.slice(0, 2);
+  } else if (facts.comeback) {
+    // 「连追 N 球」需要确切落后数（aftermath 有据才传）
+    cands =
+      facts.comeback === "big" && ctx.comebackDeficit != null
+        ? RESULT_TITLE.comeback
+        : RESULT_TITLE.comeback.slice(0, 2);
+  } else if (facts.upset) {
+    // 「客场」只在客队取胜时成立
+    cands =
+      facts.winnerSide === "away" ? RESULT_TITLE.upset : RESULT_TITLE.upset.slice(0, 1);
+  } else if (facts.winnerSide == null) {
+    cands = RESULT_TITLE.draw.filter((_, i) =>
+      i === 3 ? ctx.heroName != null : i === 4 ? facts.totalGoals === 0 : true,
+    );
+  } else {
+    cands =
+      facts.margin >= 3
+        ? facts.winnerSide === "away"
+          ? RESULT_TITLE.sweep
+          : RESULT_TITLE.sweep.filter((_, i) => i !== 1)
+        : facts.margin === 2
+          ? RESULT_TITLE.win
+          : RESULT_TITLE.edge;
+  }
+
+  // 跨篇去重：先按 seed 定抽中项，尾词已同屏出现过则向后顺延换变体；全部撞尾时维持原选（确定性）。
+  // 调用方传入的 seenTails 会被写入所选变体的尾词——feed 循环里同一个集合跨条目复用即实现同屏去重
+  const seen = seenTails ?? new Set<string>();
+  const picked = pickText(seed, cands);
+  const start = Math.max(0, cands.indexOf(picked));
+  let chosen = picked;
+  for (let i = 0; i < cands.length; i++) {
+    const cand = cands[(start + i) % cands.length];
+    if (!seen.has(titleTail(cand))) {
+      chosen = cand;
+      break;
+    }
+  }
+  seen.add(titleTail(chosen));
+  return fillResultTitle(chosen, slots);
+}
+
+// 钩子后缀（一段制的第二段）：从 aftermath 取事实（功臣双响/帽子戏法、终结连胜、复仇），
+// 无事实命中返回 null，调用方不拼钩子。「终结 N 场不败」暂无池句（§5 钩子池只列连胜），不败告破不拼。
+export function pickResultHook(seed: string, facts: MatchFacts, ctx: ResultTitleCtx): string | null {
+  const cands: string[] = [];
+  const top = facts.playerBags.find((b) => b.goals === facts.maxBagGoals && b.goals >= 2);
+  if (top && facts.maxBagGoals === 2) cands.push("{X} 梅开二度");
+  if (top && facts.maxBagGoals === 3) cands.push("{X} 帽子戏法");
+  // 双响救主（扳平/反超进球队员）：记分平局（非点球决胜）且有人包办 2 球
+  if (facts.winnerSide == null && !facts.penShootout && facts.maxBagGoals === 2)
+    cands.push("{X} 双响救主");
+  if (facts.streakBroken?.kind === "win")
+    cands.push(`终结 {L} 的 ${facts.streakBroken.count} 连胜`);
+  if (ctx.revenge) cands.push("报了首回合的一箭之仇");
+  if (cands.length === 0) return null;
+  const slots = resultSlots(facts, ctx, top?.playerName);
+  const filled = cands.map((tpl) =>
+    fillResultTitle(tpl, { ...slots, N: String(facts.streakBroken?.count ?? 0), X: top?.playerName ?? slots.X }),
+  );
+  return pickText(`${seed}:hook`, filled);
+}
+
 export const WALKOVER_TITLE_SOLO = [
   (loser: string, winner: string) => `${loser} 弃权，${winner} 不战而胜`,
   (loser: string, winner: string) => `${winner} 不战而胜，${loser} 弃权`,
@@ -546,15 +786,17 @@ export function weeklyTitle(
 
 // ---------- 轮次伤情快讯标题（整轮完赛后出条） ----------
 // 语域：半正式到正式（联赛通报／严肃赛事报道），不用「挂彩」「伤得不轻」这类口语。
+// 动词框架统一收敛到「受伤/伤情通报」口径——删掉「进入伤停名单/因伤减员/新增伤员」的互斥混装，
+// 杜绝「标题说减员、正文说无人缺席」的打脸组合（出条门槛由 feedNews 侧把守：有人挂缺阵或重伤才出条）。
 // 轻伤为主时只报人数；有重伤就把重伤人数摆出来，不形容伤势程度。
 export const INJURY_TITLE: ((rl: string, n: number, major: number) => string)[] = [
+  (rl, n, major) => `${rl}伤情通报：${n} 人受伤${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
   (rl, n, major) => `${rl}伤情：${n} 人受伤${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
-  (rl, n, major) => `${rl}伤情通报：${n} 人进入伤停名单${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
+  (rl, n, major) => `${rl}伤情通报，本轮 ${n} 人受伤${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
   (rl, n, major) => `${n} 人在${rl}受伤${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
-  (rl, n, major) => `${rl}伤退 ${n} 人${major > 0 ? `，另有 ${major} 人伤势较重` : ""}`,
-  (rl, n, major) => `${rl}新增伤员 ${n} 人${major > 0 ? `，含 ${major} 人重伤` : ""}`,
-  (rl, n, major) => `${rl}伤停名单新增 ${n} 人${major > 0 ? `，含 ${major} 人重伤` : ""}`,
-  (rl, n, major) => `${rl}因伤减员 ${n} 人${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
+  (rl, n, major) => `${rl}战罢，${n} 人受伤${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
+  (rl, n, major) => `${rl}伤情通报：这轮 ${n} 人受伤${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
+  (rl, n, major) => `${rl}伤情更新：${n} 人受伤${major > 0 ? `，其中 ${major} 人重伤` : ""}`,
 ];
 
 // 伤情条／周报的缺阵尾巴。两池事实口径写死，只换说法：

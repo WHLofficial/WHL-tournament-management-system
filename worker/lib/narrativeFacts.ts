@@ -58,6 +58,7 @@ export interface MatchFacts {
   openingBolt: boolean; // 开场闪电：首球 ≤10'
   firstHalfQuiet: boolean; // 上半场沉闷：前 45' 零进球（含 0:0）
   drought: { from: number; to: number; minutes: number } | null; // 哑火期 ≥60'
+  lateFirstGoal: boolean; // 首球来得晚：哑火期从开赛算起（首球 ≥60'）或全场零进球（audit §4.1 之②）
   goalBurst: { from: number; to: number; count: number } | null; // 进球潮：15' 窗 ≥3 球
   lateFlurryCount: number; // 85' 后进球数（≥2 才成剧情）
   lateWinner: boolean; // 绝杀：末球 ≥80'、破平或反超、此后无回应
@@ -200,6 +201,9 @@ export function computeMatchFacts(
       }
     }
   }
+  // 首球来得晚：哑火期从 0' 起算（首个进球等了 ≥60'）或全场零进球。
+  // 「等进球」系呼吸句的事实锚；与「中途哑火」（drought，缺口可在任意位置）分开挂池（audit §4.1 之②）
+  const lateFirstGoal = timingKnown && (drought?.from === 0 || totalGoals === 0);
   let goalBurst: MatchFacts["goalBurst"] = null;
   if (timingKnown && knownMinutes.length >= BURST_MIN_GOALS) {
     for (let i = 0; i + BURST_MIN_GOALS - 1 < knownMinutes.length; i++) {
@@ -395,6 +399,7 @@ export function computeMatchFacts(
     openingBolt,
     firstHalfQuiet,
     drought,
+    lateFirstGoal,
     goalBurst,
     lateFlurryCount,
     lateWinner,
