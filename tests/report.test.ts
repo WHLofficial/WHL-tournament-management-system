@@ -6,15 +6,21 @@ import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { applyMigrations, createTestD1, insertPlayer } from "./d1";
 import { buildMatchReport } from "../worker/lib/report";
+import { buildFeed } from "../worker/lib/feedNews";
 import {
   BREATH,
   MATCH_DATA_PARA,
+  OG_VERBS,
   RESULT_TITLE,
+  SEAL_WORDS,
   matchDataPara,
   pickBreath,
   pickResultHook,
   pickResultTitle,
+  type OgVerbState,
 } from "../worker/lib/copybanks";
+import { pickMethodLine } from "../worker/lib/methodCopy";
+import { pickText } from "../shared/textpick";
 import { computeMatchFacts, type MatchFacts } from "../worker/lib/narrativeFacts";
 
 interface GoalSpec {
@@ -25,6 +31,8 @@ interface GoalSpec {
   minute: number;
   type?: "goal" | "pen_goal" | "own_goal";
   assistId?: number | null;
+  method?: string; // 进球方式（shared/methods.ts 白名单词，如 turn_shot）
+  assistMethod?: string;
 }
 interface PrevMatchSpec {
   id: number;
@@ -110,10 +118,10 @@ function reportDb(opts: ReportOpts): { db: ReturnType<typeof createTestD1>; sqli
     mk.run(pm.id, pm.round, pm.slot, pm.homeEntryId, pm.awayEntryId, pm.scoreHome, pm.scoreAway, t(pm.day));
   }
   const goal = sqlite.prepare(
-    "INSERT INTO match_event (id, match_id, entry_id, player_id, type, minute, assist_player_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+    "INSERT INTO match_event (id, match_id, entry_id, player_id, type, minute, assist_player_id, method, assist_method, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
   );
   for (const g of opts.goals) {
-    goal.run(g.id, g.matchId, g.entryId, g.playerId, g.type ?? "goal", g.minute, g.assistId ?? null);
+    goal.run(g.id, g.matchId, g.entryId, g.playerId, g.type ?? "goal", g.minute, g.assistId ?? null, g.method ?? null, g.assistMethod ?? null);
   }
   const red = sqlite.prepare(
     "INSERT INTO match_event (id, match_id, entry_id, player_id, type, minute, created_by) VALUES (?, ?, ?, ?, 'red', ?, 1)",
@@ -873,5 +881,207 @@ describe("report lede 与改判重写", () => {
     expect(r2!.paragraphs.join("")).not.toContain("锁定胜局"); // 末球变成败方进球 → 不锁定
     expect(r2!.title).not.toBe(r1!.title);
     expect(r2!.lede).not.toBe(r1!.lede);
+  });
+});
+
+// ---------- 2026-11-21 线上三场诊断回归（docs/news-engine-audit.md §10） ----------
+// match 227 形态：红队(500) 2:3 蓝队(501)，进球 18'/35'/52'/87' 乌龙/97'
+function og227Db(matchId: number) {
+  return reportDb({
+    matchId,
+    scoreHome: 2,
+    scoreAway: 3,
+    goals: [
+      { id: 1, matchId, entryId: 501, playerId: 200, minute: 18 }, // 蓝队 首开 0:1
+      { id: 2, matchId, entryId: 500, playerId: 100, minute: 35 }, // 红队 扳平 1:1
+      { id: 3, matchId, entryId: 501, playerId: 200, minute: 52 }, // 蓝队 再度领先 1:2
+      { id: 4, matchId, entryId: 500, playerId: 102, minute: 87, type: "own_goal" }, // 红队球员乌龙 → 蓝队受益 1:3
+      { id: 5, matchId, entryId: 500, playerId: 101, minute: 97 }, // 红队 追回 2:3
+    ],
+  });
+}
+
+describe("线上三场回归：乌龙序列（#1/#4）", () => {
+  it("乌龙后内部记分正确：97' 是追回球，全场从未领先的红队不会被写「再度领先」", async () => {
+    const { db } = og227Db(5420);
+    const rep = await buildMatchReport(db, 5420);
+    const text = rep!.paragraphs.join("");
+    expect(text).toMatch(/为红队扳回一城|帮红队追回一球/);
+    expect(text).not.toMatch(/红队[^。]*再度领先/);
+    // 数据框口径：乌龙行记受益方（蓝队/客队），射手行记摆乌龙者（红边锋）
+    expect(rep!.goals[3]).toMatchObject({ type: "own_goal", teamName: "蓝队", side: "away", playerName: "红边锋" });
+    expect(rep!.goals[4]).toMatchObject({ teamName: "红队", side: "home", playerName: "红中场" });
+  });
+
+  it("乌龙句带乌龙措辞、语义指向受益方蓝队（不读成摆乌龙者正常进球）", async () => {
+    const { db } = og227Db(5421);
+    const rep = await buildMatchReport(db, 5421);
+    const text = rep!.paragraphs.join("");
+    // 与引擎同种子复算乌龙动词（wasAhead → extend 态），句身按逗号分部断言（对节奏拆句稳健）
+    const ogVerb = pickText(`5421:87:102:own_goal`, OG_VERBS.extend("蓝队"));
+    const [head, ...rest] = ogVerb.split("，");
+    expect(text).toContain(`红边锋 ${head}`);
+    for (const part of rest) expect(text).toContain(part);
+    expect(text).not.toMatch(/红边锋 (再入一球|再下一城|扩大战果|破门得分)/);
+  });
+
+  it("appendToRun 分钟后带分隔逗号（#4）：不再「第 87 分钟Pierre Kalulu」式直粘", async () => {
+    const { db } = og227Db(5422);
+    const rep = await buildMatchReport(db, 5422);
+    const text = rep!.paragraphs.join("");
+    expect(text).toContain("第 87 分钟，红边锋");
+    expect(text).not.toContain("第 87 分钟红边锋");
+  });
+
+  it("标题功臣短语只出现一次（#2）：不再「梅开二度，…梅开二度」", async () => {
+    const { db } = og227Db(5423);
+    const rep = await buildMatchReport(db, 5423);
+    expect(rep!.title.split("蓝前锋 梅开二度").length - 1).toBe(1);
+    expect(rep!.title).toContain("梅开二度");
+  });
+
+  it("非方式句功臣后缀保持融合语序（#3 反向钉子）", async () => {
+    const { db } = og227Db(5424);
+    const rep = await buildMatchReport(db, 5424);
+    const text = rep!.paragraphs.join("");
+    expect(text).toMatch(/蓝前锋 梅开二度(帮助蓝队再度领先|让蓝队再次超出|帮蓝队重新取得领先)/);
+  });
+});
+
+describe("线上三场回归：功臣后缀衔接（#3）", () => {
+  it("方式句功臣后缀以逗号分隔：「梅开二度，半转身发力」而非直粘", async () => {
+    const matchId = 5430;
+    const { db } = reportDb({
+      matchId,
+      scoreHome: 2,
+      scoreAway: 0,
+      goals: [
+        { id: 1, matchId, entryId: 500, playerId: 100, minute: 30, method: "turn_shot" },
+        { id: 2, matchId, entryId: 500, playerId: 100, minute: 70, method: "turn_shot" },
+      ],
+    });
+    const rep = await buildMatchReport(db, matchId);
+    const text = rep!.paragraphs.join("");
+    // 与引擎同种子复算方式句：turn_shot 池全部变体以 {P} 开头，后缀插在射手名后、句身以逗号续接
+    const line = pickMethodLine(`${matchId}:70:100:mc`, "turn_shot", { P: "红前锋", T: "红队" });
+    expect(line.startsWith("红前锋 ")).toBe(true);
+    const body = line.slice("红前锋 ".length);
+    expect(text).toContain(`红前锋 梅开二度，${body}`);
+    expect(text).not.toMatch(/梅开二度[^，。]/);
+  });
+});
+
+describe("线上三场回归：flurry 拆池（#5）", () => {
+  const lateOnly = baseFacts({ lateFlurryCount: 2 });
+  const burstOnly = baseFacts({ goalBurst: { from: 10, to: 25, count: 3 } });
+  const both = baseFacts({ goalBurst: { from: 80, to: 90, count: 3 }, lateFlurryCount: 3 });
+
+  it("lateFlurryCount 走新尾段连环池，不再误挂「进球集中在很短的一段时间里」", () => {
+    for (let i = 0; i < 40; i++) {
+      const out = pickBreath(`fl:m:${i}`, lateOnly, 2, 1.0);
+      expect(out.length).toBe(1);
+      expect(BREATH.lateFlurry).toContain(out[0]);
+      expect(BREATH.flurry).not.toContain(out[0]);
+      expect(out[0]).toBe(pickText(`fl:m:${i}:lfl`, BREATH.lateFlurry));
+    }
+  });
+
+  it("goalBurst 仍走原 flurry 池", () => {
+    for (let i = 0; i < 40; i++) {
+      const out = pickBreath(`fl:b:${i}`, burstOnly, 2, 1.0);
+      expect(out.length).toBe(1);
+      expect(BREATH.flurry).toContain(out[0]);
+      expect(out[0]).toBe(pickText(`fl:b:${i}:fl`, BREATH.flurry));
+    }
+  });
+
+  it("两者同时成立各出一句（预算 2）", () => {
+    const out = pickBreath("fl:2", both, 2, 1.0);
+    expect(out.some((t) => BREATH.flurry.includes(t))).toBe(true);
+    expect(out.some((t) => BREATH.lateFlurry.includes(t))).toBe(true);
+  });
+
+  it("两池各 ≥6 且互斥", () => {
+    expect(BREATH.flurry.length).toBeGreaterThanOrEqual(6);
+    expect(BREATH.lateFlurry.length).toBeGreaterThanOrEqual(6);
+    for (const t of BREATH.flurry) expect(BREATH.lateFlurry).not.toContain(t);
+  });
+});
+
+describe("线上三场回归：feed 截尾保末球（#6）", () => {
+  it(">4 球截尾时末球并入合计尾巴：97' 追回球不再消失", async () => {
+    const { db } = og227Db(5440);
+    const items = await buildFeed(db, { limit: 15 });
+    const item = items.find((i) => i.kind === "match" && i.matchId === 5440);
+    expect(item).toBeDefined();
+    const p1 = item!.paragraphs[0];
+    expect(p1).toContain("加上红中场 第 97 分钟的进球");
+    expect(p1).toContain("双方合计打进 5 球");
+  });
+
+  it("乌龙作末球时尾巴措辞带「乌龙」", async () => {
+    const matchId = 5441;
+    const { db } = reportDb({
+      matchId,
+      scoreHome: 2,
+      scoreAway: 3,
+      goals: [
+        { id: 1, matchId, entryId: 501, playerId: 200, minute: 10 },
+        { id: 2, matchId, entryId: 501, playerId: 201, minute: 30 },
+        { id: 3, matchId, entryId: 500, playerId: 100, minute: 50 },
+        { id: 4, matchId, entryId: 501, playerId: 200, minute: 70 },
+        { id: 5, matchId, entryId: 501, playerId: 201, minute: 97, type: "own_goal" }, // 蓝队球员乌龙 → 红队受益
+      ],
+    });
+    const items = await buildFeed(db, { limit: 15 });
+    const item = items.find((i) => i.kind === "match" && i.matchId === matchId);
+    expect(item).toBeDefined();
+    const p1 = item!.paragraphs[0];
+    expect(p1).toContain("加上蓝中场 第 97 分钟的乌龙");
+    expect(p1).toContain("双方合计打进 5 球");
+  });
+});
+
+describe("线上三场回归：T1 近况模板空格（#7）", () => {
+  it("T1 球队行统一「{team} 近…」，不再出现「队近」直粘", async () => {
+    let fired = 0;
+    for (let matchId = 5450; matchId < 5500 && fired < 3; matchId++) {
+      const { db } = reportDb({
+        matchId,
+        homeEntryId: 500,
+        awayEntryId: 501,
+        scoreHome: 0,
+        scoreAway: 2,
+        prevMatches: [
+          { id: matchId - 3, round: 1, slot: 1, homeEntryId: 501, awayEntryId: 500, scoreHome: 1, scoreAway: 0, day: 3 },
+          { id: matchId - 2, round: 2, slot: 1, homeEntryId: 500, awayEntryId: 501, scoreHome: 0, scoreAway: 1, day: 4 },
+          { id: matchId - 1, round: 3, slot: 1, homeEntryId: 501, awayEntryId: 500, scoreHome: 2, scoreAway: 0, day: 5 },
+        ],
+        goals: [
+          { id: 1, matchId, entryId: 501, playerId: 200, minute: 40 },
+          { id: 2, matchId, entryId: 501, playerId: 200, minute: 70 },
+        ],
+      });
+      const rep = await buildMatchReport(db, matchId);
+      const text = rep!.paragraphs.join("");
+      expect(text, text).not.toMatch(/队近/);
+      const last = rep!.paragraphs[rep!.paragraphs.length - 1];
+      if (last.split(/(?<=。)/).some((s) => s.includes(" 近"))) fired += 1;
+    }
+    expect(fired).toBeGreaterThan(0);
+  });
+});
+
+describe("线上三场回归：乌龙动词池结构（#1）", () => {
+  it("六态齐备、每池 ≥6、全部带乌龙措辞、不踩 SEAL 词表", () => {
+    const states: OgVerbState[] = ["first", "retie", "overtake", "break", "extend", "chase"];
+    for (const st of states) {
+      const pool = OG_VERBS[st]("蓝队");
+      expect(pool.length).toBeGreaterThanOrEqual(6);
+      for (const v of pool) {
+        expect(v, `${st}: ${v}`).toMatch(/乌龙|自家大门/);
+        for (const w of SEAL_WORDS) expect(v, `${st}: ${v}`).not.toContain(w);
+      }
+    }
   });
 });

@@ -25,6 +25,7 @@ import {
 import {
   BREATH,
   MILESTONE_GOALS_TITLE,
+  OG_VERBS,
   RATES,
   SEAL_REPLACE,
   SEAL_WORDS,
@@ -32,6 +33,7 @@ import {
   pickReportDrama,
   pickResultHook,
   pickResultTitle,
+  type OgVerbState,
 } from "./copybanks";
 import { LATE_WINNER_MIN, computeMatchFacts, type MatchFacts } from "./narrativeFacts";
 import { pickCombo, pickMethodLine } from "./methodCopy";
@@ -54,6 +56,7 @@ interface GoalFact {
   prevLeader: "home" | "away" | null; // 该球前的领先方（null=平），破平/反超判定（audit §4.1 之③）
   runIdx: number; // 所属合并段序号
   fragIdx: number; // 段内片段序号（seal 回填只改末球所在片段）
+  methodOk: boolean; // 片段是否走 methodCopy 方式句（功臣后缀按此决定融合或逗号分隔，2026-11-21 #3）
 }
 
 // 过程句生成：按时间顺序走一遍事件流，用比分状态机选动词。
@@ -116,13 +119,15 @@ function buildNarrative(
       const wasBehind = scoring === "home" ? home < away : away < home;
       const wasAhead = scoring === "home" ? home > away : away > home;
       const prevLeader: "home" | "away" | null = home > away ? "home" : away > home ? "away" : null;
-      if (e.type === "own_goal") {
-        if (scoring === "home") away += 1;
-        else home += 1;
-      } else if (scoring === "home") home += 1;
+      // 记分（2026-11-21 #1 修复）：scoring 已是受益方（乌龙取摆乌龙者的对面），受益方 +1。
+      // 原实现把乌龙记给非受益方：227 的 87' 乌龙后内部记分错成 2:2，97' 被误判成「再度领先」
+      if (scoring === "home") home += 1;
       else away += 1;
 
-      const who = e.playerName ?? scoringTeam; // 无球员名退化：球队口径
+      // 乌龙无球员名时主语退化为摆乌龙方球队口径——用受益方队名会读成「受益方自摆乌龙」，方向反了
+      const who =
+        e.playerName ??
+        (e.type === "own_goal" ? (side === "home" ? m.homeTeamName : m.awayTeamName) : scoringTeam);
       // 进球动词句库：同一事实多种说法，按「比赛+事件」种子确定性选一条（重复请求不变，不同场散开）
       const evSeed = `${m.id}:${e.minute ?? "x"}:${e.playerId ?? e.playerName ?? "?"}:${e.type}`;
       const isFirst = !firstGoalDone;
@@ -144,8 +149,8 @@ function buildNarrative(
         ? `直到第 ${e.minute} 分钟，`
         : appendToRun
           ? e.minute === null
-            ? "比赛中"
-            : `第 ${e.minute} 分钟`
+            ? "比赛中，"
+            : `第 ${e.minute} 分钟，` // 段内片段自带分隔逗号（2026-11-21 #4）：「第 87 分钟Pierre Kalulu」式直粘已修
           : minutePre(e.minute);
       // 对队得分用转折衔接（audit §4.5）：上一段连进是对手时，新句以「但」起头。
       // 判定取当前未冲刷的 run（两段连进直接相接、中间无牌/罚失/呼吸句隔开时 lastRunSide 尚未更新）
@@ -185,24 +190,33 @@ function buildNarrative(
         core = `${line}${tail}`;
       } else {
         let verb: string;
-        if (isFirst) {
-          verb =
-            e.type === "own_goal"
-              ? pickText(evSeed, ["不慎自摆乌龙，场上僵局就此打破", "自摆乌龙，送出本场第一球"])
-              : e.type === "pen_goal"
-                ? pickText(evSeed, ["点球命中，率先打破僵局", "顶住压力罚进点球，首开纪录", "主罚点球稳稳命中，拔得头筹"])
-                : pickText(evSeed, ["率先打破僵局", "首开纪录", "拔得头筹", "打进本场第一球"]);
+        if (e.type === "own_goal") {
+          // 乌龙球措辞（2026-11-21 #1）：任何比分状态下都必须有乌龙字样，句式明确受益方
+          // （scoringTeam）得利、摆乌龙者非正常进球；池内避开 SEAL_WORDS，「锁定胜局」回填不改写乌龙句
+          const ogState: OgVerbState = isFirst
+            ? "first"
+            : wasBehind && home === away
+              ? "retie"
+              : wasBehind && (scoring === "home" ? home > away : away > home)
+                ? "overtake"
+                : beforeLevel
+                  ? "break"
+                  : wasAhead
+                    ? "extend"
+                    : "chase";
+          verb = pickText(evSeed, OG_VERBS[ogState](scoringTeam));
+        } else if (isFirst) {
+          verb = e.type === "pen_goal"
+            ? pickText(evSeed, ["点球命中，率先打破僵局", "顶住压力罚进点球，首开纪录", "主罚点球稳稳命中，拔得头筹"])
+            : pickText(evSeed, ["率先打破僵局", "首开纪录", "拔得头筹", "打进本场第一球"]);
         } else if (wasBehind && home !== away && (scoring === "home" ? home > away : away > home)) {
           verb = e.type === "pen_goal"
             ? pickText(evSeed, [`点球命中，帮助${scoringTeam}再度超出`, `点球罚进，${scoringTeam}反超了比分`])
             : pickText(evSeed, [`帮助${scoringTeam}再度超出`, `帮${scoringTeam}重新取得领先`, `让${scoringTeam}反超了比分`]);
         } else if (wasBehind && home === away) {
-          verb =
-            e.type === "own_goal"
-              ? pickText(evSeed, [`不慎自摆乌龙，${scoringTeam} 得以扳平`, `自摆乌龙，${scoringTeam} 将比分追平`])
-              : e.type === "pen_goal"
-                ? pickText(evSeed, [`点球命中，为${scoringTeam}扳平比分`, `顶住压力罚进点球，扳平比分`, `点球稳稳罚进，双方回到同一起跑线`])
-                : pickText(evSeed, [`为${scoringTeam}扳平比分`, `把比分追成平手`, `帮${scoringTeam}追平`]);
+          verb = e.type === "pen_goal"
+            ? pickText(evSeed, [`点球命中，为${scoringTeam}扳平比分`, `顶住压力罚进点球，扳平比分`, `点球稳稳罚进，双方回到同一起跑线`])
+            : pickText(evSeed, [`为${scoringTeam}扳平比分`, `把比分追成平手`, `帮${scoringTeam}追平`]);
         } else if (beforeLevel) {
           // 平局僵持中超出（非首球）：重新领先
           verb = e.type === "pen_goal"
@@ -244,6 +258,7 @@ function buildNarrative(
         playerKey: e.playerId === null ? `team:${scoringTeam}` : `p:${e.playerId}`,
         diffAfter: scoring === "home" ? home - away : away - home,
         prevLeader,
+        methodOk,
       };
       if (appendToRun) {
         curRun!.frags.push(frag);
@@ -346,15 +361,21 @@ function buildNarrative(
 
   // 功臣后缀：同一球员 ≥2 球，缀在其最后一次进球句的射手名后、动词前（「梅开二度锁定胜局」的战报语序）；
   // 合并句里同名多次出现时取最后一次（他最近一球的语义位置）
-  const byPlayer = new Map<string, { count: number; lastIdx: number; name: string }>();
+  const byPlayer = new Map<string, { count: number; lastIdx: number; name: string; methodOk: boolean }>();
   for (const g of goalFacts) {
     if (g.type === "own_goal") continue; // 乌龙不算射手功臣
     const cur = byPlayer.get(g.playerKey);
     if (cur) {
       cur.count += 1;
       cur.lastIdx = g.sentenceIdx;
+      cur.methodOk = g.methodOk;
     } else {
-      byPlayer.set(g.playerKey, { count: 1, lastIdx: g.sentenceIdx, name: g.playerName ?? g.teamName });
+      byPlayer.set(g.playerKey, {
+        count: 1,
+        lastIdx: g.sentenceIdx,
+        name: g.playerName ?? g.teamName,
+        methodOk: g.methodOk,
+      });
     }
   }
   for (const info of byPlayer.values()) {
@@ -364,19 +385,26 @@ function buildNarrative(
     const who = info.name;
     const cut = s.lastIndexOf(`${who} `);
     const head = cut > 0 ? cut + who.length + 1 : -1;
+    // 后缀衔接（2026-11-21 #3）：方式句（methodCopy）里后缀直粘动词是病句「梅开二度半转身发力」，
+    // 补分隔逗号；普通动词保持「梅开二度再入一球」融合语序
     sentences[info.lastIdx] =
-      head > 0 ? `${s.slice(0, head)}${suffix}${s.slice(head)}` : s.replace(/。$/, `，${suffix}。`);
+      head > 0
+        ? `${s.slice(0, head)}${suffix}${info.methodOk ? "，" : ""}${s.slice(head)}`
+        : s.replace(/。$/, `，${suffix}。`);
   }
 
   return { sentences, goalFacts, cards };
 }
 
 // C2 节奏检查（audit §4.5）：过程段每段至少一个短句（≤15 字）；没有时把段内首个够长、
-// 带 ≥2 逗号的句子在最后一个逗号处拆成两句（头尾各自带谓语），长短错落靠拆句补足，确定性无骰点
+// 带 ≥2 逗号的句子在最后一个逗号处拆成两句（头尾各自带谓语），长短错落靠拆句补足，确定性无骰点。
+// 2026-11-21 #4 联动：run 合并片段自带「第 N 分钟，」前缀后，句末逗号可能紧跟在光杆时间短语
+// 之后——在那里断句会把「第 35 分钟。」孤悬成半句；拆点跳过此类逗号（前段恰为光杆时间短语）
 function ensureShortSentence(para: string): string {
   const parts = para.split(/(?<=。)/).filter((x) => x.length > 0);
   if (parts.length < 2) return para;
   if (parts.some((s) => [...s.replace(/。$/, "")].length <= 15)) return para;
+  const BARE_TIME = /^(?:第 \S+ 分钟|比赛中|直到第 \S+ 分钟)$/;
   for (let i = 0; i < parts.length; i++) {
     const body = parts[i].replace(/。$/, "");
     if ([...body].length < 20) continue;
@@ -384,7 +412,16 @@ function ensureShortSentence(para: string): string {
       .map((ch, idx) => (ch === "，" ? idx : -1))
       .filter((idx) => idx >= 0);
     if (commas.length < 2) continue;
-    const cut = commas[commas.length - 1];
+    // 从最后往前找拆点，跳过「前段是光杆时间短语」的逗号（避免拆出「第 35 分钟。」半句）
+    let cut = -1;
+    for (let k = commas.length - 1; k >= 0; k--) {
+      const seg = body.slice((k > 0 ? commas[k - 1] : -1) + 1, commas[k]);
+      if (!BARE_TIME.test(seg)) {
+        cut = commas[k];
+        break;
+      }
+    }
+    if (cut < 0) continue;
     const tail = body.slice(cut + 1);
     if ([...tail].length < 6) continue;
     // 拆点去掉逗号再接句号——保留逗号会产出「拔得头筹，。」双标点病句
@@ -1021,7 +1058,16 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
         revenge: hookRevenge,
       },
     );
-    if (hook) title += `，${hook}`;
+    // 标题功臣短语只出现一次（2026-11-21 #2）：resultPhrases 已在标题尾缀过功臣短语时，
+    // 钩子池的同名功臣句（{X} 梅开二度/帽子戏法/双响救主）不再重复追加——
+    // 生产 227 标题曾出现「Romelu Lukaku 梅开二度，Romelu Lukaku 梅开二度」
+    const heroDuplicated =
+      hook != null &&
+      hero != null &&
+      hero.goals >= 2 &&
+      hook.includes(hero.name) &&
+      title.includes(`${hero.name} ${heroPhrase(hero.goals)}`);
+    if (hook && !heroDuplicated) title += `，${hook}`;
 
     // 6) 球队近况 2.0：状态画像（audit §7，C1）。role = winner / loser / level（点球胜负按 shootout
     // 胜方；弃权场走独立模板不进此段）。预算 B=3 句：① 最高档球员事实（P1>P2/P3>P7，胜方 hero 优先
@@ -1288,14 +1334,15 @@ export async function buildMatchReport(db: D1Database, mid: number): Promise<Mat
       const f = formOf(entry, "all");
       const t1: TeamRow[] = [];
       if (f) {
-        if (f.pts >= 10) t1.push({ text: `${team}近${cnum(f.n)}场拿下${cnum(f.pts)}分。`, positive: true });
-        if (f.w >= 3) t1.push({ text: `${team}近${cnum(f.n)}场赢下${cnum(f.w)}场。`, positive: true });
+        // T1 模板空格（2026-11-21 #7）：队名与「近」之间留半角空格，对齐 T3/近况段惯例
+        if (f.pts >= 10) t1.push({ text: `${team} 近${cnum(f.n)}场拿下${cnum(f.pts)}分。`, positive: true });
+        if (f.w >= 3) t1.push({ text: `${team} 近${cnum(f.n)}场赢下${cnum(f.w)}场。`, positive: true });
         if (f.l === 0)
-          t1.push({ text: `${team}近${cnum(f.n)}场${cnum(f.w)}胜${cnum(f.d)}平保持不败。`, positive: false });
-        if (f.ga <= 2) t1.push({ text: `${team}近${cnum(f.n)}场只丢${cnum(f.ga)}球。`, positive: false });
-        if (f.gd >= 4) t1.push({ text: `${team}近${cnum(f.n)}场净胜${cnum(f.gd)}球。`, positive: true });
+          t1.push({ text: `${team} 近${cnum(f.n)}场${cnum(f.w)}胜${cnum(f.d)}平保持不败。`, positive: false });
+        if (f.ga <= 2) t1.push({ text: `${team} 近${cnum(f.n)}场只丢${cnum(f.ga)}球。`, positive: false });
+        if (f.gd >= 4) t1.push({ text: `${team} 近${cnum(f.n)}场净胜${cnum(f.gd)}球。`, positive: true });
         if (f.l >= 3 && role === "loser" && chance(`${m.id}:fslump:${entry}`, 0.5))
-          t1.push({ text: `${team}近${cnum(f.n)}场输掉${cnum(f.l)}场，需要调整状态。`, positive: false });
+          t1.push({ text: `${team} 近${cnum(f.n)}场输掉${cnum(f.l)}场，需要调整状态。`, positive: false });
       }
       // T2 场地连胜：venue 窗口全胜且 ≥2 场；整体连胜已进 aftermath rec2（≥3）时让位
       let t2: TeamRow | null = null;

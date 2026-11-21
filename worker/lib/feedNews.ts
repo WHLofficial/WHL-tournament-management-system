@@ -563,7 +563,8 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
     if (c >= 2 && lastIdx.get(n) === i) {
       const hero = c === 2 ? "梅开二度" : c === 3 ? "上演帽子戏法" : `独中${cnum(c)}球`;
       const cut = out.indexOf(`${n} `);
-      if (cut >= 0) out = `${out.slice(0, cut + n.length + 1)}${hero}${out.slice(cut + n.length + 1)}`;
+      // 方式句功臣后缀补分隔逗号（2026-11-21 #3，与 report.ts 同款）：「梅开二度半转身发力」是病句
+      if (cut >= 0) out = `${out.slice(0, cut + n.length + 1)}${hero}，${out.slice(cut + n.length + 1)}`;
     }
     return withTime && e.minute !== null
       ? `第 ${e.minute} 分钟，${team} 的 ${out}`
@@ -586,7 +587,15 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
     ];
   }
   const cap = goals.length > 4 ? 3 : goals.length;
-  const tail = goals.length > 4 ? `，双方合计打进 ${goals.length} 球` : "";
+  // 截尾保末球（2026-11-21 #6）：>4 球只列前 3 球时，末球并入合计尾巴——末球常是故事本身
+  // （如 3:2 的追回球/乌龙，227 的 87' 乌龙与 97' 追回球曾整体消失）；分钟未知退回纯合计尾巴。
+  // cap=3 与 pickText 种子逻辑不变。
+  const lastGoal = goals[goals.length - 1];
+  const lastTail =
+    lastGoal.minute !== null
+      ? `，加上${nameOf(lastGoal)} 第 ${lastGoal.minute} 分钟的${lastGoal.type === "own_goal" ? "乌龙" : "进球"}`
+      : "";
+  const tail = goals.length > 4 ? `${lastTail}，双方合计打进 ${goals.length} 球` : "";
   const usedT = new Set<string>();
   const usedN = new Set<string>();
   const clause = (e: RawEvent, i: number, withTime: boolean, used: Set<string>): string =>

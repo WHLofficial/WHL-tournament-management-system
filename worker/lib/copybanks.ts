@@ -154,6 +154,16 @@ export const BREATH = {
     "短时间连着进球，比分一下就打开了。",
     "密集的进球，把比赛的节奏整个带走了。",
   ],
+  // 尾段连环（85' 后 ≥2 球，2026-11-21 #5 拆池）：与「进球潮」（15 分钟窗 ≥3 球）各挂各的事实——
+  // 尾段连环只是尾声连续进球，不是「集中在很短的一段时间里」
+  lateFlurry: [
+    "尾声又起波澜。",
+    "最后阶段进球一个接一个。",
+    "收官阶段的节奏突然快了起来。",
+    "比赛最后几分钟，进球接连出现。",
+    "临近终场，比分还在变。",
+    "终场哨响前，比分又动了不止一次。",
+  ],
   // 爆冷下克上
   upset: [
     "排名靠后的把靠前的拉下马了。",
@@ -235,7 +245,10 @@ export function pickBreath(seed: string, facts: MatchFacts, budget: number, rate
   tryKind("og", BREATH.ownGoal, facts.ogDecider);
   tryKind("bl", BREATH.blownLead, facts.blownLead);
   tryKind("he", BREATH.hero, facts.soloAct != null || facts.maxBagGoals >= 3);
-  tryKind("fl", BREATH.flurry, facts.goalBurst != null || facts.lateFlurryCount >= 2);
+  tryKind("fl", BREATH.flurry, facts.goalBurst != null);
+  // 尾段连环拆池（2026-11-21 #5）：goalBurst（15 分钟窗 ≥3 球）才是「集中」；85' 后 ≥2 球
+  // 只是尾声连续进球，走尾段连环池
+  tryKind("lfl", BREATH.lateFlurry, facts.lateFlurryCount >= 2);
   tryKind("up", BREATH.upset, facts.upset != null);
   tryKind("st", BREATH.streak, facts.streakBroken != null);
   tryKind("ss", BREATH.seeSaw, facts.bothLed || facts.leadChanges >= 2);
@@ -342,6 +355,68 @@ export function heroPhrase(count: number): string {
   if (count === 3) return "上演帽子戏法";
   return `独中${cnum(count)}球`;
 }
+
+// ---------- 乌龙球动词池（report.ts 过程句专用；2026-11-21 #1） ----------
+// 主语=摆乌龙者，T=受益方。任何比分状态下都必须带乌龙措辞、语义明确受益方得利，
+// 绝不读成摆乌龙者正常进球；句内避开 SEAL_WORDS（「锁定胜局」回填按词替换，乌龙句不参与回填）。
+// first/retie 两态沿用原 report.ts 内联池（首球/扳平）并补足 ≥6，其余四态为 2026-11-21 新增。
+export type OgVerbState = "first" | "retie" | "overtake" | "break" | "extend" | "chase";
+export const OG_VERBS: Record<OgVerbState, (T: string) => readonly string[]> = {
+  // 首球即乌龙
+  first: (T) => [
+    "不慎自摆乌龙，场上僵局就此打破",
+    "自摆乌龙，送出本场第一球",
+    "皮球不慎撞进自家大门，场上比分就此改写",
+    `自摆乌龙，${T} 先下一城`,
+    `摆乌龙送出大礼，${T} 先拔头筹`,
+    `自摆乌龙，${T} 一球领先`,
+  ],
+  // 受益方落后一球 → 扳平
+  retie: (T) => [
+    `不慎自摆乌龙，${T} 得以扳平`,
+    `自摆乌龙，${T} 将比分追平`,
+    `皮球不慎撞进自家大门，${T} 扳平比分`,
+    `摆乌龙送分，${T} 追成平手`,
+    "自摆乌龙，比分回到同一起跑线",
+    `乌龙球入账，${T} 将比分追平`,
+  ],
+  // 受益方落后 → 反超（镜像过程句「反超」分支，当前 +1 记分下不可达，保留以防记分口径变动）
+  overtake: (T) => [
+    `不慎自摆乌龙，${T} 反超了比分`,
+    `自摆乌龙，${T} 就此反超`,
+    `皮球不慎撞进自家大门，${T} 反超了比分`,
+    `摆乌龙送分，${T} 反超了比分`,
+    `一记乌龙，${T} 反超了比分`,
+    `自摆乌龙送出大礼，${T} 反超了比分`,
+  ],
+  // 平局 → 受益方领先
+  break: (T) => [
+    `不慎自摆乌龙，${T} 超出比分`,
+    `自摆乌龙，${T} 取得领先`,
+    `皮球不慎撞进自家大门，${T} 领先了`,
+    `摆乌龙送分，${T} 超出比分`,
+    `一记乌龙，${T} 超出比分`,
+    `自摆乌龙送出大礼，${T} 取得领先`,
+  ],
+  // 受益方已领先 → 扩大
+  extend: (T) => [
+    `不慎自摆乌龙，${T} 扩大领先`,
+    `自摆乌龙，${T} 领先优势扩大`,
+    `皮球不慎撞进自家大门，${T} 扩大领先优势`,
+    `摆乌龙送分，${T} 扩大领先`,
+    `一记乌龙，${T} 领先优势扩大`,
+    `自摆乌龙送出大礼，${T} 领先优势扩大`,
+  ],
+  // 受益方仍落后 → 追回一分
+  chase: (T) => [
+    `不慎自摆乌龙，${T} 追回一分`,
+    `自摆乌龙，${T} 追回一分`,
+    `皮球不慎撞进自家大门，${T} 追回一分`,
+    `摆乌龙送分，${T} 追回一分`,
+    `一记乌龙，${T} 追回一分`,
+    `自摆乌龙送出大礼，${T} 追回一分`,
+  ],
+};
 
 // ---------- 标题池：骨架多样（比分前置/事件/纪录/氛围），标题 ≤32 字 ----------
 // 基础比分题永远可用；事件型/氛围型过 chance 不霸屏；纪录型按数据条件出现。
