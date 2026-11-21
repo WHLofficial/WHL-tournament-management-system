@@ -22,7 +22,7 @@ import {
   standingsSnapshot,
   subtractMatchContribution,
 } from "./context";
-import { bestMatchOf, computeMatchFacts, summarizeRound } from "./narrativeFacts";
+import { bestMatchOf, computeMatchFacts, summarizeRound, type MatchFacts } from "./narrativeFacts";
 import { shanghaiDateOf, shanghaiDateStr, shanghaiMidnightISO } from "./time";
 import { injuriesInRound, injuriesInWindow, type InjuryFact } from "./injury";
 import {
@@ -44,9 +44,13 @@ import {
   matchNewsTitle,
   pickAttitude,
   pickBreath,
+  pickResultHook,
+  pickResultTitle,
   walkoverTitle,
   weeklyTitle,
 } from "./copybanks";
+import { pickCombo, pickMethodLine } from "./methodCopy";
+import { ASSIST_METHODS, GOAL_METHODS, type AssistMethod, type GoalMethod } from "../../shared/methods";
 import { BYE_NOTE } from "../../shared/matchNotes";
 
 // ---------- 周报（自然周，周一起算，上海口径；本周空回退最近有比赛的一周） ----------
@@ -410,7 +414,12 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
 
   // 关键节点标记（口径同战报）：该球让进球方从「不领先」变「扳平或超出」（首开纪录/扳平/反超）；
   // 领先方扩大优势、落后方追回一球都不算。只有关键节点才提助攻——数据里几乎每个进球都记了助攻，逐个写太机械。
+  // 同一趟重放顺带记账（#3 奠定胜局门槛用，口径与 report.ts 侧互指）：球前领先方 prevLeader、
+  // 球后得分方净胜 diffAfter、球后是否平局 levelAfter。
   const keyFlags: boolean[] = [];
+  const prevLeaders: Array<"home" | "away" | null> = [];
+  const diffsAfter: number[] = [];
+  const levelAfter: boolean[] = [];
   {
     let h = 0;
     let a = 0;
@@ -418,10 +427,13 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
       const side = scoringSide(g);
       const scoring = g.type === "own_goal" ? (side === "home" ? "away" : "home") : side;
       const wasAhead = scoring === "home" ? h > a : a > h;
+      prevLeaders.push(h > a ? "home" : a > h ? "away" : null);
       if (scoring === "home") h += 1;
       else a += 1;
       const nowAhead = scoring === "home" ? h > a : a > h;
       keyFlags.push(!wasAhead && (nowAhead || h === a));
+      levelAfter.push(h === a);
+      diffsAfter.push(scoring === "home" ? h - a : a - h);
     }
   }
 
@@ -430,6 +442,10 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
     const first = i === 0;
     const closing =
       i === goals.length - 1 && winnerSide !== null && scoringSide(e) === winnerSide && e.type !== "own_goal";
+    // #3 奠定胜局门槛（与 report.ts 的 seal 门槛同口径）：此刻分差 ≤2，或末球 ≥80' 且破平/反超
+    const sealOk =
+      diffsAfter[i] <= 2 ||
+      (e.minute !== null && e.minute >= 80 && prevLeaders[i] !== winnerSide);
     const seed = `mbp:${m.id}:${i}`;
     // 该侧在第 i 球前的进球数（乌龙记受益方），用于判定「本队首球」
     const teamGoalsBefore = (side: "home" | "away"): number => {
@@ -450,6 +466,11 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
           ? // 全场第一个乌龙：不写「再送」，受益方首球时第二分句也属多余
             ["不慎自摆乌龙"]
           : [`再送一记乌龙，${ogBeneficiary(e)} 笑纳`, "又摆了一道乌龙"];
+    } else if (closing && !sealOk) {
+      // 大胜末球不写「锁定胜局」（audit §4.1 之③：按局势不按位置），换扩大类收尾池
+      pool = e.type === "pen_goal"
+        ? ["点球再下一城", "点球锦上添花", "点球扩大战果", "点球再进一球", "点球再入一球", "点球继续改写比分"]
+        : ["再下一城", "锦上添花", "扩大战果", "再入一球", "再进一球", "把比分继续拉开"];
     } else if (closing) {
       pool = e.type === "pen_goal"
         ? ["点球锁定胜局", "点球奠定胜局"]
@@ -496,18 +517,71 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
       used.add(`a:${a}`);
       astLead = `${e.assistName} ${a}，`;
     }
-    if (withTime && e.minute !== null) return `${astLead}${n} 第 ${e.minute} 分钟${core}`;
-    return `${astLead}${n} ${core}`;
+    // #4 主客归属（copybank §0 第 5 条）：非乌龙进球从句统一「第 M 分钟，{T} 的 …」；
+    // 乌龙句受益方已在句内表述，保持原样
+    const team = scoringSide(e) === "home" ? m.homeTeamName : m.awayTeamName;
+    if (withTime && e.minute !== null) {
+      return e.type === "own_goal" ? `${n} 第 ${e.minute} 分钟${core}` : `第 ${e.minute} 分钟，${team} 的 ${astLead}${n} ${core}`;
+    }
+    return e.type === "own_goal" ? `${n} ${core}` : `${team} 的 ${astLead}${n} ${core}`;
   };
+
+  // 进球方式（迁移 0038）非空的 goal 走 methodCopy 组合句/单句（词表真源 shared/methods.ts）；
+  // key-node 头衔与 closing 门槛照 copybank §4.4 叠加在句尾，hero 缀在射手名后，快讯强制 {T} 归属
+  const methodPhrase = (e: RawEvent, i: number, withTime: boolean): string => {
+    const n = nameOf(e);
+    const team = scoringSide(e) === "home" ? m.homeTeamName : m.awayTeamName;
+    const comboSeed = `mbm:${m.id}:${i}`;
+    const line =
+      e.assistName != null &&
+      e.assistMethod != null &&
+      (ASSIST_METHODS as readonly string[]).includes(e.assistMethod)
+        ? pickCombo(comboSeed, e.assistMethod as AssistMethod, e.method as GoalMethod, {
+            A: e.assistName,
+            P: n,
+            T: team,
+          })
+        : pickMethodLine(comboSeed, e.method as GoalMethod, { P: n, T: team });
+    const closing = i === goals.length - 1 && winnerSide !== null && scoringSide(e) === winnerSide;
+    const sealOk =
+      diffsAfter[i] <= 2 ||
+      (e.minute !== null && e.minute >= 80 && prevLeaders[i] !== winnerSide);
+    // key-node 头衔照 copybank §4.4 叠加：首开/扳平/反超在句尾；closing 门槛同 #3（不达标换扩大类）
+    const tail = closing
+      ? sealOk
+        ? `，${team} 锁定胜局`
+        : `，${team} 扩大战果`
+      : i === 0
+        ? `，${team} 首开纪录`
+        : keyFlags[i] && levelAfter[i]
+          ? `，${team} 扳平比分`
+          : keyFlags[i]
+            ? `，${team} 反超了比分`
+            : "";
+    let out = `${line}${tail}`;
+    const c = counts.get(n) ?? 0;
+    if (c >= 2 && lastIdx.get(n) === i) {
+      const hero = c === 2 ? "梅开二度" : c === 3 ? "上演帽子戏法" : `独中${cnum(c)}球`;
+      const cut = out.indexOf(`${n} `);
+      if (cut >= 0) out = `${out.slice(0, cut + n.length + 1)}${hero}${out.slice(cut + n.length + 1)}`;
+    }
+    return withTime && e.minute !== null
+      ? `第 ${e.minute} 分钟，${team} 的 ${out}`
+      : `${team} 的 ${out}`;
+  };
+
+  const usesMethod = (e: RawEvent): boolean =>
+    e.type === "goal" && e.method != null && (GOAL_METHODS as readonly string[]).includes(e.method);
 
   if (goals.length === 1) {
     const e = goals[0];
     if (e.type === "own_goal") return [phrase(e, 0, false, new Set())];
+    if (usesMethod(e)) return [methodPhrase(e, 0, true)];
     return [
       phrase(e, 0, true, new Set()),
       pickText(`mbs:${m.id}`, [
-        `${nameOf(e)} 打进全场唯一进球`,
-        `全场唯一进球来自 ${nameOf(e)}${e.type === "pen_goal" ? "的点球" : ""}`,
+        `${scoringSide(e) === "home" ? m.homeTeamName : m.awayTeamName} 的 ${nameOf(e)} 打进全场唯一进球`,
+        `全场唯一进球来自 ${scoringSide(e) === "home" ? m.homeTeamName : m.awayTeamName} 的 ${nameOf(e)}${e.type === "pen_goal" ? "的点球" : ""}`,
       ]),
     ];
   }
@@ -515,9 +589,11 @@ function matchBodyLines(m: FinishedMatch, events: RawEvent[]): string[] {
   const tail = goals.length > 4 ? `，双方合计打进 ${goals.length} 球` : "";
   const usedT = new Set<string>();
   const usedN = new Set<string>();
+  const clause = (e: RawEvent, i: number, withTime: boolean, used: Set<string>): string =>
+    usesMethod(e) ? methodPhrase(e, i, withTime) : phrase(e, i, withTime, used);
   return [
-    goals.slice(0, cap).map((e, i) => phrase(e, i, true, usedT)).join("，") + tail,
-    goals.slice(0, cap).map((e, i) => phrase(e, i, false, usedN)).join("，") + tail,
+    goals.slice(0, cap).map((e, i) => clause(e, i, true, usedT)).join("，") + tail,
+    goals.slice(0, cap).map((e, i) => clause(e, i, false, usedN)).join("，") + tail,
   ];
 }
 
@@ -736,6 +812,8 @@ export async function buildFeed(
   const auditRows = (await auditP).results ?? [];
 
   // 1) 完赛窗口 → 战报/弃权条（窗口取深些给混排留余量）
+  // C3 跨屏尾词去重：同一屏战报条共用一个尾词集合，pickResultTitle 选中后写入，后条撞尾自动顺延
+  const titleSeenTails = new Set<string>();
   for (const m of window) {
     const rl = roundLabel(m, maxRounds.get(m.stageId) ?? m.round);
     const base = {
@@ -821,19 +899,65 @@ export async function buildFeed(
           );
         }
       }
+      // C3：战报条标题接六档池（与战报页 resultPhrases 共用 RESULT_TITLE/pickResultTitle），seenTails 跨条目去重
+      const topBag =
+        facts && facts.maxBagGoals >= 2
+          ? facts.playerBags.find((p) => p.goals === facts.maxBagGoals) ?? null
+          : null;
+      // C3 钩子池：streakBroken 取败方赛前连况（赛事完赛升序切片重放，与 streak 条同源）、
+      // revenge 取本届同对阵首回合失利本场复仇；无胜方（平局）时不取
+      const nf = factsByTid.get(m.tournamentId);
+      let hookStreak: MatchFacts["streakBroken"] = null;
+      let hookRevenge = false;
+      if (nf && winnerName && loserName) {
+        const finAsc = nf.finAsc;
+        const pos = finAsc.findIndex((f) => f.id === m.id);
+        const beforeList = pos >= 0 ? finAsc.slice(0, pos) : [];
+        const loserEntry = loserName === m.homeTeamName ? m.homeEntryId : m.awayEntryId;
+        const st = currentStreaks(beforeList, loserEntry);
+        if (st.win >= 2) hookStreak = { kind: "win", count: st.win, teamName: loserName };
+        const winnerEntry = winnerName === m.homeTeamName ? m.homeEntryId : m.awayEntryId;
+        for (const x of beforeList) {
+          if (x.walkoverSide !== "") continue;
+          const samePair =
+            (x.homeEntryId === m.homeEntryId && x.awayEntryId === m.awayEntryId) ||
+            (x.homeEntryId === m.awayEntryId && x.awayEntryId === m.homeEntryId);
+          const xw = x.scoreHome > x.scoreAway ? x.homeEntryId : x.scoreAway > x.scoreHome ? x.awayEntryId : null;
+          if (samePair && xw != null && xw !== winnerEntry) hookRevenge = true;
+        }
+      }
+      const hook = facts
+        ? pickResultHook(`hk:${m.id}`, { ...facts, streakBroken: hookStreak }, {
+            home: m.homeTeamName,
+            away: m.awayTeamName,
+            scoreHome: m.scoreHome,
+            scoreAway: m.scoreAway,
+            heroName: topBag?.playerName ?? null,
+            revenge: hookRevenge,
+          })
+        : null;
+      const title = facts
+        ? `${pickResultTitle(`tt:${m.id}`, facts, {
+            home: m.homeTeamName,
+            away: m.awayTeamName,
+            scoreHome: m.scoreHome,
+            scoreAway: m.scoreAway,
+            heroName: topBag?.playerName ?? null,
+          }, titleSeenTails)}${hook ? `，${hook}` : ""}`
+        : matchNewsTitle(`tt:${m.id}`, {
+            roundLabel: rl,
+            home: m.homeTeamName,
+            away: m.awayTeamName,
+            scoreHome: m.scoreHome,
+            scoreAway: m.scoreAway,
+            winnerName,
+            loserName,
+          }, facts);
       items.push({
         ...base,
         id: `match:${m.id}`,
         kind: "match",
-        title: matchNewsTitle(`tt:${m.id}`, {
-          roundLabel: rl,
-          home: m.homeTeamName,
-          away: m.awayTeamName,
-          scoreHome: m.scoreHome,
-          scoreAway: m.scoreAway,
-          winnerName,
-          loserName,
-        }, facts),
+        title,
         body: p1,
         paragraphs,
         drama: facts?.dramaScore,
@@ -944,7 +1068,8 @@ export async function buildFeed(
       }
     }
 
-    // c) 里程碑：进球数达成 5 的倍数，或登顶射手榜（≥2 球门槛防开局噪音），每名射手每场至多一条
+    // c) 里程碑：进球数达成 10 的倍数（audit #7：5 的奇数倍档 5/15/25 砍掉，折进战报尾注），
+    //    或登顶射手榜（≥2 球门槛防开局噪音），每名射手每场至多一条
     const sc = facts.scorersAt.get(m.id);
     if (sc) {
       const seen = new Set<number>();
@@ -956,7 +1081,7 @@ export async function buildFeed(
         if (!afterRow) continue;
         const rankAfter = sc.after.indexOf(afterRow) + 1;
         const beforeIdx = sc.before.findIndex((p) => p.playerId === e.playerId);
-        if (afterRow.goals % 5 === 0) {
+        if (afterRow.goals >= 10 && afterRow.goals % 10 === 0) {
           items.push({
             ...base,
             id: `milestone:${m.id}:${e.playerId}`,
@@ -1065,11 +1190,13 @@ export async function buildFeed(
     });
   }
 
-  // 3.6) 轮次伤情条：与综述条同一批「全轮完赛」轮次，该轮有人受伤才出条（详情走综述页）
+  // 3.6) 轮次伤情条（audit #8）：与综述条同一批「全轮完赛」轮次；门槛 = 该轮有人挂着未打完的
+  // 缺阵场次或有人重伤才出条——纯轻伤且已销案的名单不占快讯流（详情走综述页）
   for (let i = 0; i < recapRows.length; i++) {
     const g = recapRows[i];
     const facts = dedupePlayerFacts(recapInjuries[i] ?? []);
     if (facts.length === 0) continue;
+    if (!facts.some((f) => f.outMatches > 0 || f.severity === "major")) continue;
     const rl = roundLabel(
       { stageKind: g.stage_kind, stageName: g.stage_name, round: g.round, tournamentName: g.tournament_name },
       recapMaxRounds.get(g.stage_id) ?? g.round,
@@ -1112,7 +1239,8 @@ export async function buildFeed(
             `${weekly.played} 场比赛共打进 ${weekly.goals} 球${weekly.topScorer ? `，射手王是 ${weekly.topScorer.name}（${weekly.topScorer.goals} 球）` : ""}`,
             `本周 ${weekly.played} 战收获 ${weekly.goals} 球${weekly.topScorer ? `，${weekly.topScorer.name} 以 ${weekly.topScorer.goals} 球领跑射手榜` : ""}`,
           ]) +
-          (wkInjuries.length > 0
+          // 周报伤情分句同 #8 门槛：全周无人挂缺阵且无重伤时不拼（audit #8）
+          (wkInjuries.some((f) => f.outMatches > 0 || f.severity === "major")
             ? `；${wkInjuries.length} 人受伤${wkOut > 0 ? pickText(`wko:${weekly.weekStart}`, INJURY_OUT_TAIL)(wkOut) : pickText(`wkc:${weekly.weekStart}`, INJURY_CLEAR_TAIL)}`
             : ""),
       });
@@ -1235,11 +1363,9 @@ export async function buildRoundRecap(
   }
   const p2Text = p2.length > 0 ? p2.join("。") + "。" : null;
 
-  // 段序轮换：约一半轮次把射手/榜首段提到开头，破「总账永远第一段」的固定版式
-  const scorerFirst = p2Text !== null && chance(`${rSeed}:ord`, 0.5);
-  if (p2Text !== null && scorerFirst) paragraphs.push(p2Text);
+  // 段序固定（C4，决策记录 4）：总账 p1 恒第一段，射手/榜首段 p2 恒在其后；骰子只留在后段文案变体里
   paragraphs.push(p1);
-  if (p2Text !== null && !scorerFirst) paragraphs.push(p2Text);
+  if (p2Text !== null) paragraphs.push(p2Text);
 
   // 尾段「本轮之最」：最快进球/绝杀/红牌账，有账才写（最大分差 p1 已记，不重复）
   const bits: string[] = [];
