@@ -81,11 +81,15 @@ describe("伤情快讯与周报", () => {
     expect(inj!.at).toBeTruthy();
   });
 
-  it("无人仍在伤停时尾巴改口径（不替登记下伤愈结论）", async () => {
-    const { db } = freshDb({ miss: "finished" });
+  it("无人仍在伤停时尾巴改口径（不替登记下伤愈结论）；纯轻伤且已销案不出条（audit #8 门槛）", async () => {
+    // 门槛：仅轻伤且无人挂缺阵 → 不出条
+    const noQualify = await buildFeed(freshDb({ miss: "finished" }).db);
+    expect(noQualify.find((i) => i.kind === "injury")).toBeUndefined();
+    // 达门槛的空尾巴场景 = 有重伤但无人挂缺阵（major 过门槛，尾巴走清空口径）
+    const { db } = freshDb({ miss: "finished", dup: true });
     const items = await buildFeed(db);
     const inj = items.find((i) => i.kind === "injury");
-    expect(inj!.body).toContain("张三（红队 · 轻伤 · 踝关节扭伤）");
+    expect(inj!.body).toContain("张三（红队 · 重伤）");
     expect(hasClearTail(inj!.body)).toBe(true);
     // 空口径不做「伤愈／全员健康」的断言——登记表里没有这个事实
     expect(inj!.body).not.toMatch(/伤愈|全员健康|全员出战/);

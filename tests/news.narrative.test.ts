@@ -72,7 +72,9 @@ describe("快讯叙事三类目", () => {
     expect(ids).toContain("streak:797:501");
     expect(ids).toContain("streak:798:501");
 
-    // 红队 100 号在 796 打进第 5 球；蓝队 200 号在 798 以 3 球登顶射手榜
+    // audit #7 砍档：红队 100 号在 796 打进第 5 球，5 的奇数倍档（进球数里程碑）砍掉折进战报尾注；
+    // 但 796 同场 100 号从 0 球升至 5 球登顶射手榜，登顶分支不受砍档影响仍出条；
+    // 蓝队 200 号在 798 以 6 球反超登顶
     expect(ids).toContain("milestone:796:100");
     expect(ids).toContain("milestone:798:200");
 
@@ -81,18 +83,17 @@ describe("快讯叙事三类目", () => {
     expect(first.map((i) => i.matchId)).not.toContain(795);
   });
 
-  it("里程碑的队名跟着进球者的 entry_id 走，不是该场主队", async () => {
+  it("里程碑砍档：进球数档不再出「本届第 N 球」标题，登顶条仍在且人名来自事件行反推", async () => {
     const items = await buildFeed(narrativeDb(), { limit: 15 });
     const at796 = items.find((i) => i.id === "milestone:796:100");
     const at798 = items.find((i) => i.id === "milestone:798:200");
     expect(at796).toBeDefined();
     expect(at798).toBeDefined();
-
-    // 796 是「黄队主场、红队客场」，进球者 100 号属于客队红队 —— 队名若误取主队名就会写成黄队
-    expect(at796!.title).toContain("红前锋");
-    expect(at796!.body).toContain("红队");
-    expect(at796!.body).not.toContain("黄队");
-    // 798 是「登顶射手榜」分支，标题带射手名（该分支句库不含队名，队名覆盖靠上面那条）
+    // 796 的 5 球条从「进球数档」（本届第 N 球）切换为「登顶射手榜」分支——goals 档标题不再出现；
+    // 登顶分支句库不含队名（goals 档的「代表 红队」队名反推覆盖随之消失，leader/streak 条仍覆盖该口径）
+    expect(at796!.title).not.toContain("本届");
+    expect(at796!.title).toContain("登顶");
+    // 798 是「登顶射手榜」分支，标题带射手名（该分支句库不含队名）
     expect(at798!.title).toContain("蓝前锋");
   });
 });

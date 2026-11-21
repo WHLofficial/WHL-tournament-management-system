@@ -88,6 +88,11 @@ describe("新闻助攻口径", () => {
     expect(text).not.toContain("红后卫乙");
     // 旧语序（进球在前、助攻在后）不再出现
     expect(text).not.toMatch(/红前锋[^。]{0,20}红中场/);
+    // #4 主客归属：进球从句带「第 M 分钟，{T} 的 …」（有助攻带助攻段、无助攻省 A 段）
+    expect(text).toContain("第 5 分钟，蓝队 的 蓝中场");
+    expect(text).toContain("第 30 分钟，红队 的 红中场");
+    expect(text).toContain("第 80 分钟，红队 的 红前锋");
+    expect(text).not.toContain("客场得手");
   });
 
   it("战报：同一场比赛的叙述句同口径", async () => {
@@ -102,11 +107,12 @@ describe("新闻助攻口径", () => {
     expect(rep!.goals.map((g) => g.assistPlayerName)).toEqual(["蓝中场", "红中场", "红后卫甲", "红后卫乙"]);
   });
 
-  it("单球比赛：首开纪录是关键节点，助攻照写", async () => {
+  it("单球比赛：首开纪录是关键节点，助攻照写；无助攻从句也带 {T} 归属", async () => {
     const db = singleGoalDb();
     const item = (await buildFeed(db)).find((i) => i.kind === "match" && i.matchId === 800);
     expect(item).toBeTruthy();
     expect(item!.paragraphs?.[0] ?? item!.body).toMatch(BEFORE("红中场", "红前锋"));
+    expect(item!.paragraphs?.[0] ?? item!.body).toContain("第 40 分钟，红队 的 红中场");
     const rep = await buildMatchReport(db, 800);
     expect(rep!.paragraphs.join("")).toMatch(BEFORE("红中场", "红前锋"));
   });

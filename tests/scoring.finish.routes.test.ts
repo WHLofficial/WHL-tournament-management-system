@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
+import { ASSIST_METHODS, GOAL_METHODS } from "../shared/methods";
 import { applyMigrations, createTestD1, createTestKV, insertPlayer, sqlAll, sqlGet } from "./d1";
 
 type Env = Record<string, unknown>;
@@ -539,11 +540,13 @@ const eventsOf = (sqlite: DatabaseSync, matchId: number) =>
     player_id: number | null;
     assist_player_id: number | null;
     type: string;
+    method: string | null;
+    assist_method: string | null;
     minute: number | null;
     created_by: number;
   }>(
     sqlite,
-    "SELECT id, entry_id, player_id, assist_player_id, type, minute, created_by FROM match_event WHERE match_id = ? ORDER BY id",
+    "SELECT id, entry_id, player_id, assist_player_id, type, method, assist_method, minute, created_by FROM match_event WHERE match_id = ? ORDER BY id",
     matchId
   );
 const auditOf = (sqlite: DatabaseSync, targetId: number, action: string) =>
@@ -590,7 +593,15 @@ describe("scoring 事件录入（events）", () => {
     ]);
     // 每条事件各写一行 event_create 审计，detail 带事件归属（最新一条是点球进球）
     expect(auditOf(sqlite, 800, "event_create")?.detail_json).toBe(
-      JSON.stringify({ type: "pen_goal", entryId: 501, playerId: 3, assistPlayerId: null, minute: 30 })
+      JSON.stringify({
+        type: "pen_goal",
+        entryId: 501,
+        playerId: 3,
+        assistPlayerId: null,
+        method: null,
+        assist_method: null,
+        minute: 30,
+      })
     );
   });
 
@@ -743,5 +754,207 @@ describe("scoring 事件录入（events）", () => {
       ["goal", 2, 1, 9],
     ]);
     expect(events[0].matchId).toBe(800);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 进球方式 / 助攻方式（method / assist_method，迁移 0038）的录入端校验与读写通路。
+// 规则照 docs/news-method-copybank.md §1：两列仅 goal 可带（pen_goal / own_goal 拒绝）；
+// solo 与 free_kick（直接打门）不记助攻；assist_method 仅在选了助攻人时允许；
+// 取值必须命中 shared/methods.ts 词表，禁自由文本。
+const methodColsOf = (sqlite: DatabaseSync, id: number) =>
+  sqlGet<{ method: string | null; assist_method: string | null }>(
+    sqlite,
+    "SELECT method, assist_method FROM match_event WHERE id = ?",
+    id
+  );
+
+describe("scoring 进球方式/助攻方式（method）", () => {
+  it("合法 goal+method+assist_method 通过：落库、event_create 审计、GET 读回", async () => {
+    const { env, sqlite } = freshEnv();
+    addPlayers(sqlite);
+    await start(env, 800);
+
+    const res = await postEvent(env, 800, {
+      type: "goal",
+      entryId: 500,
+      playerId: 1,
+      assistPlayerId: 2,
+      method: "header",
+      assist_method: "cross_45",
+      minute: 12,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, scoreHome: 1, scoreAway: 0 });
+
+    const eventId = eventsOf(sqlite, 800)[0].id;
+    expect(methodColsOf(sqlite, eventId)).toEqual({ method: "header", assist_method: "cross_45" });
+    const audit = auditOf(sqlite, 800, "event_create")?.detail_json ?? "";
+    expect(audit).toContain('"method":"header"');
+    expect(audit).toContain('"assist_method":"cross_45"');
+
+    // 读写通路：GET /:id/events 带回 method / assistMethod
+    const list = await app.request(eventUrl(800), { headers: EVENT_HEADERS }, env);
+    const { events } = (await list.json()) as { events: Array<Record<string, unknown>> };
+    expect(events[0]).toMatchObject({ method: "header", assistMethod: "cross_45" });
+  });
+
+  it("pen_goal / own_goal / 其余类型带两列 → 400；点球进球仍可记助攻人但不可记助攻方式", async () => {
+    const { env, sqlite } = freshEnv();
+    addPlayers(sqlite);
+    await start(env, 800);
+
+    const pen = await postEvent(env, 800, { type: "pen_goal", entryId: 500, playerId: 1, method: "header" });
+    expect(pen.status).toBe(400);
+    expect((await pen.json()).message).toBe("只有进球可以记进球方式");
+
+    const og = await postEvent(env, 800, { type: "own_goal", entryId: 500, playerId: 1, method: "header" });
+    expect(og.status).toBe(400);
+    expect((await og.json()).message).toBe("只有进球可以记进球方式");
+
+    const ogAssistMethod = await postEvent(env, 800, { type: "own_goal", entryId: 500, playerId: 1, assist_method: "cross_45" });
+    expect(ogAssistMethod.status).toBe(400);
+    expect((await ogAssistMethod.json()).message).toBe("只有进球可以记助攻方式");
+
+    const yellow = await postEvent(env, 800, { type: "yellow", entryId: 500, playerId: 1, method: "header" });
+    expect(yellow.status).toBe(400);
+    expect((await yellow.json()).message).toBe("只有进球可以记进球方式");
+
+    // 点球进球 + 助攻方式：助攻人本身合法，但 assist_method 仅限运动战进球
+    const penAssistMethod = await postEvent(env, 800, {
+      type: "pen_goal",
+      entryId: 500,
+      playerId: 1,
+      assistPlayerId: 2,
+      assist_method: "cross_45",
+    });
+    expect(penAssistMethod.status).toBe(400);
+    expect((await penAssistMethod.json()).message).toBe("只有进球可以记助攻方式");
+    const penAssistOk = await postEvent(env, 800, { type: "pen_goal", entryId: 500, playerId: 1, assistPlayerId: 2 });
+    expect(penAssistOk.status).toBe(200);
+    expect(eventsOf(sqlite, 800)).toHaveLength(1); // 前面全是 400，只有这条落库
+  });
+
+  it("solo / free_kick 拒绝助攻人与助攻方式；不带助攻时合法落库", async () => {
+    const { env, sqlite } = freshEnv();
+    addPlayers(sqlite);
+    await start(env, 800);
+
+    const soloAssist = await postEvent(env, 800, {
+      type: "goal",
+      entryId: 500,
+      playerId: 1,
+      assistPlayerId: 2,
+      method: "solo",
+    });
+    expect(soloAssist.status).toBe(400);
+    expect((await soloAssist.json()).message).toBe("个人一条龙与任意球直接不记助攻");
+
+    const fkAssistMethod = await postEvent(env, 800, {
+      type: "goal",
+      entryId: 500,
+      playerId: 1,
+      method: "free_kick",
+      assist_method: "cross_45",
+    });
+    expect(fkAssistMethod.status).toBe(400);
+    expect((await fkAssistMethod.json()).message).toBe("个人一条龙与任意球直接不记助攻");
+
+    const soloOk = await postEvent(env, 800, { type: "goal", entryId: 500, playerId: 1, method: "solo" });
+    expect(soloOk.status).toBe(200);
+    const eventId = eventsOf(sqlite, 800)[0].id;
+    expect(methodColsOf(sqlite, eventId)).toEqual({ method: "solo", assist_method: null });
+  });
+
+  it("assist_method 没有助攻人 → 400；未知枚举值 → 400（禁自由文本）", async () => {
+    const { env, sqlite } = freshEnv();
+    addPlayers(sqlite);
+    await start(env, 800);
+
+    const noAssist = await postEvent(env, 800, { type: "goal", entryId: 500, playerId: 1, assist_method: "cross_45" });
+    expect(noAssist.status).toBe(400);
+    expect((await noAssist.json()).message).toBe("记助攻方式需要先选择助攻球员");
+
+    const badMethod = await postEvent(env, 800, { type: "goal", entryId: 500, playerId: 1, method: "world_cup_winner" });
+    expect(badMethod.status).toBe(400);
+    expect((await badMethod.json()).message).toBe(`进球方式必须是 ${GOAL_METHODS.join(" / ")}`);
+
+    const badAssistMethod = await postEvent(env, 800, {
+      type: "goal",
+      entryId: 500,
+      playerId: 1,
+      assistPlayerId: 2,
+      assist_method: "banana",
+    });
+    expect(badAssistMethod.status).toBe(400);
+    expect((await badAssistMethod.json()).message).toBe(`助攻方式必须是 ${ASSIST_METHODS.join(" / ")}`);
+  });
+
+  it("PUT 编辑补两列：UPDATE 生效、before/after 审计带新旧方式；不带 method 的编辑清空两列", async () => {
+    const { env, sqlite } = freshEnv();
+    addPlayers(sqlite);
+    await start(env, 800);
+    await postEvent(env, 800, {
+      type: "goal",
+      entryId: 500,
+      playerId: 1,
+      assistPlayerId: 2,
+      method: "header",
+      assist_method: "cross_45",
+    });
+    const eventId = eventsOf(sqlite, 800)[0].id;
+
+    const edit = await putEvent(env, 800, eventId, {
+      type: "goal",
+      entryId: 500,
+      playerId: 1,
+      assistPlayerId: 2,
+      method: "curler",
+      assist_method: "cutback",
+      minute: 30,
+    });
+    expect(edit.status).toBe(200);
+    expect(methodColsOf(sqlite, eventId)).toEqual({ method: "curler", assist_method: "cutback" });
+
+    const audit = auditOf(sqlite, 800, "event_update")?.detail_json ?? "";
+    expect(audit).toContain('"before"');
+    expect(audit).toContain('"method":"header"'); // before 留旧方式
+    expect(audit).toContain('"method":"curler"'); // after 记新方式
+    expect(audit).toContain('"assist_method":"cutback"');
+
+    // 编辑不传两列 = 显式清空（UPDATE 绑 NULL）
+    const clear = await putEvent(env, 800, eventId, { type: "goal", entryId: 500, playerId: 1, minute: 45 });
+    expect(clear.status).toBe(200);
+    expect(methodColsOf(sqlite, eventId)).toEqual({ method: null, assist_method: null });
+  });
+
+  it("PUT 同样受校验约束：solo+助攻 / 非法枚举 / pen_goal 带方式都被拒", async () => {
+    const { env, sqlite } = freshEnv();
+    addPlayers(sqlite);
+    await start(env, 800);
+    await postEvent(env, 800, { type: "goal", entryId: 500, playerId: 1, assistPlayerId: 2, method: "header" });
+    const eventId = eventsOf(sqlite, 800)[0].id;
+
+    const soloAssist = await putEvent(env, 800, eventId, {
+      type: "goal",
+      entryId: 500,
+      playerId: 1,
+      assistPlayerId: 2,
+      method: "solo",
+    });
+    expect(soloAssist.status).toBe(400);
+    expect((await soloAssist.json()).message).toBe("个人一条龙与任意球直接不记助攻");
+
+    const badEnum = await putEvent(env, 800, eventId, { type: "goal", entryId: 500, playerId: 1, method: "hat_trick" });
+    expect(badEnum.status).toBe(400);
+    expect((await badEnum.json()).message).toBe(`进球方式必须是 ${GOAL_METHODS.join(" / ")}`);
+
+    const penMethod = await putEvent(env, 800, eventId, { type: "pen_goal", entryId: 500, playerId: 1, method: "header" });
+    expect(penMethod.status).toBe(400);
+    expect((await penMethod.json()).message).toBe("只有进球可以记进球方式");
+
+    // 被拒的编辑都不落库：原事件原样保留
+    expect(eventsOf(sqlite, 800)).toHaveLength(1);
+    expect(methodColsOf(sqlite, eventId)).toEqual({ method: "header", assist_method: null });
   });
 });
