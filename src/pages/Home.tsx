@@ -152,12 +152,12 @@ export function Home() {
     return () => clearInterval(t);
   }, [load]);
 
-  // 表态：localStorage 已点过直接忽略；否则乐观计数 + 落存储
+  // 表态：localStorage 已点过直接忽略；乐观计数先行，「已点」标记等 POST 成功才落——
+  // 失败回滚计数与 mine、不落标记，按钮保持可点可重试（audit #11）
   const react = useCallback(async (itemId: string, emoji: "fire" | "thumb" | "mind" | "cry") => {
     const key = REACT_LS(itemId);
     const prev: string[] = JSON.parse(localStorage.getItem(key) ?? "[]");
     if (prev.includes(emoji)) return;
-    localStorage.setItem(key, JSON.stringify([...prev, emoji]));
     setMine((m) => ({ ...m, [itemId]: new Set([...(m[itemId] ?? []), emoji]) }));
     setReactions((r) => ({ ...r, [itemId]: { ...r[itemId], [emoji]: (r[itemId]?.[emoji] ?? 0) + 1 } }));
     try {
@@ -165,10 +165,19 @@ export function Home() {
         method: "POST",
         body: { emoji },
       });
+      localStorage.setItem(key, JSON.stringify([...prev, emoji]));
       setReactions((r) => ({ ...r, [itemId]: { ...r[itemId], [emoji]: res.cnt } }));
     } catch {
-      // 失败回滚计数（保留本地已点标记，防连点刷数）
+      // 失败回滚计数与 mine、不落「已点」标记——按钮保持可点可重试
       setReactions((r) => ({ ...r, [itemId]: { ...r[itemId], [emoji]: Math.max(0, (r[itemId]?.[emoji] ?? 1) - 1) } }));
+      setMine((m) => {
+        const s = new Set(m[itemId] ?? []);
+        s.delete(emoji);
+        const next = { ...m };
+        if (s.size > 0) next[itemId] = s;
+        else delete next[itemId];
+        return next;
+      });
     }
   }, []);
 

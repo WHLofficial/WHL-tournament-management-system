@@ -24,6 +24,7 @@ import type {
 import { elimRoundName } from "../../shared/rounds";
 import { BYE_NOTE } from "../../shared/matchNotes";
 import { defaultRoundIndex } from "../../shared/defaultRound";
+import { ASSIST_METHODS, ASSIST_METHOD_LABEL, GOAL_METHODS, METHOD_LABEL } from "../../shared/methods";
 
 const MATCH_STATUS: Record<MatchDTO["status"], string> = {
   pending: "未开打",
@@ -1072,13 +1073,19 @@ function EventForm({
   const [playerId, setPlayerId] = useState("");
   const [assistId, setAssistId] = useState("");
   const [minute, setMinute] = useState("");
+  // 进球方式 / 助攻方式（词表真源 shared/methods.ts；后端 body 键为 method / assist_method）
+  const [method, setMethod] = useState("");
+  const [assistMethod, setAssistMethod] = useState("");
 
   const players = side === "home" ? homePlayers : awayPlayers;
   const goalish = type === "goal" || type === "pen_goal";
+  // 个人一条龙/任意球直接不记助攻（copybank §1）：隐藏助攻人下拉并清空助攻状态，切回其它方式恢复
+  const noAssist = method === "solo" || method === "free_kick";
   const switchSide = (s: "home" | "away") => {
     setSide(s);
     setPlayerId("");
     setAssistId("");
+    setAssistMethod("");
   };
 
   // 进入编辑态：按事件回填（red_2y 不给编辑入口，这里兜底映射成 red 防御）
@@ -1088,6 +1095,8 @@ function EventForm({
     setType(editEv.type === "red_2y" ? "red" : editEv.type);
     setPlayerId(editEv.playerId != null ? String(editEv.playerId) : "");
     setAssistId(editEv.assistPlayerId != null ? String(editEv.assistPlayerId) : "");
+    setMethod(editEv.method ?? "");
+    setAssistMethod(editEv.assistMethod ?? "");
     setMinute(editEv.minute != null ? String(editEv.minute) : "");
   }, [editEv, m.homeEntryId]);
 
@@ -1096,6 +1105,8 @@ function EventForm({
     setSide("home");
     setPlayerId("");
     setAssistId("");
+    setMethod("");
+    setAssistMethod("");
     setMinute("");
   };
   const exitEdit = () => {
@@ -1161,7 +1172,14 @@ function EventForm({
                   entryId,
                   playerId: playerId === "" ? undefined : Number(playerId),
                   assistPlayerId:
-                    goalish && assistId !== "" ? Number(assistId) : undefined,
+                    goalish && !noAssist && assistId !== "" ? Number(assistId) : undefined,
+                  // 方式两列仅 goal 可带（pen_goal/own_goal 拒绝）；空串不传（编辑时即清空该列）。
+                  // 助攻方式的 body 键为 assist_method —— 后端校验/测试钉 snake_case（前端状态名跟随 DTO 用驼峰）
+                  method: type === "goal" && method !== "" ? method : undefined,
+                  assist_method:
+                    type === "goal" && !noAssist && assistId !== "" && assistMethod !== ""
+                      ? assistMethod
+                      : undefined,
                   minute: minute === "" ? undefined : Number(minute),
                 },
               },
@@ -1199,7 +1217,15 @@ function EventForm({
         <select
           className="input"
           value={type}
-          onChange={(e) => setType(e.target.value as Exclude<MatchEventDTO["type"], "red_2y">)}
+          onChange={(e) => {
+            const t = e.target.value as Exclude<MatchEventDTO["type"], "red_2y">;
+            setType(t);
+            // 方式两列仅 goal 可带：切到其它类型清空（编辑回填走 useEffect，不受影响）
+            if (t !== "goal") {
+              setMethod("");
+              setAssistMethod("");
+            }
+          }}
         >
           {(Object.keys(EVENT_LABEL) as Exclude<MatchEventType, "red_2y">[]).map((t) => (
             <option key={t} value={t}>
@@ -1221,7 +1247,7 @@ function EventForm({
             </option>
           ))}
         </select>
-        {goalish && (
+        {goalish && !noAssist && (
           <select
             className="input"
             value={assistId}
@@ -1236,6 +1262,42 @@ function EventForm({
                   {p.name}
                 </option>
               ))}
+          </select>
+        )}
+        {type === "goal" && !noAssist && assistId !== "" && (
+          <select
+            className="input"
+            value={assistMethod}
+            onChange={(e) => setAssistMethod(e.target.value)}
+          >
+            <option value="">助攻方式（可选）</option>
+            {ASSIST_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {ASSIST_METHOD_LABEL[m]}
+              </option>
+            ))}
+          </select>
+        )}
+        {type === "goal" && (
+          <select
+            className="input"
+            value={method}
+            onChange={(e) => {
+              const v = e.target.value;
+              setMethod(v);
+              // 个人一条龙/任意球直接不记助攻：隐藏助攻人下拉并清空助攻状态
+              if (v === "solo" || v === "free_kick") {
+                setAssistId("");
+                setAssistMethod("");
+              }
+            }}
+          >
+            <option value="">进球方式（可选）</option>
+            {GOAL_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {METHOD_LABEL[m]}
+              </option>
+            ))}
           </select>
         )}
         <div className="ev-tail">

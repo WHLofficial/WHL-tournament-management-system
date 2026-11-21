@@ -17,11 +17,12 @@ export default function NewsPage() {
   const [mine, setMine] = useState<Record<string, Set<string>>>({});
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
+  // 表态同 Home 口径（audit #11）：乐观计数先行，「已点」标记 POST 成功才落；
+  // 失败回滚计数与 mine、不落标记，按钮保持可点可重试
   const react = useCallback(async (itemId: string, emoji: "fire" | "thumb" | "mind" | "cry") => {
     const key = `whl.react.${itemId}`;
     const prev: string[] = JSON.parse(localStorage.getItem(key) ?? "[]");
     if (prev.includes(emoji)) return;
-    localStorage.setItem(key, JSON.stringify([...prev, emoji]));
     setMine((m) => ({ ...m, [itemId]: new Set([...(m[itemId] ?? []), emoji]) }));
     setReactions((r) => ({ ...r, [itemId]: { ...r[itemId], [emoji]: (r[itemId]?.[emoji] ?? 0) + 1 } }));
     try {
@@ -29,12 +30,21 @@ export default function NewsPage() {
         method: "POST",
         body: { emoji },
       });
+      localStorage.setItem(key, JSON.stringify([...prev, emoji]));
       setReactions((r) => ({ ...r, [itemId]: { ...r[itemId], [emoji]: res.cnt } }));
     } catch {
       setReactions((r) => ({
         ...r,
         [itemId]: { ...r[itemId], [emoji]: Math.max(0, (r[itemId]?.[emoji] ?? 1) - 1) },
       }));
+      setMine((m) => {
+        const s = new Set(m[itemId] ?? []);
+        s.delete(emoji);
+        const next = { ...m };
+        if (s.size > 0) next[itemId] = s;
+        else delete next[itemId];
+        return next;
+      });
     }
   }, []);
 

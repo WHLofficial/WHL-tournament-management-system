@@ -46,7 +46,7 @@ export default function ReportPage() {
       .catch(() => {});
   }, [report, midNum]);
 
-  // MOTM 候选 = 数据框里出现过的球员（进球/助攻/红黄牌），按进球数、助攻数次序排前
+  // 全场最佳候选 = 数据框里出现过的球员（进球/助攻/红黄牌），按进球数、助攻数次序排前
   const candidates = useMemo(() => {
     if (!report) return [];
     const map = new Map<
