@@ -1,10 +1,11 @@
-// #13 头版门户互动层：MOTM 投票（需登录，观众号同权）+ 快讯表态（匿名，前端 localStorage 去重）。
+// #13 头版门户互动层：全场最佳（MOTM）投票（需登录，观众号同权）+ 快讯表态（匿名，前端 localStorage 去重）。
 // 挂载在 /api/interact（不进 PUBLIC_PATHS，需要 attachUser 读会话）；
 // 纯匿名可用的表态计数读取也放这里（低频，匿名访客多付一次会话检查可接受）。
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../lib/ratelimit";
+import { shanghaiMidnightISO } from "../lib/time";
 
 const app = new Hono<AppEnv>();
 
@@ -13,7 +14,7 @@ type EmojiKey = (typeof EMOJIS)[number];
 // 快讯条目 id 的形态：kind:id 或 kind:id:id（milestone/streak），白名单字符防垃圾行
 const ITEM_ID_RE = /^[a-z]+:[0-9A-Za-z:_-]{1,64}$/;
 
-// ---------- MOTM 全场最佳 ----------
+// ---------- 全场最佳（MOTM） ----------
 
 // 投票/改票（一人一场一票，改票覆盖）
 app.post("/matches/:mid/motm", requireUser, async (c) => {
@@ -82,6 +83,89 @@ app.get("/matches/:mid/motm", async (c) => {
 
 // ---------- 快讯表态 ----------
 
+// 日期串（YYYY-MM-DD）→ 所在周的周一；纯日历运算，口径与 feedNews 的 mondayOfDateStr 一致
+function mondayOf(dateStr: string): string {
+  const t = new Date(`${dateStr}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+  return t.toISOString().slice(0, 10);
+}
+
+// 上海周 [周一, 次周一) 的 UTC 窗口（口径同 feedNews weekWindow，经 lib/time 的上海零点换算）
+function weekWindowOf(mondayStr: string): [string, string] {
+  const next = new Date(`${mondayStr}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 7);
+  return [shanghaiMidnightISO(mondayStr), shanghaiMidnightISO(next.toISOString().slice(0, 10))];
+}
+
+// 条目存在性校验（audit 批次一 #10）：快讯条 id 是派生 id，表态前按前缀 kind 点查主表，
+// 防止对已删改/伪造条目写 reaction 垃圾行（历史垃圾行不清理，只防新写入）。
+// kind 集合 = feedNews 实际 push 的 id 前缀；查询全部走主键/既有索引，每条一次点查。
+async function itemExists(db: D1Database, itemId: string): Promise<boolean> {
+  const [kind, ...rest] = itemId.split(":");
+  switch (kind) {
+    // match:{id} / wo:{id} / leader:{matchId} / streak:{matchId}:{entryId} / milestone:{matchId}:{playerId}
+    // → 首段都是 match.id
+    case "match":
+    case "wo":
+    case "leader":
+    case "streak":
+    case "milestone": {
+      const id = Number(rest[0]);
+      if (!Number.isInteger(id)) return false;
+      const row = await db.prepare("SELECT 1 AS ok FROM match WHERE id = ?").bind(id).first();
+      return row != null;
+    }
+    // discipline:{match_event.id} —— 红牌事件行
+    case "discipline": {
+      const id = Number(rest[0]);
+      if (!Number.isInteger(id)) return false;
+      const row = await db.prepare("SELECT 1 AS ok FROM match_event WHERE id = ?").bind(id).first();
+      return row != null;
+    }
+    // rescore:{audit_log.id}
+    case "rescore": {
+      const id = Number(rest[0]);
+      if (!Number.isInteger(id)) return false;
+      const row = await db.prepare("SELECT 1 AS ok FROM audit_log WHERE id = ?").bind(id).first();
+      return row != null;
+    }
+    // recap:{stageId}:{round} / injury:{stageId}:{round} → 该 (stage_id, round) 存在完赛场
+    case "recap":
+    case "injury": {
+      const stageId = Number(rest[0]);
+      const round = Number(rest[1]);
+      if (!Number.isInteger(stageId) || !Number.isInteger(round)) return false;
+      const row = await db
+        .prepare("SELECT 1 AS ok FROM match WHERE stage_id = ? AND round = ? AND status = 'finished' LIMIT 1")
+        .bind(stageId, round)
+        .first();
+      return row != null;
+    }
+    // weekly:{YYYY-MM-DD 周一} → 该上海周窗口 [周一, 次周一) 内有完赛场（口径同 feedNews weekMatches）
+    case "weekly": {
+      const monday = rest[0] ?? "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(monday)) return false;
+      const probe = new Date(`${monday}T00:00:00Z`);
+      if (Number.isNaN(probe.getTime()) || mondayOf(monday) !== monday) return false;
+      const [startISO, endISO] = weekWindowOf(monday);
+      const row = await db
+        .prepare(
+          `SELECT 1 AS ok
+           FROM match m
+           JOIN stage s ON s.id = m.stage_id
+           JOIN tournament t ON t.id = s.tournament_id
+           WHERE t.status != 'draft' AND m.status = 'finished'
+             AND m.finished_at >= ? AND m.finished_at < ? LIMIT 1`,
+        )
+        .bind(startISO, endISO)
+        .first();
+      return row != null;
+    }
+    default:
+      return false;
+  }
+}
+
 // 表态（匿名可用；去重靠前端 localStorage，服务端只累加）
 app.post("/reactions/:itemId", async (c) => {
   const itemId = c.req.param("itemId");
@@ -93,6 +177,10 @@ app.post("/reactions/:itemId", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") ?? "local";
   if (!(await rateLimit(c.env, `react:${ip}`, 30, 60)))
     return c.json({ error: "rate_limited", message: "操作太频繁，稍后再试" }, 429);
+
+  // 形态白名单之后再点查条目存在性（audit 批次一 #10）：查无即 404，不落 reaction 行
+  if (!(await itemExists(c.env.DB, itemId)))
+    return c.json({ error: "not_found", message: "条目不存在" }, 404);
 
   const row = await c.env.DB.prepare(
     `INSERT INTO reaction (item_id, emoji, cnt) VALUES (?, ?, 1)

@@ -462,7 +462,9 @@ export function injuriesInRound(
 }
 
 // 时间窗口里的伤情（按完赛时刻，与 fetchFinishedWindow / weekMatches 同口径：左闭右开）；
-// 传 tournamentId 只取该届，不传则跨赛事（周报用）
+// 传 tournamentId 只取该届，不传则跨赛事（周报用）。
+// 两分支均补 m.status = 'finished'（BUG_REPORTS.md:189）：补录/改期会留下陈旧 finished_at 的
+// 未开赛场，不过滤会把伤情错归进周报窗口。
 export function injuriesInWindow(
   db: D1Database,
   fromIso: string, // 含（>=）
@@ -470,8 +472,11 @@ export function injuriesInWindow(
   tournamentId?: number
 ): Promise<InjuryFact[]> {
   return tournamentId == null
-    ? injuryFacts(db, "m.finished_at >= ? AND m.finished_at < ?", [fromIso, toIso])
-    : injuryFacts(db, "s.tournament_id = ? AND m.finished_at >= ? AND m.finished_at < ?", [
+    ? injuryFacts(db, "m.status = 'finished' AND m.finished_at >= ? AND m.finished_at < ?", [
+        fromIso,
+        toIso,
+      ])
+    : injuryFacts(db, "s.tournament_id = ? AND m.status = 'finished' AND m.finished_at >= ? AND m.finished_at < ?", [
         tournamentId,
         fromIso,
         toIso,
