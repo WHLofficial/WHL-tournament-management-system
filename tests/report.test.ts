@@ -913,6 +913,27 @@ describe("线上三场回归：乌龙序列（#1/#4）", () => {
     expect(rep!.goals[4]).toMatchObject({ teamName: "红队", side: "home", playerName: "红中场" });
   });
 
+  it("方式句尾巴：进球前落后、进球后仍落后 → 扳回一城，不写反超（227 97' 线上实锤）", async () => {
+    const matchId = 5425;
+    const { db } = reportDb({
+      matchId,
+      scoreHome: 2,
+      scoreAway: 3,
+      goals: [
+        { id: 1, matchId, entryId: 501, playerId: 200, minute: 18 },
+        { id: 2, matchId, entryId: 500, playerId: 100, minute: 35 },
+        { id: 3, matchId, entryId: 501, playerId: 200, minute: 52 },
+        { id: 4, matchId, entryId: 500, playerId: 102, minute: 87, type: "own_goal" },
+        { id: 5, matchId, entryId: 500, playerId: 101, minute: 97, method: "curler" }, // 方式句走 method 分支
+      ],
+    });
+    const rep = await buildMatchReport(db, matchId);
+    const text = rep!.paragraphs.join("");
+    // 1:3 → 2:3：只是追回一分，绝不能写成「红队 反超了比分」
+    expect(text).toContain("红队 扳回一城");
+    expect(text).not.toContain("反超");
+  });
+
   it("乌龙句带乌龙措辞、语义指向受益方蓝队（不读成摆乌龙者正常进球）", async () => {
     const { db } = og227Db(5421);
     const rep = await buildMatchReport(db, 5421);

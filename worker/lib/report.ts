@@ -165,11 +165,13 @@ function buildNarrative(
         // methodCopy 接入：方式词来自录入端 CHECK 白名单（shared/methods.ts）；
         // 助攻方式与助攻人都在时走组合专表/通用 fallback，仅方式走进球池单句（solo/free_kick 无助攻）。
         // key-node 头衔照 copybank §4.4 叠加在句尾；扩大/追回尾巴保留 SEAL 词，供「锁定胜局」回填
+        // 2026-11-21 追加修复：wasBehind 只说明「进球前落后」，进完可能仍然落后（如 1:3 → 2:3）——
+        // 反超必须以「进球后领先」为准，否则 227 的 97' 追回球会被写成「尤文图斯 反超了比分」
         const tail = isFirst
           ? `，${scoringTeam} 首开纪录`
           : wasBehind && home === away
             ? `，${scoringTeam} 扳平比分`
-            : wasBehind
+            : wasBehind && (scoring === "home" ? home > away : away > home)
               ? `，${scoringTeam} 反超了比分`
               : beforeLevel
                 ? `，${scoringTeam} 再度领先`
