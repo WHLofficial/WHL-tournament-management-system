@@ -154,6 +154,16 @@ function mergeSeasonPlacements(
 }
 
 
+// GET /seasons/current —— 当前赛季（取最新 season 行）。
+// 入口页只拿 id/name/weeks，不拉总览；S10 启用后不会再把用户送到 season 1。
+app.get("/current", async (c) => {
+  const row = await c.env.DB
+    .prepare(`SELECT id, name, weeks FROM season ORDER BY id DESC LIMIT 1`)
+    .first<{ id: number; name: string; weeks: number }>();
+  if (!row) return c.json({ message: "还没有赛季" }, 404);
+  return c.json(row);
+});
+
 // GET /seasons/:id/schedule —— 赛季总览：段、已排场次、整季体检、版本列表
 app.get("/:id/schedule", async (c) => {
   const seasonId = parseSeasonId(c.req.param("id"));
@@ -161,10 +171,22 @@ app.get("/:id/schedule", async (c) => {
 
   const data = await loadSeasonData(c.env.DB, seasonId);
   if (!data.season) return seasonNotFound(c);
-  const [rules, revisions] = await Promise.all([
+  const [rules, revisions, savedRows] = await Promise.all([
     loadSeasonRules(c.env.DB, seasonId),
     listSeasonRevisions(c.env.DB, seasonId),
+    c.env.DB
+      .prepare(
+        `SELECT DISTINCT a.segment_id
+           FROM schedule_revision_assignment a
+           JOIN schedule_revision r ON r.id = a.revision_id
+          WHERE r.season_id = ?
+            AND r.status IN ('committed', 'published', 'restored')
+            AND a.segment_id IS NOT NULL`
+      )
+      .bind(seasonId)
+      .all<{ segment_id: number }>(),
   ]);
+  const savedSegmentIds = savedRows.results.map((r) => r.segment_id);
   const violations = validateSeason(data, rules);
 
   const segments = data.segments.map((s) => {
@@ -211,6 +233,7 @@ app.get("/:id/schedule", async (c) => {
       reason: p.reason,
     })),
     unmatchedMatchIds: data.unmatched.map((m) => m.id),
+    savedSegmentIds,
     violations,
     rules,
     revisions,

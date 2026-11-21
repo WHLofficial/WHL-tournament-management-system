@@ -1,8 +1,8 @@
 // 排期页（P3-B 起家；S4 起定位为单段下钻页）：按窗口生成提案 → 提交 → 公布；单场可越窗改期（留 override 标记）。
 // 时刻是虚拟标签（周/天/HH:MM），周几只做显示，不换算真实日期。
-// S4：赛季总览页（ScheduleSeasonTab）点矩阵格跳进来 —— drill.segmentId 就是 round_window.id，
-// 窗口 = 排期段是同一张表。矩阵含全赛季所有赛事的段：跨赛事段要跟着 drill.tournamentId
-// 把窗口清单/下钻请求切到段属赛事（High-1），否则永远 404「窗口不存在」。
+// S4：赛季排期一级页（/admin/seasons/:seasonId/schedule，赛历/宽屏两视图）下钻进来 ——
+// drill.segmentId 就是 round_window.id，窗口 = 排期段是同一张表。矩阵含全赛季所有赛事的段：
+// 跨赛事段要跟着 drill.tournamentId 把窗口清单/下钻请求切到段属赛事（High-1），否则永远 404「窗口不存在」。
 // 不传 drill 时保持旧行为（当前赛事、自己挑窗口）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";

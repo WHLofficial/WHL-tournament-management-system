@@ -31,6 +31,13 @@ const AdminInjuries = lazy(() =>
 const TournamentManage = lazy(() =>
   import("./pages/TournamentManage").then((m) => ({ default: m.TournamentManage })),
 );
+// 赛季排期一级页（IA 迁移 §7.1：从赛事页 tab 升为 /admin/seasons/:seasonId/schedule）
+const SeasonSchedulePage = lazy(() =>
+  import("./pages/season/SeasonSchedulePage").then((m) => ({ default: m.SeasonSchedulePage })),
+);
+const SeasonScheduleEntry = lazy(() =>
+  import("./pages/season/SeasonSchedulePage").then((m) => ({ default: m.SeasonScheduleEntry })),
+);
 const MyTeam = lazy(() => import("./pages/MyTeam"));
 const Accounts = lazy(() =>
   import("./pages/Accounts").then((m) => ({ default: m.Accounts })),
@@ -148,6 +155,22 @@ function AppShell() {
             element={
               <RequireRole roles={["admin", "superadmin"]}>
                 <TournamentManage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/seasons"
+            element={
+              <RequireRole roles={["admin", "superadmin"]}>
+                <SeasonScheduleEntry />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/seasons/:seasonId/schedule"
+            element={
+              <RequireRole roles={["admin", "superadmin"]}>
+                <SeasonSchedulePage />
               </RequireRole>
             }
           />

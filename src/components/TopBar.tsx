@@ -95,6 +95,7 @@ export function TopBar() {
     tactics: pathname === "/tactics",
     team: pathname.startsWith("/my-team"),
     admin: pathname === "/admin" || pathname.startsWith("/admin/t/"),
+    seasons: pathname.startsWith("/admin/seasons"),
     teams: pathname.startsWith("/admin/teams"),
     injuries: pathname.startsWith("/admin/injuries"),
     account: accountMenu.some((m) => pathname.startsWith(m.to)),
@@ -123,6 +124,10 @@ export function TopBar() {
             <span className="nav-sep" aria-hidden="true" />
             <Link to="/admin" className={cls(on.admin)}>
               赛事管理
+            </Link>
+            {/* 赛季排期一级入口（IA 迁移 §7.1）；/admin/seasons 会重定向到当前赛季 */}
+            <Link to="/admin/seasons" className={cls(on.seasons)}>
+              赛季排期
             </Link>
             <Link to="/admin/teams" className={cls(on.teams)}>
               球队库

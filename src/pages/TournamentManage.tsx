@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import ScheduleTab from "./ScheduleTab";
-import ScheduleSeasonTab from "./ScheduleSeasonTab";
 import KickoffTab from "./KickoffTab";
 import MatchesTab from "./MatchesTab";
 import StandingsTab from "./StandingsTab";
@@ -34,7 +33,7 @@ const TB_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "none", label: "不启用" },
 ];
 
-type Tab = "entries" | "season" | "schedule" | "kickoff" | "matches" | "standings" | "toplists" | "stats" | "settings";
+type Tab = "entries" | "schedule" | "kickoff" | "matches" | "standings" | "toplists" | "stats" | "settings";
 
 // 积分榜体检（GET /:id/standings-health，v5.8.0）：
 //  - pending 是硬信号：某阶段的后续处理（榜重算/晋级填位/下一阶段生成）没跑完的欠账；
@@ -96,9 +95,25 @@ export function TournamentManage() {
   // Low-8：下钻目标是「从赛季总览带进来的一次跳转」，不是永久选中态。
   // 切赛事时旧 drill 一定失效（tid 变了，窗口清单换成另一个赛事的），
   // 手动点回排期页也当作“重新进页”，不该继续沿用上一次的跨赛事段。
+  // 赛季排期一级页（/admin/seasons/:id/schedule）的深链走查询参数：
+  // ?tab=kickoff&segment=…&tname=… 时按参数重建 drill 并直接落到排期 tab。
+  const [searchParams] = useSearchParams();
   useEffect(() => {
+    const segment = searchParams.get("segment");
+    const tabParam = searchParams.get("tab");
+    if (segment != null) {
+      setDrill({
+        segmentId: Number(segment),
+        tournamentId,
+        tournamentName: searchParams.get("tname") ?? "",
+      });
+      setTab("kickoff");
+      return;
+    }
     setDrill(null);
-  }, [tournamentId]);
+    // 没有段也可以深链到「开球时刻」tab（Season 页只传 tab=kickoff 时用）。
+    if (tabParam === "kickoff") setTab("kickoff");
+  }, [tournamentId, searchParams]);
 
   async function reload() {
     try {
@@ -175,7 +190,9 @@ export function TournamentManage() {
         <div>
           <p className="muted">
             <Link to="/admin">← 赛事列表</Link> ·{" "}
-            <Link to={`/t/${t.id}`}>查看公开页 →</Link>
+            <Link to={`/t/${t.id}`}>查看公开页 →</Link> ·{" "}
+            {/* 赛季排期已升为一级页（IA 迁移 §7.1）；/admin/seasons 会重定向到当前赛季 */}
+            <Link to="/admin/seasons">赛季排期 →</Link>
           </p>
           <h2>
             {t.name} <span className={`status-badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
@@ -249,7 +266,6 @@ export function TournamentManage() {
         {(
           [
             ["entries", `报名 (${detail.entries.length})`],
-            ["season", "赛季排期"],
             ["schedule", "编排"],
             ["kickoff", "排期"],
             ["matches", "比赛"],
@@ -275,21 +291,6 @@ export function TournamentManage() {
       </nav>
 
       {tab === "entries" && <EntriesTab detail={detail} reload={reload} />}
-      {tab === "season" && (
-        <ScheduleSeasonTab
-          key={detail.tournament.id}
-          detail={detail}
-          reload={reload}
-          onDrilldown={(segment) => {
-            setDrill({
-              segmentId: segment.id,
-              tournamentId: segment.tournamentId,
-              tournamentName: segment.tournamentName,
-            });
-            setTab("kickoff");
-          }}
-        />
-      )}
       {tab === "schedule" && <ScheduleTab detail={detail} reload={reload} />}
       {tab === "kickoff" && (
         <KickoffTab key={detail.tournament.id} detail={detail} reload={reload} drill={drill} />
