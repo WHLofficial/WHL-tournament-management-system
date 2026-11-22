@@ -1,6 +1,6 @@
 // 分享卡两回合文案：口径与 KnockoutStageView.slotScoreLabel 一致。
 import { describe, expect, it } from "vitest";
-import { tieScoreLabel, type ShareMatch } from "../src/lib/share";
+import { roundCardRows, tieAggregate, tieScoreLabel, type ShareMatch } from "../src/lib/share";
 
 const leg = (
   n: number,
@@ -38,5 +38,42 @@ describe("tieScoreLabel", () => {
 
   it("缺一条 leg 返回 null", () => {
     expect(tieScoreLabel([leg(1, 2, 1)])).toBeNull();
+  });
+});
+
+describe("tieAggregate", () => {
+  it("两回合完赛按次回合主队视角汇总", () => {
+    expect(tieAggregate([leg(1, 2, 1, { slot: 1 }), leg(2, 0, 3, { slot: 1 })])).toEqual({
+      home: 1,
+      away: 5,
+    });
+  });
+
+  it("任一回合并未完赛返回 null", () => {
+    expect(
+      tieAggregate([
+        leg(1, 2, 1, { slot: 1 }),
+        leg(2, null, null, { slot: 1, status: "pending" }),
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe("roundCardRows", () => {
+  it("同 slot 的首/次回合标回合名，次回合并入上一行同组", () => {
+    const rows = roundCardRows([
+      leg(1, 2, 1, { slot: 1 }),
+      leg(2, 0, 3, { slot: 1 }),
+      leg(1, 1, 0, { slot: 2 }),
+      leg(2, 0, 1, { slot: 2 }),
+    ]);
+    expect(rows.map((r) => r.legLabel)).toEqual(["首回合", "次回合", "首回合", "次回合"]);
+    expect(rows.map((r) => r.sameTie)).toEqual([false, true, false, true]);
+  });
+
+  it("非两回合不标回合名", () => {
+    const rows = roundCardRows([leg(0, 1, 0)]);
+    expect(rows[0].legLabel).toBeUndefined();
+    expect(rows[0].sameTie).toBe(false);
   });
 });

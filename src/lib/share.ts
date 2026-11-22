@@ -57,6 +57,8 @@ export interface ShareMatch {
   kickoff?: string | null;
   /** 两回合淘汰赛的回合号（1/2）；非两回合为 null */
   leg?: number | null;
+  /** 淘汰赛对阵槽位：同 slot 的两行是同一组两回合对阵 */
+  slot?: number | null;
 }
 
 // MatchDTO 等兼容结构 → ShareMatch（待定队占位名）
@@ -76,6 +78,7 @@ export interface ShareMatchInput {
   kickoffDay?: number | null;
   kickoffTime?: string | null;
   leg?: number | null;
+  slot?: number | null;
 }
 
 export function matchToShare(m: ShareMatchInput): ShareMatch {
@@ -91,6 +94,7 @@ export function matchToShare(m: ShareMatchInput): ShareMatch {
     events: m.events ?? [],
     kickoff: kickoffShort(m.kickoffWeek, m.kickoffDay, m.kickoffTime),
     leg: m.leg ?? null,
+    slot: m.slot ?? null,
   };
 }
 
@@ -119,6 +123,50 @@ export function tieScoreLabel(legs: ShareMatch[]): string | null {
         ? ` · 点球 ${leg2.penHome}:${leg2.penAway}`
         : "";
   return parts.join(" · ") + pen;
+}
+
+/** 两回合总比分（次回合主队视角）；两回合都完赛才返回，否则 null。 */
+export function tieAggregate(legs: ShareMatch[]): { home: number; away: number } | null {
+  const leg1 = legs.find((l) => l.leg === 1);
+  const leg2 = legs.find((l) => l.leg === 2);
+  if (!leg1 || !leg2) return null;
+  if (leg1.status !== "finished" || leg2.status !== "finished") return null;
+  if (
+    leg1.scoreHome == null ||
+    leg1.scoreAway == null ||
+    leg2.scoreHome == null ||
+    leg2.scoreAway == null
+  ) {
+    return null;
+  }
+  // 次回合主队 = leg2.home：总比分按次回合行的主客顺序汇总，避免读者把 leg1 视角看反
+  return {
+    home: leg2.scoreHome + leg1.scoreAway,
+    away: leg2.scoreAway + leg1.scoreHome,
+  };
+}
+
+export interface RoundCardRow {
+  match: ShareMatch;
+  /** 两回合淘汰赛的回合标签；非两回合为 undefined */
+  legLabel?: string;
+  /** 与上一行属于同一组两回合对阵（组内不画分隔虚线） */
+  sameTie: boolean;
+}
+
+/** 轮次卡行：两回合淘汰赛按 slot 把首/次回合合成一组，返回回合标签与是否同组。 */
+export function roundCardRows(matches: ShareMatch[]): RoundCardRow[] {
+  return matches.map((m, i) => {
+    const prev = i > 0 ? matches[i - 1] : null;
+    const legLabel = m.leg === 1 ? "首回合" : m.leg === 2 ? "次回合" : undefined;
+    const sameTie =
+      !!prev &&
+      m.slot != null &&
+      prev.slot === m.slot &&
+      m.leg != null &&
+      prev.leg != null;
+    return { match: m, legLabel, sameTie };
+  });
 }
 
 // 对阵行事件摘要 token：⚽进球（点球不特殊标注，乌龙归受益侧标 OG）+ 🟥红牌（含两黄变一红）。
@@ -608,6 +656,8 @@ async function drawMatchLine(
   m: ShareMatch,
   y: number,
   lines: { home: string[]; away: string[] },
+  legLabel?: string,
+  tieNote?: string,
 ): Promise<void> {
   const cx = CARD_W / 2;
   const badge = 36;
@@ -645,15 +695,21 @@ async function drawMatchLine(
   if (m.status === "finished" || m.status === "live") {
     // 比分走正文栈（v5.8.3：等宽数字在胶囊里左右留白过大）；胶囊宽度是常量，两位数比分先缩号再画，避免顶到胶囊边
     const scoreText = `${m.scoreHome ?? 0} : ${m.scoreAway ?? 0}`;
+    if (legLabel) {
+      // 两回合：回合标签压在比分上方，仍留在胶囊内，避免与分隔虚线/摘要抢空间
+      font(ctx, 600, 13);
+      ctx.fillStyle = ink(0.45);
+      ctx.fillText(legLabel, cx, y - 9);
+    }
     font(ctx, 700, 22);
     const sw = ctx.measureText(scoreText).width;
     if (sw > pill - 14) font(ctx, 700, Math.max(14, Math.floor((22 * (pill - 14)) / sw)));
     ctx.fillStyle = m.status === "live" ? ACCENT : INK;
-    ctx.fillText(scoreText, cx, y + 1);
+    ctx.fillText(scoreText, cx, legLabel ? y + 9 : y + 1);
   } else {
-    font(ctx, 600, 18);
+    font(ctx, 600, legLabel ? 17 : 18);
     ctx.fillStyle = ink(0.45);
-    ctx.fillText("vs", cx, y + 1);
+    ctx.fillText(legLabel ?? "vs", cx, y + 1);
   }
   const subY = y + pillH / 2 + 20; // 胶囊下方副注/摘要首行
   // 待开赛的场：胶囊下画一行开球时刻（已开赛的场这行留给点球/事件摘要）
@@ -664,7 +720,20 @@ async function drawMatchLine(
     ctx.textBaseline = "middle";
     ctx.fillText(m.kickoff, cx, subY);
   }
-  if (m.status === "finished" && (m.penHome != null || m.penAway != null)) {
+  const hasPen = m.status === "finished" && (m.penHome != null || m.penAway != null);
+  if (tieNote && m.status === "finished") {
+    // 次回合比分下方的总比分（次回合主队视角）；点球有值再下移一行
+    font(ctx, 600, 20);
+    ctx.fillStyle = ink(0.65);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(tieNote, cx, subY);
+    if (hasPen) {
+      font(ctx, 400, 19);
+      ctx.fillStyle = ink(0.6);
+      ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, subY + 23);
+    }
+  } else if (hasPen) {
     font(ctx, 400, 23);
     ctx.fillStyle = ink(0.6);
     ctx.textBaseline = "middle";
@@ -903,11 +972,28 @@ export async function drawRoundCard(canvas: HTMLCanvasElement, data: RoundCardDa
 
   const rowsStart = headerMetrics(ctx, data.tournamentName, data.title) + 16;
   const list = data.matches.slice(0, 12);
+  const rows = roundCardRows(list);
   const overflow = data.matches.length > list.length;
-  const sums = list.map((m) => matchSummaryLines(ctx, m));
+  const sums = rows.map((r) => matchSummaryLines(ctx, r.match));
+
+  // 两回合对阵按 slot 归组：次回合行在比分下方显示总比分（次回合主队视角）
+  const legsBySlot = new Map<number, ShareMatch[]>();
+  for (const m of list) {
+    if (m.slot == null || m.leg == null) continue;
+    const arr = legsBySlot.get(m.slot) ?? [];
+    arr.push(m);
+    legsBySlot.set(m.slot, arr);
+  }
+  const tieNotes = rows.map((r) => {
+    if (r.match.leg !== 2 || r.match.slot == null) return undefined;
+    const agg = tieAggregate(legsBySlot.get(r.match.slot) ?? []);
+    return agg ? `总比分 ${agg.home}:${agg.away}` : undefined;
+  });
+  // 总比分多占一行：该行块高 +23，分隔虚线跟着下移，避免压住点球行
+  const advances = rows.map((_, i) => matchLineAdvance(sums[i]) + (tieNotes[i] ? 23 : 0));
   const contentEnd =
-    list.length > 0
-      ? rowsStart + sums.reduce((a, s) => a + matchLineAdvance(s), 0) - 56 + (overflow ? 46 : 0)
+    rows.length > 0
+      ? rowsStart + advances.reduce((a, n) => a + n, 0) - 56 + (overflow ? 46 : 0)
       : rowsStart + 8;
   const H = Math.max(MIN_H, contentEnd + FOOT_H); // 页脚 = 间隙 40 + chip 84 + 底边 27
   canvas.height = H;
@@ -915,12 +1001,13 @@ export async function drawRoundCard(canvas: HTMLCanvasElement, data: RoundCardDa
   await drawHeader(ctx, data.tournamentName, data.title);
 
   let my = rowsStart;
-  for (let i = 0; i < list.length; i++) {
-    if (i > 0) dashedSeparator(ctx, my - 36);
-    await drawMatchLine(ctx, list[i], my, sums[i]);
-    my += matchLineAdvance(sums[i]);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (i > 0 && !row.sameTie) dashedSeparator(ctx, my - 36);
+    await drawMatchLine(ctx, row.match, my, sums[i], row.legLabel, tieNotes[i]);
+    my += advances[i];
   }
-  if (list.length === 0) {
+  if (rows.length === 0) {
     font(ctx, 400, 24);
     ctx.fillStyle = ink(0.5);
     ctx.fillText("本轮还没有安排比赛", HEAD_X, my + 10);
