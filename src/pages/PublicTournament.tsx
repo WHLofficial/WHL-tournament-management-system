@@ -14,6 +14,7 @@ import { TeamLogo } from "../components/TeamLogo";
 import { Toplists } from "../components/Toplists";
 import { StatsDashboard } from "../components/StatsDashboard";
 import { ShareButton } from "../components/ShareButton";
+import { RoundShareButton } from "../components/RoundShareButton";
 import { drawTournamentCard, drawRoundCard, matchToShare } from "../lib/share";
 import { kickoffText } from "../lib/kickoff";
 import type { AnnouncementDTO } from "../../shared/news";
@@ -388,16 +389,20 @@ export default function PublicTournament() {
               <div className="round-block">
                 <h4 className="round-head">
                   <span>{roundLabel(selChip)}</span>
-                  <ShareButton
+                  <RoundShareButton
                     title={`分享「${roundLabel(selChip)}」`}
                     url={`${origin}/t/${tid}?tab=schedule`}
-                    draw={(c) =>
+                    twoLeg={
+                      selRows.some((m) => m.leg === 1) && selRows.some((m) => m.leg === 2)
+                    }
+                    draw={(c, mode) =>
                       drawRoundCard(c, {
                         tournamentName: t.name,
                         title: roundLabel(selChip),
                         coverUrl: t.coverUrl ?? null,
                         matches: selRows.map(matchToShare),
                         url: `${origin}/t/${tid}?tab=schedule`,
+                        mode,
                       })
                     }
                   />

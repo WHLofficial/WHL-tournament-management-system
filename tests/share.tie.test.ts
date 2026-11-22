@@ -1,6 +1,11 @@
 // 分享卡两回合文案：口径与 KnockoutStageView.slotScoreLabel 一致。
 import { describe, expect, it } from "vitest";
-import { tieScoreLabel, type ShareMatch } from "../src/lib/share";
+import {
+  roundCardSections,
+  tieAggregate,
+  tieScoreLabel,
+  type ShareMatch,
+} from "../src/lib/share";
 
 const leg = (
   n: number,
@@ -38,5 +43,37 @@ describe("tieScoreLabel", () => {
 
   it("缺一条 leg 返回 null", () => {
     expect(tieScoreLabel([leg(1, 2, 1)])).toBeNull();
+  });
+});
+
+describe("tieAggregate", () => {
+  it("按次回合主队视角汇总", () => {
+    expect(tieAggregate([leg(1, 2, 1), leg(2, 0, 3)])).toEqual({ home: 1, away: 5 });
+  });
+
+  it("两回合都完赛才汇总", () => {
+    expect(tieAggregate([leg(1, 2, 1), leg(2, null, null, { status: "pending" })])).toBeNull();
+    expect(tieAggregate([leg(1, 2, 1)])).toBeNull();
+  });
+});
+
+describe("roundCardSections", () => {
+  it("按 leg 分组并标记 twoLeg", () => {
+    const s = roundCardSections([
+      leg(1, 1, 0, { slot: 1 }),
+      leg(2, 0, 1, { slot: 1 }),
+    ]);
+    expect(s.first).toHaveLength(1);
+    expect(s.second).toHaveLength(1);
+    expect(s.twoLeg).toBe(true);
+  });
+
+  it("单回合不标 twoLeg，无 leg 的进 rest", () => {
+    const s = roundCardSections([
+      leg(1, 1, 0),
+      { ...leg(1, 0, 0), leg: null },
+    ]);
+    expect(s.twoLeg).toBe(false);
+    expect(s.rest).toHaveLength(1);
   });
 });

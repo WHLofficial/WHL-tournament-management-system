@@ -1765,6 +1765,38 @@ button.add-stage {
   border-color: var(--pitch);
   color: var(--pitch-deep);
 }
+/* 轮次分享：整轮 / 仅首回合 / 仅次回合 */
+.share-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.share-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+.share-menu button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.share-menu button:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
 /* 公开页头部「管理」入口：与分享按钮同款胶囊。
    a 标签套不上 button.btn / button.btn-ghost（选择器带 button. 前缀），故单列一个类 */
 .pub-manage-btn {
