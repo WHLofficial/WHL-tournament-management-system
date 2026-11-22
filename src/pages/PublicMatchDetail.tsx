@@ -8,6 +8,7 @@ import { TeamLogo } from "../components/TeamLogo";
 import { ShareButton } from "../components/ShareButton";
 import { PreMatchTabs } from "../components/PreMatchPanels";
 import { drawMatchCard, matchToShare } from "../lib/share";
+import type { ShareMatch } from "../lib/share";
 import { LineupGrid } from "../components/LineupView";
 import { recoverStageLabel } from "../../shared/injuries";
 import type {
@@ -170,8 +171,26 @@ export default function PublicMatchDetail() {
               <ShareButton
                 title={`分享这场比赛`}
                 url={`${window.location.origin}/t/${tid}/match/${matchId}`}
-                draw={(c) =>
-                  drawMatchCard(c, {
+                draw={async (c) => {
+                  let tieLegs: ShareMatch[] | undefined;
+                  if (m.stageKind === "elim" && m.leg != null) {
+                    try {
+                      const res = await api<{ matches: MatchDTO[] }>(
+                        `/api/public/tournaments/${tid}/matches?stageId=${m.stageId}&round=${m.round}`,
+                      );
+                      const legs = res.matches
+                        .filter((x) => x.slot === m.slot && x.leg != null)
+                        .sort((a, b) => (a.leg ?? 0) - (b.leg ?? 0));
+                      if (legs.length >= 2) {
+                        tieLegs = legs.map((x) =>
+                          x.id === m.id ? matchToShare(m) : matchToShare(x),
+                        );
+                      }
+                    } catch {
+                      // 拿不到另一回合时退回只画本场
+                    }
+                  }
+                  await drawMatchCard(c, {
                     tournamentName: tInfo.name,
                     coverUrl: tInfo.coverUrl,
                     subtitle:
@@ -197,8 +216,9 @@ export default function PublicMatchDetail() {
                         ];
                       }),
                     url: `${window.location.origin}/t/${tid}/match/${matchId}`,
-                  })
-                }
+                    tieLegs,
+                  });
+                }}
               />
             )}
           </div>

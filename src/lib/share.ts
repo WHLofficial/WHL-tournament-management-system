@@ -55,6 +55,8 @@ export interface ShareMatch {
   events?: ShareEvent[];
   /** 待开赛场的开球时刻（「W5 周六 17:30」），已开赛的场不画 */
   kickoff?: string | null;
+  /** 两回合淘汰赛的回合号（1/2）；非两回合为 null */
+  leg?: number | null;
 }
 
 // MatchDTO 等兼容结构 → ShareMatch（待定队占位名）
@@ -73,6 +75,7 @@ export interface ShareMatchInput {
   kickoffWeek?: number | null;
   kickoffDay?: number | null;
   kickoffTime?: string | null;
+  leg?: number | null;
 }
 
 export function matchToShare(m: ShareMatchInput): ShareMatch {
@@ -87,7 +90,35 @@ export function matchToShare(m: ShareMatchInput): ShareMatch {
     note: m.note ?? null,
     events: m.events ?? [],
     kickoff: kickoffShort(m.kickoffWeek, m.kickoffDay, m.kickoffTime),
+    leg: m.leg ?? null,
   };
+}
+
+/** 两回合总比分文案：首回合 x:y · 次回合 y:x · 总比分 A:B（口径与 KnockoutStageView.slotScoreLabel 一致）。 */
+export function tieScoreLabel(legs: ShareMatch[]): string | null {
+  const leg1 = legs.find((l) => l.leg === 1);
+  const leg2 = legs.find((l) => l.leg === 2);
+  if (!leg1 || !leg2) return null;
+  const legText = (m: ShareMatch): string =>
+    m.scoreHome == null && m.scoreAway == null
+      ? "未开打"
+      : `${m.scoreHome == null ? "-" : m.scoreHome}:${m.scoreAway == null ? "-" : m.scoreAway}`;
+  const parts = [`首回合 ${legText(leg1)}`, `次回合 ${legText(leg2)}`];
+  if (
+    leg1.scoreHome != null &&
+    leg1.scoreAway != null &&
+    leg2.scoreHome != null &&
+    leg2.scoreAway != null
+  ) {
+    parts.push(`总比分 ${leg1.scoreHome + leg2.scoreAway}:${leg1.scoreAway + leg2.scoreHome}`);
+  }
+  const pen =
+    leg1.penHome != null && leg1.penAway != null
+      ? ` · 点球 ${leg1.penHome}:${leg1.penAway}`
+      : leg2.penHome != null && leg2.penAway != null
+        ? ` · 点球 ${leg2.penHome}:${leg2.penAway}`
+        : "";
+  return parts.join(" · ") + pen;
 }
 
 // 对阵行事件摘要 token：⚽进球（点球不特殊标注，乌龙归受益侧标 OG）+ 🟥红牌（含两黄变一红）。
@@ -221,6 +252,8 @@ export interface MatchCardData {
   coverUrl?: string | null;
   match: ShareMatch;
   eventRows?: ShareEventRow[];
+  /** 两回合淘汰赛的两条 leg（含本场，按 leg 排序）；有值时主比分下展示首/次回合与总比分 */
+  tieLegs?: ShareMatch[];
   url: string;
 }
 
@@ -716,15 +749,19 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
   );
   const totalH = nodeHeights.reduce((a, b) => a + b, 0) + Math.max(0, nodes.length - 1) * NODE_GAP;
 
-  const cs0 = headerMetrics(ctx, data.tournamentName, data.subtitle);  const cy = cs0 + 120; // 大比分行中轴
-  const rowsStart = cy + 140; // 事件链条起始
+  const m = data.match;
+  const cs0 = headerMetrics(ctx, data.tournamentName, data.subtitle);
+  const cy = cs0 + 120; // 大比分行中轴
+  const tie = data.tieLegs && data.tieLegs.length >= 2 ? tieScoreLabel(data.tieLegs) : null;
+  const showPen = (m.penHome != null || m.penAway != null) && !tie;
+  const hasSub = m.status === "live" || showPen || (m.status === "pending" && !tie);
+  const rowsStart = cy + (tie && hasSub ? 170 : 140); // 事件链条起始
   const contentEnd = nodes.length > 0 ? rowsStart + totalH : cy + 110;
   const H = Math.max(MIN_H, contentEnd + FOOT_H);
   canvas.height = H;
   drawBaseBg(ctx, H);
   const cs = await drawHeader(ctx, data.tournamentName, data.subtitle);
 
-  const m = data.match;
   const badge = 72;
   const cx = CARD_W / 2;
   // 比分与队名共用中轴两侧：按比分实测宽度让出中轴（两位数比分时比固定 104 更宽松）
@@ -758,25 +795,33 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
     font(ctx, 700, 64);
     ctx.fillStyle = ink(0.35);
     ctx.fillText("vs", cx, cy);
-    font(ctx, 400, 22);
-    ctx.fillStyle = ink(0.5);
-    ctx.fillText("未开打", cx, cy + 58);
+    if (!tie) {
+      font(ctx, 400, 22);
+      ctx.fillStyle = ink(0.5);
+      ctx.fillText("未开打", cx, cy + 58);
+    }
   } else {
     font(ctx, 700, 72);
     const sw = ctx.measureText(scoreText).width;
     if (sw > 520) font(ctx, 700, Math.max(44, Math.floor((72 * 520) / sw)));
     ctx.fillStyle = m.status === "live" ? ACCENT : INK;
     ctx.fillText(scoreText, cx, cy);
-    if (m.penHome != null || m.penAway != null) {
+    const subY = tie ? cy + 88 : cy + 58;
+    if (showPen) {
       font(ctx, 400, 23);
       ctx.fillStyle = ink(0.6);
-      ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, cy + 58);
+      ctx.fillText(`点球 ${m.penHome} : ${m.penAway}`, cx, subY);
     }
     if (m.status === "live") {
       font(ctx, 600, 22);
       ctx.fillStyle = ACCENT;
-      ctx.fillText("● 进行中", cx, cy + 58);
+      ctx.fillText("● 进行中", cx, subY);
     }
+  }
+  if (tie) {
+    font(ctx, 500, 21);
+    ctx.fillStyle = ink(0.62);
+    ctx.fillText(fitText(ctx, tie, CARD_W - 96), cx, cy + 58);
   }
   if (m.note) {
     font(ctx, 400, 20);
@@ -785,7 +830,7 @@ export async function drawMatchCard(canvas: HTMLCanvasElement, data: MatchCardDa
   }
 
   if (nodes.length > 0) {
-    sectionLabel(ctx, "比赛事件", cy + 104);
+    sectionLabel(ctx, "比赛事件", cy + (tie && hasSub ? 134 : 104));
     // 与页面 EventTimeline 同款链条式：中轴细线，主队信息向左、客队信息向右；
     // 合并节点分钟胶囊贴中轴、只标一次（对齐节点首行），助攻行向外侧缩进 50px
     ctx.fillStyle = ink(0.15);
