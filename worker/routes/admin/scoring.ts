@@ -9,6 +9,7 @@ import {
   type RebuildGuardResult,
 } from "../../lib/rebuild-guard";
 import { firstRoundSizeError, type ManualRow } from "../../lib/manualBracket";
+import { publicTournamentUrls, purgePublicUrls } from "../../lib/public-cache";
 import { buildAutoFillStmts } from "./schedule";
 import { getSuspensionConfig } from "../../lib/suspension";
 import { fetchMatchLineup, LineupError } from "../../lib/lineup";
@@ -352,6 +353,24 @@ app.post("/:id/finish", async (c) => {
         return fail(c, 409, e.message);
       }
       throw e;
+    }
+    // 终场写库 + 榜/晋级后续处理都成功后，主动清公开 API 的规范 URL；
+    // 只在 followUpOk 时做，避免把「榜还没重算完」的半更新响应继续缓存 300s。
+    // best-effort：不阻塞报分，未配 token/zone 时 purgePublicUrls 直接 no-op。
+    if (guard.followUpOk) {
+      const urls = publicTournamentUrls(
+        new URL(c.req.url).origin,
+        ctx.tournamentId,
+        id,
+        m.stage_id,
+        m.round,
+      );
+      const p = purgePublicUrls(c.env, urls).catch(() => {});
+      try {
+        c.executionCtx.waitUntil(p);
+      } catch {
+        // app.request 测试环境没有 executionCtx；purge 是 best-effort，不影响报分
+      }
     }
     return c.json(
       guard.followUpOk

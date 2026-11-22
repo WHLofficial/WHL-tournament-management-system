@@ -49,7 +49,10 @@
     "OIDC_CLIENT_ID": "tour",
     // v4.0.0：俱乐部平台基址。名册同步（cron + POST /api/admin/sync-rosters）从这里拉 /api/squads；
     // 撤掉这一行 = 同步整体跳过（球员表随即退回「手工录入」的旧行为，可作回滚开关）
-    "CLUB_API_BASE": "https://club.whleague.win"
+    "CLUB_API_BASE": "https://club.whleague.win",
+    // v5.13.1：报分后 purge 公开 API 缓存用的 zone（非 secret）。token 走
+    // `wrangler secret put CLOUDFLARE_PURGE_TOKEN`；缺 token 即 no-op。
+    "CLOUDFLARE_ZONE_ID": "1fe7b8d2b1c48b6a7982cc6387e311a7"
   },
   // v4.0.0：每小时拉一次俱乐部平台一线队名册。写库只在真有差异时发生，稳态下这个 cron 是纯读；
   // 立即同步不等下一小时，用 POST /api/admin/sync-rosters（先加 ?dryRun=1 核对预期）。

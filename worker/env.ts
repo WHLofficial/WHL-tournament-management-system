@@ -27,6 +27,10 @@ export type Bindings = {
    *  出站（推建队给 club）不配 = 只记同步失败、不阻断本地建队；入站（收 club 的建队推送）
    *  不配 = 端点 503 拒绝，写端点必须 fail-closed */
   TEAM_SYNC_SECRET?: string;
+  /** v5.13.1：报分后主动 purge 公开 API 缓存（docs/public-cache-purge.md）。
+   *  zone id 走 vars；token 走 secret（Zone.Cache Purge）。缺一即 no-op，行为退回纯 TTL。 */
+  CLOUDFLARE_ZONE_ID?: string;
+  CLOUDFLARE_PURGE_TOKEN?: string;
 };
 
 export type SessionUser = {

@@ -4,7 +4,7 @@
 //   1) 入参校验（轮空、对阵未定、改判必须给完整比分、平局点球、双弃权指定晋级方）
 //   2) 落库结果（比分/点球/winner/walkover_side/note/finished_at）
 //   3) 派生结果（standing 重建、下游对阵回填）与失败时的一致性（晋级冲突 409 回滚终场）
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import app from "../worker/index";
 import { ASSIST_METHODS, GOAL_METHODS } from "../shared/methods";
@@ -182,6 +182,33 @@ describe("scoring 报分（finish）", () => {
     expect(sqlAll(sqlite, "SELECT entry_id FROM standing WHERE stage_id = 70").length).toBe(4);
     expect(standingOf(sqlite, 70, 500)).toMatchObject({ played: 1, won: 1, pts: 3, gf: 2, ga: 1 });
     expect(standingOf(sqlite, 70, 501)).toMatchObject({ played: 1, lost: 1, pts: 0, gf: 1, ga: 2 });
+  });
+
+  it("终场成功后 purge 公开缓存（配 token 时）", async () => {
+    const { env } = freshEnv();
+    const calls: { url: string; body: { files: string[] } }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init?.body)) as { files: string[] } });
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    });
+    try {
+      const res = await finish(
+        { ...env, CLOUDFLARE_ZONE_ID: "zone-1", CLOUDFLARE_PURGE_TOKEN: "tok-1" },
+        800,
+        { scoreHome: 2, scoreAway: 1 },
+      );
+      expect(res.status).toBe(200);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toContain("/zones/zone-1/purge_cache");
+      expect(
+        calls[0].body.files.some((u) => u.endsWith("/api/public/tournaments/7/standings")),
+      ).toBe(true);
+      expect(
+        calls[0].body.files.some((u) => u.endsWith("/api/public/tournaments/7/matches/800")),
+      ).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("live 场不传比分 → 取事件累计，乌龙球记对方", async () => {
